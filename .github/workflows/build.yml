@@ -35,6 +35,10 @@ jobs:
           FEEDNAME: purewrt
           PACKAGES: mihomo-alpha zapret purewrt luci-app-purewrt
           NO_REFRESH_CHECK: 1
+          # Verbose so a swallowed golang-bootstrap/host-compile failure prints
+          # its real cause (OOM / "No space left on device" / compiler error).
+          # Drop once builds are green.
+          V: sc
       - uses: actions/upload-artifact@v4
         with:
           name: purewrt-${{ matrix.branch }}-${{ matrix.arch }}

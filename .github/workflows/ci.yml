@@ -41,4 +41,5 @@ jobs:
           FEEDNAME: purewrt
           PACKAGES: mihomo-alpha zapret purewrt luci-app-purewrt
           NO_REFRESH_CHECK: 1
+          V: sc
       - run: ls -R bin/packages/*/purewrt/ || true
