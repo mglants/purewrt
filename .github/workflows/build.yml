@@ -20,13 +20,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        branch: [openwrt-24.10, openwrt-25.12]
+        # branch: [openwrt-24.10, openwrt-25.12]
+        branch: [openwrt-25.12]
         arch:
-          - x86_64
+          # - x86_64
           - aarch64_cortex-a53   # Cudy WR3000H, BananaPi BPi-R3 Mini
-          - aarch64_cortex-a72   # RPi4 / many mvebu
-          - aarch64_cortex-a76   # RPi5
-          - mipsel_24kc          # ramips/mt7621 (very common)
+          # - aarch64_cortex-a72   # RPi4 / many mvebu
+          # - aarch64_cortex-a76   # RPi5
+          # - mipsel_24kc          # ramips/mt7621 (very common)
     steps:
       - uses: actions/checkout@v4
       - uses: openwrt/gh-action-sdk@v11
