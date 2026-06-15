@@ -27,19 +27,13 @@ jobs:
       - run: go vet ./...
       - run: go build ./cmd/purewrt ./cmd/purewrt-check ./cmd/purewrt-api
 
-  # Cheap package smoke build: the OpenWrt SDK toolchain ships prebuilt in the
-  # gh-action-sdk container, so this catches Makefile/feed breakage in minutes
-  # (container pull only — no toolchain build).
+  # Cheap package smoke build on ubuntu-latest (gh-action-sdk ships the toolchain
+  # prebuilt). Covers x86_64 + mipsel_24kc on 25.12 so a feed/Makefile break — or
+  # the mipsel build under investigation — is caught fast. Push-only to keep fork
+  # PRs light. Reuses _build.yml.
   smoke-build:
-    name: smoke build (x86_64 / 25.12)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: openwrt/gh-action-sdk@v11
-        env:
-          ARCH: x86_64-openwrt-25.12
-          FEEDNAME: purewrt
-          PACKAGES: mihomo-alpha zapret purewrt luci-app-purewrt
-          NO_REFRESH_CHECK: 1
-          V: sc
-      - run: ls -R bin/packages/*/purewrt/ || true
+    if: github.event_name == 'push'
+    uses: ./.github/workflows/_build.yml
+    with:
+      runner: ubuntu-latest
+      matrix: '{"branch":["openwrt-25.12"],"arch":["x86_64","mipsel_24kc"]}'
