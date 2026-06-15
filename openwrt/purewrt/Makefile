@@ -9,19 +9,17 @@ PKG_RELEASE:=1
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)
 PKG_BUILD_PARALLEL:=1
 
-# Dual-mode source resolution:
-#   - As a feed package (openwrt/gh-action-sdk): the package dir holds only this
-#     Makefile, so fetch the Go sources from git. CI seds PKG_SOURCE_VERSION to
-#     the tag/commit being built.
-#   - Local Taskfile build: package:sync rsyncs the whole repo into the package
-#     dir, so `cmd/` is present and we build straight from the working tree —
-#     no fetch, so uncommitted changes build.
+# Source location (purewrt builds from the checked-out repo — NO PKG_SOURCE, so
+# no download/mirror-hash for our own fast-moving source):
+#   - feed package (gh-action-sdk): this Makefile is at openwrt/purewrt/, the
+#     repo root (with cmd/, internal/, go.mod) is two levels up (the feed is
+#     src-linked at /feed → CURDIR=/feed/openwrt/purewrt).
+#   - local Taskfile build: package:sync rsyncs the whole repo into the package
+#     dir, so the sources sit right alongside this Makefile.
 ifeq ($(wildcard $(CURDIR)/cmd),)
-PKG_SOURCE_PROTO:=git
-PKG_SOURCE_URL:=https://github.com/mglants/purewrt.git
-PKG_SOURCE_VERSION:=main
-PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
-PKG_MIRROR_HASH:=skip
+PUREWRT_SRC:=$(CURDIR)/../..
+else
+PUREWRT_SRC:=$(CURDIR)
 endif
 
 PKG_MAINTAINER:=PureWRT Developers
@@ -73,25 +71,14 @@ Build/Configure=$(call GoPackage/Build/Configure)
 Build/Compile=$(call GoPackage/Build/Compile)
 Build/InstallDev=$(call GoPackage/Build/InstallDev,$(1))
 
-# Normalise both source modes to a common layout under $(PKG_BUILD_DIR):
-# the Go module at the root, plus files/ and luci/ for the install recipes.
-ifeq ($(wildcard $(CURDIR)/cmd),)
-# Feed/git mode: sources already unpacked to $(PKG_BUILD_DIR) with the repo's
-# openwrt/ subdir — hoist files/ and luci/ to the root.
+# Copy the checked-out sources into the build dir: the Go module at the root
+# plus files/ and luci/ for the install recipes.
 define Build/Prepare
 	$(Build/Prepare/Default)
-	$(CP) $(PKG_BUILD_DIR)/openwrt/files $(PKG_BUILD_DIR)/files
-	$(CP) $(PKG_BUILD_DIR)/openwrt/luci $(PKG_BUILD_DIR)/luci
+	$(CP) $(PUREWRT_SRC)/cmd $(PUREWRT_SRC)/internal $(PUREWRT_SRC)/go.mod $(PUREWRT_SRC)/go.sum $(PKG_BUILD_DIR)/
+	$(CP) $(PUREWRT_SRC)/openwrt/files $(PKG_BUILD_DIR)/files
+	$(CP) $(PUREWRT_SRC)/openwrt/luci $(PKG_BUILD_DIR)/luci
 endef
-else
-# Local Taskfile mode: copy the working tree into the build dir.
-define Build/Prepare
-	$(Build/Prepare/Default)
-	$(CP) $(CURDIR)/cmd $(CURDIR)/internal $(CURDIR)/go.mod $(CURDIR)/go.sum $(PKG_BUILD_DIR)/
-	$(CP) $(CURDIR)/openwrt/files $(PKG_BUILD_DIR)/files
-	$(CP) $(CURDIR)/openwrt/luci $(PKG_BUILD_DIR)/luci
-endef
-endif
 
 define Package/purewrt/install
 	$(INSTALL_DIR) $(1)/usr/bin

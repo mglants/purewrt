@@ -31,13 +31,6 @@ jobs:
           - mipsel_24kc
     steps:
       - uses: actions/checkout@v4
-      - name: Pin package version
-        run: |
-          ver="$(cat VERSION)"
-          sed -i "s/^PKG_VERSION:=.*/PKG_VERSION:=${ver}/" openwrt/purewrt/Makefile
-          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            sed -i "s|^PKG_SOURCE_VERSION:=.*|PKG_SOURCE_VERSION:=${GITHUB_REF_NAME}|" openwrt/purewrt/Makefile
-          fi
       - uses: openwrt/gh-action-sdk@v11
         env:
           ARCH: ${{ matrix.arch }}-${{ matrix.branch }}

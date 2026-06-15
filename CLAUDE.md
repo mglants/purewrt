@@ -130,10 +130,12 @@ case, an rpcd dispatcher arm, an ACL entry, and the view. Menu entries live in
 
 ## OpenWrt packaging
 
-`openwrt/purewrt/Makefile` is the `purewrt` package (dual-mode: builds from the
-working tree under the local `Taskfile` rsync, or fetches its Go sources via
-`PKG_SOURCE`-git when built as a feed package by `openwrt/gh-action-sdk` in CI —
-gated on whether `$(CURDIR)/cmd` exists). `openwrt/mihomo-alpha/Makefile` and
+`openwrt/purewrt/Makefile` is the `purewrt` package. It builds from the
+checked-out repo (no `PKG_SOURCE`/download): `PUREWRT_SRC` resolves to
+`$(CURDIR)` under the local `Taskfile` rsync, or to `$(CURDIR)/../..` (the repo
+root) when built as a feed package by `openwrt/gh-action-sdk` in CI (the feed is
+src-linked at `/feed`, so the Makefile sits at `/feed/openwrt/purewrt`), gated on
+whether `$(CURDIR)/cmd` exists. `openwrt/mihomo-alpha/Makefile` and
 `openwrt/zapret/Makefile` are bundled dependency packages built from upstream
 git tags. `openwrt/files/etc/init.d/purewrt` is the service init script — boot
 runs `purewrt apply --force` in the foreground (the `--force` is mandatory; see

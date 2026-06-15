@@ -7,7 +7,10 @@ PKG_RELEASE:=1
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/bol-van/zapret2.git
 PKG_SOURCE_VERSION:=v1.0.1
-PKG_MIRROR_HASH:=skip
+# Real tarball hash (the SDK's strict check rejects `skip`). Pinned to the
+# v1.0.1 git tag, so this is stable; if the SDK ever recomputes a different
+# value it prints "PKG_MIRROR_HASH ... set to <hash>" — copy it here.
+PKG_MIRROR_HASH:=c6c0ab421232f4f56c6e20568e7d4e2b6a7df5a4932748a4a2a1a5b87f20a03a
 
 PKG_LICENSE:=MIT
 PKG_MAINTAINER:=PureWRT Developers
