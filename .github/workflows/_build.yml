@@ -1,0 +1,62 @@
+name: reusable build
+
+# Reusable build of the PureWRT packages via the OpenWrt SDK action.
+# Called by build.yml (unsigned, manual) and release.yml (signed, on tag).
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: Runner label(s) for the matrix jobs.
+        type: string
+        default: ubuntu-latest
+      sign:
+        description: Sign packages + build the index (release).
+        type: boolean
+        default: false
+      artifact-prefix:
+        description: Artifact name prefix (publish parses feed-<branch>-<arch>).
+        type: string
+        default: purewrt
+      matrix:
+        description: JSON strategy matrix. Default = full curated arch x branch set.
+        type: string
+        # arches: x86_64; aarch64_cortex-a53 (Cudy WR3000*, BPi-R3 Mini); a72 (RPi4);
+        # a76 (RPi5); mipsel_24kc (ramips/mt7621). branches: openwrt-24.10, openwrt-25.12.
+        default: >-
+          {"branch":["openwrt-24.10","openwrt-25.12"],
+           "arch":["x86_64","aarch64_cortex-a53","aarch64_cortex-a72","aarch64_cortex-a76","mipsel_24kc"]}
+    secrets:
+      USIGN_SECRET_KEY:
+        required: false
+      APK_PRIVATE_KEY:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.branch }} / ${{ matrix.arch }}
+    runs-on: ${{ inputs.runner }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(inputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: openwrt/gh-action-sdk@v11
+        env:
+          ARCH: ${{ matrix.arch }}-${{ matrix.branch }}
+          FEEDNAME: purewrt
+          PACKAGES: mihomo-alpha zapret purewrt luci-app-purewrt
+          NO_REFRESH_CHECK: 1
+          # Verbose so a swallowed compile failure prints its real cause.
+          # Drop once builds are green.
+          V: sc
+          INDEX: ${{ inputs.sign && '1' || '0' }}
+          KEY_BUILD: ${{ inputs.sign && secrets.USIGN_SECRET_KEY || '' }}
+          PRIVATE_KEY: ${{ inputs.sign && secrets.APK_PRIVATE_KEY || '' }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-prefix }}-${{ matrix.branch }}-${{ matrix.arch }}
+          path: bin/packages/*/purewrt/*
+          if-no-files-found: error
