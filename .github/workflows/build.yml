@@ -15,5 +15,3 @@ permissions:
 jobs:
   build:
     uses: ./.github/workflows/_build.yml
-    with:
-      runner: arc-runner-set-nikkix
