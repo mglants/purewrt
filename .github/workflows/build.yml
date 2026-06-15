@@ -1,0 +1,42 @@
+name: build
+
+# Full platform/version matrix build via the official OpenWrt SDK action
+# (prebuilt toolchain container — no SDK/toolchain build on the runner).
+# Manual trigger; produces unsigned .ipk/.apk artifacts (no publishing).
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.branch }} / ${{ matrix.arch }}
+    runs-on: arc-runner-set-nikkix
+    strategy:
+      fail-fast: false
+      matrix:
+        branch: [openwrt-24.10, openwrt-25.12]
+        arch:
+          - x86_64
+          - aarch64_cortex-a53   # Cudy WR3000H, BananaPi BPi-R3 Mini
+          - aarch64_cortex-a72   # RPi4 / many mvebu
+          - aarch64_cortex-a76   # RPi5
+          - mipsel_24kc          # ramips/mt7621 (very common)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: openwrt/gh-action-sdk@v11
+        env:
+          ARCH: ${{ matrix.arch }}-${{ matrix.branch }}
+          FEEDNAME: purewrt
+          PACKAGES: mihomo-alpha zapret purewrt luci-app-purewrt
+          NO_REFRESH_CHECK: 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: purewrt-${{ matrix.branch }}-${{ matrix.arch }}
+          path: bin/packages/*/purewrt/*
+          if-no-files-found: error

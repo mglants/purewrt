@@ -1,0 +1,33 @@
+Domain: chatgpt.com
+
+DNS:
+  resolver: dnsmasq -> mihomo DNS 127.0.0.1:7874
+  A: [104.x.x.x]
+  AAAA: [2606:x:x:x::x]
+  DoH: OK via DNSProxy
+
+Rule:
+  matched provider: ai_domains
+  matched rule: DOMAIN-SUFFIX,chatgpt.com
+  section: ai
+  action: proxy
+
+OpenWrt:
+  nftset: proxy_ai4
+  contains 104.x.x.x: yes
+  tproxy port: 7895
+  fwmark: 0x1/0xff
+  route table: 100
+
+Mwan3:
+  installed: yes
+  mode: coexist
+  direct traffic: handled by mwan3
+  proxy outbound: mwan3 default policy
+
+Mihomo:
+  inbound: tproxy-ai
+  group: AI
+  selected node: US-1
+  node status: alive
+  latency: 180 ms

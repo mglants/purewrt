@@ -1,0 +1,98 @@
+{
+  "admin/services/purewrt": {
+    "title": "PureWRT",
+    "order": 60,
+    "action": { "type": "firstchild" },
+    "depends": { "acl": [ "luci-app-purewrt" ] }
+  },
+  "admin/services/purewrt/general": {
+    "title": "General",
+    "order": 5,
+    "action": { "type": "view", "path": "purewrt/general" },
+    "depends": { "acl": [ "luci-app-purewrt" ] }
+  },
+  "admin/services/purewrt/wizard": {
+    "order": 8,
+    "action": { "type": "view", "path": "purewrt/wizard" },
+    "depends": { "acl": [ "luci-app-purewrt" ] },
+    "firstchild_ineligible": true
+  },
+  "admin/services/purewrt/settings": {
+    "title": "Settings",
+    "order": 20,
+    "action": { "type": "view", "path": "purewrt/settings" },
+    "depends": { "acl": [ "luci-app-purewrt" ] }
+  },
+  "admin/services/purewrt/subscriptions": {
+    "title": "Proxy Subscriptions",
+    "order": 30,
+    "action": { "type": "view", "path": "purewrt/subscriptions" },
+    "depends": { "acl": [ "luci-app-purewrt" ] }
+  },
+  "admin/services/purewrt/mihomo": {
+    "title": "Mihomo",
+    "order": 35,
+    "action": { "type": "view", "path": "purewrt/mihomo" },
+    "depends": { "acl": [ "luci-app-purewrt" ] }
+  },
+  "admin/services/purewrt/ruleproviders": {
+    "title": "Rule Providers",
+    "order": 40,
+    "action": { "type": "view", "path": "purewrt/ruleproviders" },
+    "depends": { "acl": [ "luci-app-purewrt" ] }
+  },
+  "admin/services/purewrt/proxyproviders": {
+    "title": "Proxy Providers",
+    "order": 45,
+    "action": { "type": "view", "path": "purewrt/proxyproviders" },
+    "depends": { "acl": [ "luci-app-purewrt" ] }
+  },
+  "admin/services/purewrt/sections": {
+    "title": "Sections / Routing",
+    "order": 50,
+    "action": { "type": "view", "path": "purewrt/sections" },
+    "depends": { "acl": [ "luci-app-purewrt" ] }
+  },
+  "admin/services/purewrt/dns": {
+    "title": "DNS",
+    "order": 70,
+    "action": { "type": "view", "path": "purewrt/dns" },
+    "depends": { "acl": [ "luci-app-purewrt" ] }
+  },
+  "admin/services/purewrt/zapret": {
+    "title": "Zapret",
+    "order": 85,
+    "action": { "type": "view", "path": "purewrt/zapret" },
+    "depends": { "acl": [ "luci-app-purewrt" ] }
+  },
+  "admin/services/purewrt/diagnostics": {
+    "title": "Diagnostics",
+    "order": 100,
+    "action": { "type": "view", "path": "purewrt/diagnostics" },
+    "depends": { "acl": [ "luci-app-purewrt" ] }
+  },
+  "admin/services/purewrt/blocking": {
+    "title": "What’s Blocked Now",
+    "order": 102,
+    "action": { "type": "view", "path": "purewrt/blocking" },
+    "depends": { "acl": [ "luci-app-purewrt" ] }
+  },
+  "admin/services/purewrt/client-traffic": {
+    "title": "Client Traffic",
+    "order": 103,
+    "action": { "type": "view", "path": "purewrt/client_traffic" },
+    "depends": { "acl": [ "luci-app-purewrt" ] }
+  },
+  "admin/services/purewrt/statistics": {
+    "title": "Statistics",
+    "order": 105,
+    "action": { "type": "view", "path": "purewrt/statistics" },
+    "depends": { "acl": [ "luci-app-purewrt" ] }
+  },
+  "admin/services/purewrt/logs": {
+    "title": "Logs",
+    "order": 110,
+    "action": { "type": "view", "path": "purewrt/logs" },
+    "depends": { "acl": [ "luci-app-purewrt" ] }
+  }
+}

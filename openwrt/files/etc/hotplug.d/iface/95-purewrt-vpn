@@ -1,0 +1,25 @@
+#!/bin/sh
+
+[ "$ACTION" = "ifup" ] || exit 0
+[ -n "$DEVICE" ] || exit 0
+
+enabled="$(uci -q get purewrt.settings.enabled)"
+[ "$enabled" = "0" ] && exit 0
+
+match=0
+for section in $(uci -q show purewrt | sed -n "s/^purewrt\.\([^=]*\)=vpn$/\1/p"); do
+	v_enabled="$(uci -q get purewrt.$section.enabled)"
+	[ "$v_enabled" = "0" ] && continue
+	iface="$(uci -q get purewrt.$section.interface)"
+	[ -n "$iface" ] || continue
+	if [ "$DEVICE" = "$iface" ] || [ "$INTERFACE" = "$iface" ]; then
+		match=1
+		break
+	fi
+done
+
+[ "$match" = "1" ] || exit 0
+
+logger -t purewrt-vpn-hotplug "vpn interface up device=$DEVICE interface=$INTERFACE; scheduling PureWRT reload"
+sleep 5
+/etc/init.d/purewrt reload >/dev/null 2>&1 || logger -t purewrt-vpn-hotplug "PureWRT reload failed after VPN ifup device=$DEVICE"

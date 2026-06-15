@@ -1,0 +1,26 @@
+#!/bin/sh
+[ -d /etc/purewrt/generated ] || mkdir -p /etc/purewrt/generated /etc/purewrt/providers /etc/purewrt/rulesets /var/run/purewrt /var/log/purewrt
+
+# Create the unprivileged `purewrt` system user that the purewrt-api init
+# script switches to (H.5). Idempotent: only adds when missing. Uses BusyBox
+# adduser/addgroup which OpenWrt ships in the default rootfs.
+if ! grep -q '^purewrt:' /etc/passwd 2>/dev/null; then
+    if command -v addgroup >/dev/null 2>&1; then
+        addgroup -S purewrt 2>/dev/null || true
+        adduser -S -D -H -G purewrt -h /var/lib/purewrt -s /bin/false purewrt 2>/dev/null || true
+    fi
+fi
+# Runtime/log dirs need to be writable by the unprivileged user.
+chown -R purewrt:purewrt /var/run/purewrt /var/log/purewrt 2>/dev/null || true
+if uci get purewrt.settings.secret 2>/dev/null | grep -q auto-generated-secret; then
+    # 32 bytes / 256 bits → 64 hex chars. Was 24 bytes; bumped per H.3 of the
+    # bypass-improvements plan so the mihomo external-controller token can't
+    # be brute-forced even by a LAN attacker with seconds of access.
+    uci set purewrt.settings.secret="$(head -c 32 /dev/urandom | hexdump -ve '1/1 "%.2x"')"
+    uci commit purewrt
+fi
+uci -q get purewrt.settings.update_concurrency >/dev/null || {
+    uci set purewrt.settings.update_concurrency='2'
+    uci commit purewrt
+}
+exit 0

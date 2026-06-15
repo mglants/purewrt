@@ -1,0 +1,74 @@
+{
+  "__comment": "Example Grafana dashboard for PureWRT's /metrics (purewrt-api, metrics_enabled=1). Import via Dashboards → Import. Assumes a Prometheus datasource named 'Prometheus' scraping the router on :8787.",
+  "title": "PureWRT",
+  "uid": "purewrt",
+  "schemaVersion": 39,
+  "tags": ["purewrt", "openwrt"],
+  "time": { "from": "now-24h", "to": "now" },
+  "refresh": "1m",
+  "panels": [
+    {
+      "id": 1, "type": "timeseries", "title": "Apply outcomes (per hour)",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "increase(purewrt_apply_total[1h])", "legendFormat": "{{result}}" }
+      ]
+    },
+    {
+      "id": 2, "type": "timeseries", "title": "Apply duration p95 (ms)",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "histogram_quantile(0.95, rate(purewrt_apply_duration_ms_bucket[6h]))", "legendFormat": "p95" },
+        { "expr": "histogram_quantile(0.50, rate(purewrt_apply_duration_ms_bucket[6h]))", "legendFormat": "p50" }
+      ]
+    },
+    {
+      "id": 3, "type": "timeseries", "title": "Generate duration p95 by group (ms)",
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "histogram_quantile(0.95, sum by (group, le) (rate(purewrt_generate_duration_ms_bucket[6h])))", "legendFormat": "{{group}}" }
+      ]
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "Provider download outcomes (per 6h)",
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "increase(purewrt_provider_download_total[6h])", "legendFormat": "{{result}}" }
+      ]
+    },
+    {
+      "id": 5, "type": "stat", "title": "Days to subscription expiry",
+      "gridPos": { "x": 0, "y": 16, "w": 6, "h": 6 },
+      "targets": [
+        { "expr": "purewrt_subscription_min_seconds_to_expiry / 86400" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "d", "thresholds": { "mode": "absolute", "steps": [
+        { "color": "red", "value": null }, { "color": "orange", "value": 3 }, { "color": "green", "value": 7 }
+      ] } } }
+    },
+    {
+      "id": 6, "type": "stat", "title": "Geo data age",
+      "gridPos": { "x": 6, "y": 16, "w": 6, "h": 6 },
+      "targets": [
+        { "expr": "purewrt_geoip_data_age_seconds / 86400" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "d", "thresholds": { "mode": "absolute", "steps": [
+        { "color": "green", "value": null }, { "color": "orange", "value": 7 }, { "color": "red", "value": 14 }
+      ] } } }
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "nftset cardinality by section",
+      "gridPos": { "x": 12, "y": 16, "w": 6, "h": 6 },
+      "targets": [
+        { "expr": "purewrt_nftset_cardinality", "legendFormat": "{{section}}/{{family}}" }
+      ]
+    },
+    {
+      "id": 8, "type": "stat", "title": "Active zapret strategies",
+      "gridPos": { "x": 18, "y": 16, "w": 6, "h": 6 },
+      "targets": [
+        { "expr": "purewrt_zapret_strategies_active" }
+      ]
+    }
+  ]
+}

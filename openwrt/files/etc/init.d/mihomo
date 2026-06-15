@@ -1,0 +1,45 @@
+#!/bin/sh /etc/rc.common
+START=94
+STOP=10
+USE_PROCD=1
+log_level_num() {
+	case "$(uci -q get purewrt.settings.log_level)" in
+		error|err) echo 0 ;;
+		info|notice) echo 2 ;;
+		debug) echo 3 ;;
+		*) echo 1 ;;
+	esac
+}
+log_msg() {
+	level="$1"
+	shift
+	case "$level" in
+		error|err) need=0 ;;
+		info|notice) need=2 ;;
+		debug) need=3 ;;
+		*) need=1 ;;
+	esac
+	[ "$(log_level_num)" -ge "$need" ] && logger -t mihomo "$level $*"
+}
+start_service() {
+	local bin workdir config
+	config_load purewrt
+	config_get bin settings mihomo_bin '/usr/bin/mihomo'
+	config_get workdir settings workdir '/etc/purewrt'
+	config_get config settings mihomo_config '/etc/purewrt/generated/mihomo.yaml'
+	log_msg warn "start: mihomo service start requested"
+	log_msg info "start: bin=$bin workdir=$workdir config=$config"
+	mkdir -p "$(dirname "$config")"
+	if [ ! -s "$config" ]; then
+		log_msg info "start: mihomo config missing, generating PureWRT config"
+		/usr/bin/purewrt generate 2>&1 | logger -t mihomo-purewrt-generate
+	fi
+	procd_open_instance
+    procd_set_param command "$bin" -d "$workdir" -f "$config"
+    procd_set_param stdout 1
+    procd_set_param stderr 1
+    procd_set_param respawn
+    procd_close_instance
+	log_msg info "start: mihomo procd instance configured"
+}
+reload_service() { log_msg info "reload: sending signal to mihomo"; procd_send_signal mihomo; }

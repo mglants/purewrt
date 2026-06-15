@@ -1,0 +1,545 @@
+package config
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"github.com/purewrt/purewrt/internal/system"
+)
+
+// DefaultGeoSources returns canonical MetaCubeX URLs for the three geo
+// files. Used as documentation for the UCI options and as the auto-
+// seed source when a user adds their first geo-backed rule provider
+// (see seedGeoDefaults). Users wanting a mirror can override per-target.
+//
+// Lives in this package (not internal/manager) so write.go can call it
+// without circular-import gymnastics; internal/manager re-exports a
+// thin proxy for callers that already use it from there.
+func DefaultGeoSources() map[string]string {
+	return map[string]string{
+		"geoip":   "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geoip.dat",
+		"geosite": "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat",
+		"mmdb":    "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb",
+	}
+}
+
+// Serialize renders the full Config back to UCI text — the canonical
+// normalization pass. Exported (in addition to Save) so the export/import
+// feature can produce a portable config bundle without touching disk.
+func Serialize(c Config) []byte {
+	var b bytes.Buffer
+	writeMain(&b, c.Settings)
+	writeDNS(&b, c.DNS)
+	writeMwan3(&b, c.Mwan3)
+	for _, p := range c.ZapretProfiles {
+		writeZapretProfile(&b, p)
+	}
+	for _, s := range c.ZapretStrategies {
+		writeZapretStrategy(&b, s)
+	}
+	for _, v := range c.VPNs {
+		writeVPN(&b, v)
+	}
+	for _, d := range c.Devices {
+		writeDevice(&b, d)
+	}
+	for _, s := range c.Sections {
+		writeSection(&b, s)
+	}
+	for _, s := range c.Subscriptions {
+		writeSubscription(&b, s)
+	}
+	for _, p := range c.ProxyProviders {
+		writeProxyProvider(&b, p)
+	}
+	for _, p := range c.RuleProviders {
+		writeRuleProvider(&b, p)
+	}
+	writeBypass(&b, c.Bypass)
+	return b.Bytes()
+}
+
+func Save(path string, c Config) error {
+	return system.AtomicWrite(path, Serialize(c), 0600)
+}
+
+func Backup(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	backup := filepath.Join(filepath.Dir(path), filepath.Base(path)+".purewrt.bak")
+	return backup, system.AtomicWrite(backup, data, 0600)
+}
+
+func EnsureDefaults(c Config) Config {
+	defaults := Default()
+	seen := map[string]bool{}
+	for _, s := range c.Sections {
+		seen[s.Name] = true
+	}
+	for _, s := range defaults.Sections {
+		if !seen[s.Name] {
+			c.Sections = append(c.Sections, s)
+		}
+	}
+	sort.SliceStable(c.Sections, func(i, j int) bool { return c.Sections[i].Priority < c.Sections[j].Priority })
+	return c
+}
+
+func UpsertSubscription(c Config, s Subscription) Config {
+	for i := range c.Subscriptions {
+		if c.Subscriptions[i].Name == s.Name || c.Subscriptions[i].URL == s.URL {
+			c.Subscriptions[i] = s
+			return c
+		}
+	}
+	c.Subscriptions = append(c.Subscriptions, s)
+	return c
+}
+
+func UpsertProxyProvider(c Config, p ProxyProvider) Config {
+	for i := range c.ProxyProviders {
+		if c.ProxyProviders[i].Name == p.Name || (p.URL != "" && c.ProxyProviders[i].URL == p.URL) {
+			old := c.ProxyProviders[i]
+			if old.Mwan3Policy != "" {
+				p.Mwan3Policy = old.Mwan3Policy
+			}
+			c.ProxyProviders[i] = p
+			return c
+		}
+	}
+	c.ProxyProviders = append(c.ProxyProviders, p)
+	return c
+}
+
+func UpsertRuleProvider(c Config, p RuleProvider) Config {
+	for i := range c.RuleProviders {
+		if c.RuleProviders[i].Name == p.Name || (p.URL != "" && c.RuleProviders[i].URL == p.URL) {
+			old := c.RuleProviders[i]
+			if old.UserOverriddenSection {
+				p.Section = old.Section
+				p.UserOverriddenSection = true
+			}
+			if old.UserOverriddenAction {
+				p.RouteAction = old.RouteAction
+				p.UserOverriddenAction = true
+			}
+			if old.Priority != 0 {
+				p.Priority = old.Priority
+			}
+			if !old.Enabled {
+				p.Enabled = false
+			}
+			c.RuleProviders[i] = p
+			c = seedGeoDefaults(c, p)
+			return c
+		}
+	}
+	c.RuleProviders = append(c.RuleProviders, p)
+	c = seedGeoDefaults(c, p)
+	return c
+}
+
+// seedGeoDefaults pre-fills Settings.GeoRefresh{GeoIP,GeoSite,MMDB}URL
+// from the canonical MetaCubeX URLs when a geo-backed rule provider is
+// added and the corresponding URL is still empty. Without this the
+// next `geo-refresh` would fall back to the same defaults silently —
+// seeding makes the values visible in the Settings page so users can
+// edit them to point at a mirror without first running geo-refresh.
+//
+// We don't un-seed when a provider is later deleted: the URL becomes
+// the user's value at that point, deleting the provider is not a
+// reason to discard their configured download source.
+func seedGeoDefaults(c Config, p RuleProvider) Config {
+	d := DefaultGeoSources()
+	switch p.Format {
+	case "geosite":
+		if c.Settings.GeoRefreshGeoSiteURL == "" {
+			c.Settings.GeoRefreshGeoSiteURL = d["geosite"]
+		}
+	case "geoip":
+		if c.Settings.GeoRefreshGeoIPURL == "" {
+			c.Settings.GeoRefreshGeoIPURL = d["geoip"]
+		}
+		// MMDB isn't load-bearing for the nftset-expansion path but the
+		// existing geo-refresh cron downloads it anyway when configured,
+		// and a future GeoIP rule provider that uses MMDB benefits.
+		if c.Settings.GeoRefreshMMDBURL == "" {
+			c.Settings.GeoRefreshMMDBURL = d["mmdb"]
+		}
+	}
+	return c
+}
+
+func UpsertSectionProxyGroup(c Config, s Section) Config {
+	for i := range c.Sections {
+		if c.Sections[i].Name == s.Name {
+			if c.Sections[i].UserOverriddenProxyGroup {
+				return c
+			}
+			if s.ProxyGroup != "" {
+				c.Sections[i].ProxyGroup = s.ProxyGroup
+			}
+			if s.ProxyGroupType != "" {
+				c.Sections[i].ProxyGroupType = s.ProxyGroupType
+			}
+			c.Sections[i].ProxyFilter = s.ProxyFilter
+			c.Sections[i].ProxyExcludeFilter = s.ProxyExcludeFilter
+			if s.ProxyStrategy != "" {
+				c.Sections[i].ProxyStrategy = s.ProxyStrategy
+			}
+			c.Sections[i].ProxyHealthCheckURL = s.ProxyHealthCheckURL
+			c.Sections[i].ProxyHealthCheckInterval = s.ProxyHealthCheckInterval
+			return c
+		}
+	}
+	if s.Name != "" {
+		if s.Action == "" {
+			s.Action = "proxy"
+		}
+		if s.ProxyGroup == "" {
+			s.ProxyGroup = TitleASCII(s.Name)
+		}
+		if s.ProxyGroupType == "" {
+			s.ProxyGroupType = "url-test"
+		}
+		if s.ProxyStrategy == "" {
+			s.ProxyStrategy = "sticky-sessions"
+		}
+		c.Sections = append(c.Sections, s)
+	}
+	return c
+}
+
+func q(v string) string { return "'" + strings.ReplaceAll(v, "'", "'\\''") + "'" }
+func yn(v bool) string {
+	if v {
+		return "1"
+	}
+	return "0"
+}
+func opt(b *bytes.Buffer, key, val string) { fmt.Fprintf(b, "    option %s %s\n", key, q(val)) }
+func optNonEmpty(b *bytes.Buffer, key, val string) {
+	if val != "" {
+		opt(b, key, val)
+	}
+}
+func optb(b *bytes.Buffer, key string, val bool)    { opt(b, key, yn(val)) }
+func opti(b *bytes.Buffer, key string, val int)     { opt(b, key, fmt.Sprintf("%d", val)) }
+func opti64(b *bytes.Buffer, key string, val int64) { opt(b, key, fmt.Sprintf("%d", val)) }
+func listv(b *bytes.Buffer, key string, vals []string) {
+	for _, v := range vals {
+		fmt.Fprintf(b, "    list %s %s\n", key, q(v))
+	}
+}
+
+func writeMain(b *bytes.Buffer, s Settings) {
+	fmt.Fprintln(b, "config main 'settings'")
+	opti(b, "config_version", s.ConfigVersion)
+	optb(b, "enabled", s.Enabled)
+	opt(b, "workdir", s.Workdir)
+	opt(b, "runtime_dir", s.RuntimeDir)
+	optNonEmpty(b, "generated_dir", s.GeneratedDir)
+	optNonEmpty(b, "dnsmasq_include_dir", s.DNSMasqIncludeDir)
+	opt(b, "mihomo_bin", s.MihomoBin)
+	optNonEmpty(b, "mihomo_config", s.MihomoConfig)
+	optb(b, "mihomo_allow_lan", s.MihomoAllowLAN)
+	opt(b, "external_controller", s.ExternalController)
+	opt(b, "secret", s.Secret)
+	opt(b, "dns_backend", s.DNSBackend)
+	opt(b, "firewall_backend", s.FirewallBackend)
+	opt(b, "fwmark", s.FwMark)
+	opt(b, "fwmark_mask", s.FwMarkMask)
+	opt(b, "route_table", s.RouteTable)
+	opt(b, "ip_rule_priority", s.IPRulePriority)
+	optb(b, "ipv6", s.IPv6)
+	optb(b, "fake_ip", s.FakeIP)
+	optb(b, "sniffer", s.Sniffer)
+	opt(b, "dns_listen", s.DNSListen)
+	optb(b, "auto_reload", s.AutoReload)
+	optb(b, "safe_apply", s.SafeApply)
+	optb(b, "rollback_on_fail", s.RollbackOnFail)
+	opti64(b, "apply_backup_max_bytes", s.ApplyBackupMaxBytes)
+	opt(b, "mihomo_channel", s.MihomoChannel)
+	opt(b, "mihomo_release_api", s.MihomoReleaseAPI)
+	opt(b, "mihomo_stable_release_api", s.MihomoStableReleaseAPI)
+	optb(b, "mihomo_mixin_enabled", s.MihomoMixinEnabled)
+	optb(b, "mihomo_auto_update_enabled", s.MihomoAutoUpdateEnabled)
+	opt(b, "mihomo_auto_update_cron", s.MihomoAutoUpdateCron)
+	opt(b, "mihomo_version", s.MihomoVersion)
+	opt(b, "mihomo_arch", s.MihomoArch)
+	opt(b, "mihomo_asset_url", s.MihomoAssetURL)
+	opt(b, "mihomo_sha256_url", s.MihomoSHA256URL)
+	optb(b, "mihomo_geodata_enabled", s.MihomoGeodataEnabled)
+	optb(b, "update_via_proxy", s.UpdateViaProxy)
+	opt(b, "update_proxy_url", s.UpdateProxyURL)
+	opti(b, "update_concurrency", s.UpdateConcurrency)
+	optb(b, "auto_update_enabled", s.AutoUpdateEnabled)
+	opt(b, "auto_update_cron", s.AutoUpdateCron)
+	optb(b, "reload_after_update", s.ReloadAfterUpdate)
+	opti(b, "backup_retention", s.BackupRetention)
+	optb(b, "background_updates", s.BackgroundUpdates)
+	opti(b, "boot_update_delay", s.BootUpdateDelay)
+	opti(b, "update_nice", s.UpdateNice)
+	opti(b, "update_ionice_class", s.UpdateIONiceClass)
+	opti(b, "update_ionice_level", s.UpdateIONiceLevel)
+	optb(b, "dashboard_enabled", s.DashboardEnabled)
+	opt(b, "dashboard_listen", s.DashboardListen)
+	opt(b, "dashboard_path", s.DashboardPath)
+	opt(b, "dashboard_url", s.DashboardURL)
+	optNonEmpty(b, "default_lists_base_url", s.DefaultListsBaseURL)
+	opt(b, "dashboard_name", s.DashboardName)
+	opt(b, "resource_profile", s.ResourceProfile)
+	opt(b, "cache_mode", s.CacheMode)
+	opt(b, "cache_dir", s.CacheDir)
+	opt(b, "artifact_cache_mode", s.ArtifactCacheMode)
+	opti64(b, "artifact_cache_max_bytes", s.ArtifactCacheMaxBytes)
+	opti(b, "artifact_cache_max_entries", s.ArtifactCacheMaxEntries)
+	opt(b, "rule_dedup_mode", s.RuleDedupMode)
+	opt(b, "log_level", s.LogLevel)
+	optNonEmpty(b, "log_format", s.LogFormat)
+	listv(b, "api_listen", s.APIListen)
+	optNonEmpty(b, "notify_url", s.NotifyURL)
+	optNonEmpty(b, "notify_format", s.NotifyFormat)
+	listv(b, "notify_on", s.NotifyOn)
+	optb(b, "metrics_enabled", s.MetricsEnabled)
+	optNonEmpty(b, "geo_refresh_geoip_url", s.GeoRefreshGeoIPURL)
+	optNonEmpty(b, "geo_refresh_geoip_sha", s.GeoRefreshGeoIPSHA)
+	optNonEmpty(b, "geo_refresh_geosite_url", s.GeoRefreshGeoSiteURL)
+	optNonEmpty(b, "geo_refresh_geosite_sha", s.GeoRefreshGeoSiteSHA)
+	optNonEmpty(b, "geo_refresh_mmdb_url", s.GeoRefreshMMDBURL)
+	optNonEmpty(b, "geo_refresh_mmdb_sha", s.GeoRefreshMMDBSHA)
+	optNonEmpty(b, "geo_refresh_dir", s.GeoRefreshGeoIPDir)
+	optNonEmpty(b, "geo_refresh_cron", s.GeoRefreshCron)
+	optb(b, "bootstrap_doh_enabled", s.BootstrapDoHEnabled)
+	listv(b, "bootstrap_doh_resolver", s.BootstrapDoHResolvers)
+	opti(b, "bootstrap_doh_timeout_ms", s.BootstrapDoHTimeoutMs)
+	optb(b, "bootstrap_proxy_fallback", s.BootstrapProxyFallback)
+	opt(b, "bootstrap_tls_fingerprint", s.BootstrapTLSFingerprint)
+	optNonEmpty(b, "bootstrap_tofu_path", s.BootstrapTOFUPath)
+	opti(b, "bootstrap_tofu_ttl_sec", s.BootstrapTOFUTTLSec)
+	optb(b, "bootstrap_health_gate", s.BootstrapHealthGate)
+	optNonEmpty(b, "zapret_upstream_config_path", s.ZapretUpstreamConfigPath)
+	opt(b, "ipv6_mode", s.IPv6Mode)
+	optb(b, "ipv6_reject_when_off", s.IPv6RejectWhenOff)
+	optb(b, "router_output_proxy", s.RouterOutputProxy)
+	opt(b, "cgroup_v2_path", s.CgroupV2Path)
+	optb(b, "wizard_vpn_pending", s.WizardVPNPending)
+	optb(b, "wizard_zapret_pending", s.WizardZapretPending)
+	listv(b, "ipv6_wan_interface", s.IPv6WANInterfaces)
+	fmt.Fprintln(b)
+}
+func writeDNS(b *bytes.Buffer, d DNS) {
+	fmt.Fprintln(b, "config dns 'dns'")
+	optb(b, "enabled", d.Enabled)
+	opt(b, "backend", d.Backend)
+	opt(b, "upstream_mode", d.UpstreamMode)
+	optb(b, "hijack_lan_dns", d.HijackLANDNS)
+	optb(b, "block_dot", d.BlockDoT)
+	optb(b, "block_doh3", d.BlockDoH3)
+	optb(b, "block_doq", d.BlockDoQ)
+	listv(b, "doh3_block_ip4", d.DoH3BlockIPs4)
+	listv(b, "doh3_block_ip6", d.DoH3BlockIPs6)
+	opt(b, "doh_policy", d.DoHPolicy)
+	opt(b, "listen", d.Listen)
+	optb(b, "fake_ip", d.FakeIP)
+	opt(b, "enhanced_mode", d.EnhancedMode)
+	opt(b, "proxy_group_type", d.ProxyGroupType)
+	opt(b, "proxy_filter", d.ProxyFilter)
+	opt(b, "proxy_exclude_filter", d.ProxyExcludeFilter)
+	opt(b, "proxy_strategy", d.ProxyStrategy)
+	listv(b, "doh_upstream", d.DoHUpstreams)
+	listv(b, "udp_upstream", d.UDPUpstreams)
+	listv(b, "doq_upstream", d.DoQUpstreams)
+	fmt.Fprintln(b)
+}
+func writeMwan3(b *bytes.Buffer, m Mwan3) {
+	fmt.Fprintln(b, "config mwan3 'mwan3'")
+	opt(b, "mode", m.Mode)
+	optb(b, "detect", m.Detect)
+	optb(b, "mmx_mask_auto", m.MMXMaskAuto)
+	opt(b, "mwan3_mask", m.Mwan3Mask)
+	opt(b, "purewrt_mark", m.PureWRTMark)
+	opt(b, "purewrt_mask", m.PureWRTMask)
+	opt(b, "rule_priority", m.RulePriority)
+	optb(b, "integrated_rules", m.IntegratedRules)
+	fmt.Fprintln(b)
+}
+
+func writeZapretProfile(b *bytes.Buffer, p ZapretProfile) {
+	fmt.Fprintln(b, "config zapret_profile")
+	opt(b, "name", p.Name)
+	optb(b, "enabled", p.Enabled)
+	opt(b, "network", p.Network)
+	opt(b, "device", p.Device)
+	opt(b, "interface_mode", p.InterfaceMode)
+	listv(b, "interface", p.Interfaces)
+	opt(b, "fwmark", p.FwMark)
+	opt(b, "nfqws_bin", p.NFQWSBin)
+	opt(b, "tpws_bin", p.TPWSBin)
+	optNonEmpty(b, "lua_bundle_dir", p.LuaBundleDir)
+	fmt.Fprintln(b)
+}
+
+func writeZapretStrategy(b *bytes.Buffer, s ZapretStrategy) {
+	fmt.Fprintf(b, "config zapret_strategy %s\n", q(s.Name))
+	opt(b, "name", s.Name)
+	optb(b, "enabled", s.Enabled)
+	opt(b, "profile", s.Profile)
+	opt(b, "preset", s.Preset)
+	opti(b, "queue_num", s.QueueNum)
+	listv(b, "protocols", s.Protocols)
+	opt(b, "tcp_ports", s.TCPPorts)
+	opt(b, "udp_ports", s.UDPPorts)
+	opti(b, "tcp_pkt_out", s.TCPPktOut)
+	opti(b, "tcp_pkt_in", s.TCPPktIn)
+	opti(b, "udp_pkt_out", s.UDPPktOut)
+	opti(b, "udp_pkt_in", s.UDPPktIn)
+	opt(b, "fake_dir", s.FakeDir)
+	opt(b, "params", s.Params)
+	fmt.Fprintln(b)
+}
+
+func writeVPN(b *bytes.Buffer, v VPN) {
+	fmt.Fprintln(b, "config vpn")
+	opt(b, "name", v.Name)
+	optb(b, "enabled", v.Enabled)
+	opt(b, "interface", v.Interface)
+	if v.RouteTable != "" {
+		opt(b, "route_table", v.RouteTable)
+	}
+	if v.FwMark != "" {
+		opt(b, "fwmark", v.FwMark)
+	}
+	if v.FwMarkMask != "" {
+		opt(b, "fwmark_mask", v.FwMarkMask)
+	}
+	if v.IPRulePriority != "" {
+		opt(b, "ip_rule_priority", v.IPRulePriority)
+	}
+	optb(b, "masquerade", v.Masquerade)
+	fmt.Fprintln(b)
+}
+func writeDevice(b *bytes.Buffer, d Device) {
+	fmt.Fprintln(b, "config device")
+	opt(b, "name", d.Name)
+	optb(b, "enabled", d.Enabled)
+	opt(b, "mac", d.MAC)
+	optNonEmpty(b, "section", d.Section)
+	fmt.Fprintln(b)
+}
+func writeSection(b *bytes.Buffer, s Section) {
+	fmt.Fprintf(b, "config section %s\n", q(s.Name))
+	optb(b, "enabled", s.Enabled)
+	opt(b, "action", s.Action)
+	opti(b, "tproxy_port", s.TPROXYPort)
+	opt(b, "proxy_group", s.ProxyGroup)
+	opt(b, "proxy_group_type", s.ProxyGroupType)
+	opt(b, "proxy_filter", s.ProxyFilter)
+	opt(b, "proxy_exclude_filter", s.ProxyExcludeFilter)
+	opt(b, "proxy_strategy", s.ProxyStrategy)
+	opt(b, "proxy_health_check_url", s.ProxyHealthCheckURL)
+	opti(b, "proxy_health_check_interval", s.ProxyHealthCheckInterval)
+	optb(b, "user_overridden_proxy_group", s.UserOverriddenProxyGroup)
+	optb(b, "ipv4_enabled", s.IPv4Enabled)
+	optb(b, "ipv6_enabled", s.IPv6Enabled)
+	opt(b, "udp_mode", s.UDPMode)
+	opti(b, "priority", s.Priority)
+	opt(b, "mwan3_policy", s.Mwan3Policy)
+	opt(b, "vpn", s.VPN)
+	listv(b, "zapret_strategy", s.ZapretStrategies)
+	listv(b, "source_cidr4", s.SourceCIDR4)
+	listv(b, "source_cidr6", s.SourceCIDR6)
+	fmt.Fprintln(b)
+}
+func writeSubscription(b *bytes.Buffer, s Subscription) {
+	fmt.Fprintln(b, "config subscription")
+	opt(b, "name", s.Name)
+	optb(b, "enabled", s.Enabled)
+	opt(b, "url", s.URL)
+	opt(b, "mode", s.Mode)
+	opt(b, "preset_if_no_rules", s.PresetIfNoRules)
+	optb(b, "import_rules_on_low_resource", s.ImportRulesOnLowResource)
+	optb(b, "auto_apply", s.AutoApply)
+	opti(b, "interval", s.Interval)
+	opt(b, "hwid", s.HWID)
+	opt(b, "device_name", s.DeviceName)
+	opt(b, "user_agent", s.UserAgent)
+	listv(b, "header", s.Headers)
+	listv(b, "mirror", s.Mirrors)
+	optNonEmpty(b, "pin_sha256", s.PinSHA256)
+	optb(b, "suppress_hwid", s.SuppressHWID)
+	fmt.Fprintln(b)
+}
+func writeProxyProvider(b *bytes.Buffer, p ProxyProvider) {
+	fmt.Fprintln(b, "config proxy_provider")
+	opt(b, "name", p.Name)
+	optb(b, "enabled", p.Enabled)
+	opt(b, "type", p.Type)
+	opt(b, "url", p.URL)
+	opti(b, "interval", p.Interval)
+	opt(b, "path", p.Path)
+	optb(b, "health_check", p.HealthCheck)
+	opt(b, "health_check_url", p.HealthCheckURL)
+	opti(b, "health_check_interval", p.HealthCheckInterval)
+	opt(b, "mwan3_policy", p.Mwan3Policy)
+	opt(b, "hwid", p.HWID)
+	opt(b, "device_name", p.DeviceName)
+	opt(b, "user_agent", p.UserAgent)
+	listv(b, "header", p.Headers)
+	listv(b, "mirror", p.Mirrors)
+	optNonEmpty(b, "pin_sha256", p.PinSHA256)
+	optb(b, "suppress_hwid", p.SuppressHWID)
+	fmt.Fprintln(b)
+}
+func writeRuleProvider(b *bytes.Buffer, p RuleProvider) {
+	fmt.Fprintln(b, "config rule_provider")
+	opt(b, "name", p.Name)
+	optb(b, "enabled", p.Enabled)
+	opt(b, "behavior", p.Behavior)
+	opt(b, "format", p.Format)
+	opt(b, "parse_mode", p.ParseMode)
+	opt(b, "url", p.URL)
+	opti(b, "interval", p.Interval)
+	opt(b, "path", p.Path)
+	opt(b, "section", p.Section)
+	opt(b, "category", p.Category)
+	opt(b, "source_kind", p.SourceKind)
+	opt(b, "route_action", p.RouteAction)
+	opti(b, "priority", p.Priority)
+	opt(b, "source_subscription", p.SourceSubscription)
+	opt(b, "detected_category", p.DetectedCategory)
+	optb(b, "user_overridden_section", p.UserOverriddenSection)
+	optb(b, "user_overridden_action", p.UserOverriddenAction)
+	opt(b, "hwid", p.HWID)
+	opt(b, "device_name", p.DeviceName)
+	opt(b, "user_agent", p.UserAgent)
+	listv(b, "header", p.Headers)
+	listv(b, "mirror", p.Mirrors)
+	optNonEmpty(b, "pin_sha256", p.PinSHA256)
+	optb(b, "suppress_hwid", p.SuppressHWID)
+	opt(b, "last_error", p.LastError)
+	opt(b, "geo_target", p.GeoTarget)
+	fmt.Fprintln(b)
+}
+func writeBypass(b *bytes.Buffer, bp Bypass) {
+	if bp.Name == "" && len(bp.CIDR4) == 0 && len(bp.CIDR6) == 0 && len(bp.ProxyServerCIDR4) == 0 && len(bp.ProxyServerCIDR6) == 0 && len(bp.SourceCIDR4) == 0 && len(bp.SourceCIDR6) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "config bypass %s\n", q(bp.Name))
+	listv(b, "cidr4", bp.CIDR4)
+	listv(b, "cidr6", bp.CIDR6)
+	listv(b, "proxy_server_cidr4", bp.ProxyServerCIDR4)
+	listv(b, "proxy_server_cidr6", bp.ProxyServerCIDR6)
+	listv(b, "source_cidr4", bp.SourceCIDR4)
+	listv(b, "source_cidr6", bp.SourceCIDR6)
+	fmt.Fprintln(b)
+}

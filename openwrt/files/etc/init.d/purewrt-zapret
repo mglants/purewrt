@@ -1,0 +1,57 @@
+#!/bin/sh /etc/rc.common
+
+START=91
+STOP=09
+USE_PROCD=1
+
+log_level_num() {
+	case "$(uci -q get purewrt.settings.log_level)" in
+		error|err) echo 0 ;;
+		info|notice) echo 2 ;;
+		debug) echo 3 ;;
+		*) echo 1 ;;
+	esac
+}
+log_msg() {
+	level="$1"
+	shift
+	case "$level" in
+		error|err) need=0 ;;
+		info|notice) need=2 ;;
+		debug) need=3 ;;
+		*) need=1 ;;
+	esac
+	[ "$(log_level_num)" -ge "$need" ] && logger -t purewrt-zapret "$level $*"
+}
+zapret_debug_arg() {
+	[ "$(log_level_num)" -ge 3 ] && echo "--debug=syslog" || echo "--debug=0"
+}
+
+start_service() {
+	[ -f /etc/purewrt/generated/zapret.env ] || { log_msg debug "start: zapret env missing, skipping"; return 0; }
+	. /etc/purewrt/generated/zapret.env
+	[ "$PUREWRT_ZAPRET_ENABLED" = "1" ] || { log_msg debug "start: zapret disabled, skipping"; return 0; }
+	log_msg warn "start: zapret service start requested instances=${PUREWRT_ZAPRET_INSTANCE_COUNT:-0}"
+	ZAPRET_LUA=""
+	ZAPRET_DEBUG="$(zapret_debug_arg)"
+	log_msg debug "start: zapret debug arg=$ZAPRET_DEBUG"
+	[ -f /usr/lib/zapret/zapret-lib.lua ] && ZAPRET_LUA="$ZAPRET_LUA --lua-init=@/usr/lib/zapret/zapret-lib.lua"
+	[ -f /usr/lib/zapret/zapret-antidpi.lua ] && ZAPRET_LUA="$ZAPRET_LUA --lua-init=@/usr/lib/zapret/zapret-antidpi.lua"
+	i=0
+	while [ "$i" -lt "${PUREWRT_ZAPRET_INSTANCE_COUNT:-0}" ]; do
+		eval name="\$PUREWRT_ZAPRET_INSTANCE_${i}_NAME"
+		eval queue="\$PUREWRT_ZAPRET_INSTANCE_${i}_QUEUE"
+		eval fwmark="\$PUREWRT_ZAPRET_INSTANCE_${i}_FWMARK"
+		eval nfqws="\$PUREWRT_ZAPRET_INSTANCE_${i}_NFQWS"
+		eval params="\$PUREWRT_ZAPRET_INSTANCE_${i}_PARAMS"
+		log_msg info "start: configuring zapret instance=$name queue=$queue"
+		procd_open_instance "$name"
+		procd_set_param command "$nfqws" --qnum="$queue" --fwmark="$fwmark" "$ZAPRET_DEBUG" $ZAPRET_LUA $params
+		procd_set_param stdout 1
+		procd_set_param stderr 1
+		procd_set_param respawn 3600 5 5
+		procd_close_instance
+		i=$((i + 1))
+	done
+	log_msg info "start: zapret procd instances configured"
+}

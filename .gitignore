@@ -1,0 +1,8 @@
+.build/**
+.tmp/**
+sources/**
+dist/**
+
+# Local mihomo test config with real proxy credentials — never commit.
+test.yaml
+.claude

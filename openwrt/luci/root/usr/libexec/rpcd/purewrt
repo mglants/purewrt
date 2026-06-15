@@ -1,0 +1,568 @@
+#!/bin/sh
+json_string() {
+  sed 's/\\/\\\\/g; s/"/\\"/g; s/$/\\n/' | tr -d '\n'
+}
+
+read_file() {
+  path="$1"
+  if [ -s "$path" ]; then
+    printf '{"path":"%s","output":"' "$path"
+    tail -n 300 "$path" 2>/dev/null | json_string
+    printf '"}'
+  else
+    printf '{"path":"%s","output":""}' "$path"
+  fi
+}
+
+read_logread() {
+  pattern="$1"
+  printf '{"path":"logread:%s","output":"' "$pattern"
+  logread 2>/dev/null | grep -Ei "$pattern" | tail -n 300 | json_string
+  printf '"}'
+}
+
+run_rpc() {
+  tag="$1"
+  shift
+  out=$("$@" 2>&1)
+  rc=$?
+  [ -n "$out" ] && printf '%s\n' "$out" | logger -t "$tag"
+  return "$rc"
+}
+
+# run_rpc_verbose is identical to run_rpc but echoes a JSON object with both
+# the result status and the captured CLI output. Used by methods where the
+# LuCI user needs to see why an action failed (e.g. subscription URL down
+# during update) — previously these only logged to syslog and surfaced as
+# an opaque {"result":"failed"} in the browser.
+#
+# Second arg is an optional marker file: when the CLI exits 0 the file's
+# contents are replaced with the current unix timestamp. config_state reads
+# that file to drive the LuCI "last applied" / dirty-config banner without
+# needing changes to the Go binary. Pass "" to skip the touch.
+run_rpc_verbose() {
+  tag="$1"
+  touch_on_ok="$2"
+  shift 2
+  out=$("$@" 2>&1)
+  rc=$?
+  [ -n "$out" ] && printf '%s\n' "$out" | logger -t "$tag"
+  if [ "$rc" = "0" ]; then
+    if [ -n "$touch_on_ok" ]; then
+      # Ensure parent dir exists — /tmp/purewrt/ is normally created by
+      # the boot `purewrt apply --force`, but rpcd can race ahead of it
+      # on a cold boot.
+      mkdir -p "$(dirname "$touch_on_ok")" 2>/dev/null
+      date -u +%s > "$touch_on_ok" 2>/dev/null
+    fi
+    printf '{"result":"ok","output":"'
+  else
+    printf '{"result":"failed","output":"'
+  fi
+  printf '%s' "$out" | json_string
+  printf '"}'
+}
+
+# start_bg_job <log> <statusfile> <touch_on_ok|""> <lockfile> -- <cmd...>
+#
+# Forks a long-running CLI into the background and emits a JSON envelope:
+#   {"result":"started"} on success
+#   {"result":"busy"}    when another job already holds the lockfile
+#
+# Uses flock(1) on a dedicated lockfile so the check-and-launch sequence is
+# atomic — the child inherits the locked fd, holds it for its entire
+# lifetime, and releases it on exit. No pidfile is needed for liveness
+# detection; the lock state IS the liveness signal. This replaces three
+# near-identical pidfile + `kill -0` based implementations that each had
+# the same TOCTOU race (a concurrent caller could pass the kill -0 check
+# between when the previous worker died and the new worker was forked).
+start_bg_job() {
+  log="$1"; statusfile="$2"; touch_on_ok="$3"; lockfile="$4"
+  shift 4
+  mkdir -p "$(dirname "$lockfile")" 2>/dev/null
+  exec 9>"$lockfile"
+  if ! flock -nx 9; then
+    exec 9>&-
+    printf '{"result":"busy"}'
+    return
+  fi
+  rm -f "$statusfile"
+  : >"$log"
+  ( "$@" >>"$log" 2>&1
+    rc=$?
+    echo "$rc" >"$statusfile"
+    if [ "$rc" = "0" ] && [ -n "$touch_on_ok" ]; then
+      mkdir -p "$(dirname "$touch_on_ok")" 2>/dev/null
+      date -u +%s >"$touch_on_ok" 2>/dev/null
+    fi
+  ) &
+  # Close the parent's lockfile fd — the child still holds its inherited
+  # copy and the underlying OFD lock until it exits.
+  exec 9>&-
+  printf '{"result":"started"}'
+}
+
+# poll_bg_job <statusfile> <log> <lockfile>
+#
+# Emits {"running":N,"rc":"X","output":"<log tail>"} where:
+#   running = 0 if the lockfile's exclusive lock is currently acquirable
+#             (worker has exited) or if a result rc has been written.
+#   running = 1 if the worker still holds the lock and no rc is on disk.
+#   rc      = the worker's exit code (empty while still running).
+poll_bg_job() {
+  statusfile="$1"; log="$2"; lockfile="$3"
+  rc=""
+  [ -s "$statusfile" ] && rc=$(cat "$statusfile")
+  running=0
+  if [ -z "$rc" ] && [ -f "$lockfile" ]; then
+    # Lock holdable in a subshell ⇒ worker has exited; failure ⇒ still running.
+    if ( exec 9>"$lockfile"; flock -nx 9 ) 2>/dev/null; then :; else running=1; fi
+  fi
+  printf '{"running":%s,"rc":"%s","output":"' "$running" "$rc"
+  tail -n 500 "$log" 2>/dev/null | json_string
+  printf '"}'
+}
+
+case "$1" in
+  list) echo '{"status":{},"statistics":{},"rule_provider_status":{},"analyze":{"url":"String"},"preview":{"url":"String"},"classify":{"name":"String","url":"String","behavior":"String","format":"String"},"override":{"name":"String","section":"String","action":"String","enabled":"String","reset":"String"},"import":{"url":"String","mode":"String"},"update":{},"update_rule_provider":{"name":"String"},"update_rule_provider_no_restart":{"name":"String"},"update_proxy_provider":{"name":"String"},"reload":{},"disable":{},"check":{"domain":"String"},"zapret_check":{"domain":"String","interface":"String","scan":"String","repeats":"String","http":"String","tls12":"String","tls13":"String","http3":"String","https_get":"String"},"zapret_check_start":{"domain":"String","interface":"String","scan":"String","repeats":"String","http":"String","tls12":"String","tls13":"String","http3":"String","https_get":"String"},"zapret_check_status":{},"logs":{"source":"String"},"mihomo_config":{},"mihomo_check_update":{},"mihomo_download":{},"doctor_warnings":{},"inspect_ipv6":{},"resolvers_probe":{"canary":"String"},"blocking_heuristics":{"blacklist":"Array","whitelist":"Array","targets":"Array"},"zapret_restart":{},"zapret_compiled_opt":{},"geo_refresh":{},"zapret_autotune":{"hosts":"Array"},"zapret_autotune_start":{"hosts":"Array"},"zapret_autotune_status":{},"subscription_expiry":{},"mihomo_traffic_sample":{},"config_state":{},"update_start":{},"update_status":{},"dpi_check_start":{"host":"String","ip":"String","timeout":"String"},"dpi_check_status":{},"client_traffic_start":{"ip":"String","max_seconds":"String","live":"String"},"client_traffic_status":{"offset":"String"},"client_traffic_stop":{},"ipdb_status":{},"ipdb_update_start":{},"ipdb_update_status":{},"ipdb_asn":{"asn":"String"},"zapret_installed":{},"mihomo_status":{},"mihomo_check_update_channel":{"channel":"String"},"mihomo_install_release_start":{"channel":"String"},"mihomo_install_release_status":{},"mihomo_revert_package":{},"mihomo_auto_update":{},"mihomo_mixin_get":{},"mihomo_mixin_set":{"body":"String"},"mihomo_mixin_preview":{"body":"String"},"apk_updates_available":{"force":"String"},"geo_list":{"kind":"String"},"geo_default_sources":{},"config_export":{},"config_import":{"body":"String"},"proxy_groups":{},"proxy_select":{"group":"String","node":"String"},"proxy_delay_test":{"group":"String"},"native_list_add":{"url":"String","section":"String","priority":"String"},"default_lists_catalog":{},"wizard_reset":{}}' ;;
+call)
+  # -r preserves backslashes in the JSON body. Without it, `\n` (real
+  # backslash + n bytes) gets unescaped to a bare `n` by the shell's
+  # default line-continuation semantics, which then breaks every method
+  # that takes a string with embedded JSON escapes (manual_rule_write
+  # bodies, anything with line breaks). Existing methods that took only
+  # short stringly-typed scalars happened to be unaffected because their
+  # values rarely contained backslashes; this fix is a strict superset.
+  read -r input
+  method="$2"
+	case "$method" in
+	  status) /usr/bin/purewrt status | jsonfilter -e '@' 2>/dev/null || echo '{"status":"ok"}' ;;
+	  statistics) /usr/bin/purewrt statistics ;;
+    rule_provider_status) /usr/bin/purewrt rule-provider-status ;;
+    analyze) url=$(echo "$input" | jsonfilter -e '@.url'); /usr/bin/purewrt analyze "$url" ;;
+    preview) url=$(echo "$input" | jsonfilter -e '@.url'); /usr/bin/purewrt preview "$url" ;;
+    classify) name=$(echo "$input" | jsonfilter -e '@.name'); url=$(echo "$input" | jsonfilter -e '@.url'); behavior=$(echo "$input" | jsonfilter -e '@.behavior'); format=$(echo "$input" | jsonfilter -e '@.format'); /usr/bin/purewrt classify "$name" "$url" "$behavior" "$format" ;;
+    override)
+      # Build positional args safely; a UCI value with spaces or shell
+      # metacharacters would otherwise break the eventual exec.
+      name=$(echo "$input" | jsonfilter -e '@.name')
+      set --
+      for key in section action enabled reset; do
+        val=$(echo "$input" | jsonfilter -e "@.$key" 2>/dev/null)
+        [ -n "$val" ] && set -- "$@" "$key=$val"
+      done
+      run_rpc purewrt-rpc /usr/bin/purewrt override "$name" "$@" && echo '{"result":"ok"}' || echo '{"result":"failed"}' ;;
+    import)
+      url=$(echo "$input" | jsonfilter -e '@.url')
+      # Optional mode=proxy_only imports proxy providers without rules
+      # (wizard Default-lists flow). Any other value = normal auto import.
+      mode=$(echo "$input" | jsonfilter -e '@.mode' 2>/dev/null)
+      if [ "$mode" = "proxy_only" ]; then
+        run_rpc_verbose purewrt-rpc /tmp/purewrt/.last_applied /usr/bin/purewrt import "$url" --proxy-only
+      else
+        run_rpc_verbose purewrt-rpc /tmp/purewrt/.last_applied /usr/bin/purewrt import "$url"
+      fi ;;
+    logs)
+      source=$(echo "$input" | jsonfilter -e '@.source')
+      case "$source" in
+        # Single "purewrt" panel covers everything tagged purewrt-* (rpcd-
+        # driven actions, background daemon, cron, boot apply, direct CLI)
+        # plus rpcd own lines mentioning the module. The old `rpc` and
+        # `manager` cases both matched the bare `purewrt` keyword and so
+        # produced near-identical output — split was bogus, merge wins.
+        # `manager` alias kept so any external script that still asks for
+        # it gets the same content rather than an empty response.
+        rpc|manager) read_logread 'purewrt|rpcd.*purewrt' ;;
+        update) read_logread 'purewrt-bg|purewrt-cron|update-rule-provider|update-proxy-provider|providers.*updated|provider.*updated' ;;
+        mihomo) read_logread 'mihomo|clash' ;;
+        zapret) read_logread 'purewrt-zapret|zapret|nfqws|tpws' ;;
+        *) read_logread 'purewrt|purewrt-bg|purewrt-cron|mihomo|clash|zapret|nfqws|tpws' ;;
+      esac ;;
+    mihomo_config) read_file /etc/purewrt/generated/mihomo.yaml ;;
+    update) run_rpc_verbose purewrt-rpc "" /usr/bin/purewrt update ;;
+    # Async update — same shape as zapret_check_start/zapret_check_status.
+    # Needed because cold subscription downloads can exceed ubus's 30s call
+    # timeout, which surfaces in LuCI as a spurious "No response" failure
+    # even though the CLI is still working in the background. start kicks
+    # off the job and returns immediately; status is polled until rc is
+    # written. Touches /tmp/purewrt/.last_applied on success so the
+    # config_state dirty banner clears.
+    update_start)
+      # Coalesce signal for whichever update_start finds a worker already
+      # running: marking dirty makes the in-flight CLI loop again and pick
+      # up our UCI commit before exiting. Touching unconditionally is
+      # harmless when no worker exists — no one's reading.
+      : > /var/run/purewrt.dirty
+      start_bg_job /tmp/purewrt-update.log /tmp/purewrt-update.status \
+        /tmp/purewrt/.last_applied /tmp/purewrt-update.lock \
+        /usr/bin/purewrt update ;;
+    update_status)
+      poll_bg_job /tmp/purewrt-update.status /tmp/purewrt-update.log \
+        /tmp/purewrt-update.lock ;;
+    # TCP-16-20 DPI matrix probe — long-running (~90-150 s for the full
+    # matrix) so we use the same start/poll dance as update_start/status.
+    # Output is JSON (the report struct), written verbatim to the log.
+    dpi_check_start)
+      host=$(echo "$input" | jsonfilter -e '@.host' 2>/dev/null)
+      ip=$(echo "$input" | jsonfilter -e '@.ip' 2>/dev/null)
+      timeout=$(echo "$input" | jsonfilter -e '@.timeout' 2>/dev/null)
+      [ -z "$host" ] && { printf '{"result":"failed","error":"missing host"}'; exit 0; }
+      # Build the dpi-check arg vector safely: $host is required, $ip/$timeout
+      # are optional. Use positional args (set --) so a value with spaces or
+      # shell metacharacters can't break the eventual exec.
+      set -- "$host"
+      [ -n "$ip" ] && set -- "$@" "--ip=$ip"
+      [ -n "$timeout" ] && set -- "$@" "--timeout=$timeout"
+      start_bg_job /tmp/purewrt-dpi-check.log /tmp/purewrt-dpi-check.status \
+        "" /tmp/purewrt-dpi-check.lock \
+        /usr/bin/purewrt dpi-check "$@" ;;
+    dpi_check_status)
+      # Like poll_bg_job but the dpi-check CLI emits a JSON report at the
+      # end of stdout instead of a free-form log. Read running/rc the same
+      # way poll_bg_job would, then extract the JSON payload separately.
+      log=/tmp/purewrt-dpi-check.log
+      statusfile=/tmp/purewrt-dpi-check.status
+      lockfile=/tmp/purewrt-dpi-check.lock
+      rc=""
+      [ -s "$statusfile" ] && rc=$(cat "$statusfile")
+      running=0
+      if [ -z "$rc" ] && [ -f "$lockfile" ]; then
+        if ( exec 9>"$lockfile"; flock -nx 9 ) 2>/dev/null; then :; else running=1; fi
+      fi
+      report='null'
+      if [ "$rc" = "0" ] && [ -s "$log" ]; then
+        # Skip any debug-command lines before the JSON payload.
+        report=$(grep -v "^debug command:" "$log" 2>/dev/null | tr -d '\n' | sed 's/^[^{]*//;s/[^}]*$//')
+        [ -z "$report" ] && report='null'
+      fi
+      printf '{"running":%s,"rc":"%s","report":%s}' "$running" "$rc" "$report" ;;
+    update_rule_provider) name=$(echo "$input" | jsonfilter -e '@.name'); run_rpc purewrt-rpc /usr/bin/purewrt update-rule-provider "$name" && echo '{"result":"ok"}' || echo '{"result":"failed"}' ;;
+    update_rule_provider_no_restart) name=$(echo "$input" | jsonfilter -e '@.name'); run_rpc purewrt-rpc /usr/bin/purewrt update-rule-provider --no-restart "$name" && echo '{"result":"ok"}' || echo '{"result":"failed"}' ;;
+    update_proxy_provider) name=$(echo "$input" | jsonfilter -e '@.name'); run_rpc purewrt-rpc /usr/bin/purewrt update-proxy-provider "$name" && echo '{"result":"ok"}' || echo '{"result":"failed"}' ;;
+    mihomo_check_update) /usr/bin/purewrt mihomo-check-update ;;
+    mihomo_download) run_rpc purewrt-rpc /usr/bin/purewrt mihomo-download && echo '{"result":"ok"}' || echo '{"result":"failed"}' ;;
+    reload) run_rpc_verbose purewrt-rpc /tmp/purewrt/.last_applied /usr/bin/purewrt reload ;;
+    disable) run_rpc purewrt-rpc /usr/bin/purewrt disable && echo '{"result":"ok"}' || echo '{"result":"failed"}' ;;
+    check) domain=$(echo "$input" | jsonfilter -e '@.domain'); /usr/bin/purewrt-check "$domain" | sed 's/"/\\"/g' | awk 'BEGIN{printf "{\"output\":\""}{printf "%s\\n",$0}END{print "\"}"}' ;;
+    zapret_check) domain=$(echo "$input" | jsonfilter -e '@.domain'); iface=$(echo "$input" | jsonfilter -e '@.interface'); scan=$(echo "$input" | jsonfilter -e '@.scan'); repeats=$(echo "$input" | jsonfilter -e '@.repeats'); http=$(echo "$input" | jsonfilter -e '@.http'); tls12=$(echo "$input" | jsonfilter -e '@.tls12'); tls13=$(echo "$input" | jsonfilter -e '@.tls13'); http3=$(echo "$input" | jsonfilter -e '@.http3'); https_get=$(echo "$input" | jsonfilter -e '@.https_get'); printf '{"output":"'; /usr/bin/purewrt zapret-check "$domain" "$iface" "$scan" "$repeats" "$http" "$tls12" "$tls13" "$http3" "$https_get" 2>&1 | json_string; printf '"}' ;;
+    zapret_check_start)
+      domain=$(echo "$input" | jsonfilter -e '@.domain'); iface=$(echo "$input" | jsonfilter -e '@.interface'); scan=$(echo "$input" | jsonfilter -e '@.scan'); repeats=$(echo "$input" | jsonfilter -e '@.repeats'); http=$(echo "$input" | jsonfilter -e '@.http'); tls12=$(echo "$input" | jsonfilter -e '@.tls12'); tls13=$(echo "$input" | jsonfilter -e '@.tls13'); http3=$(echo "$input" | jsonfilter -e '@.http3'); https_get=$(echo "$input" | jsonfilter -e '@.https_get')
+      # PUREWRT_ZAPRET_CHECK_STREAM=1 toggles streamed progress output from
+      # the CLI. start_bg_job doesn't accept an env-var arg, so pass it via
+      # an env-prefixed command — sh evaluates `VAR=val cmd` correctly even
+      # through the helper's `"$@"` expansion as long as the var/value pair
+      # is the first two argv slots (we work around by using `env`).
+      start_bg_job /tmp/purewrt-zapret-check.log /tmp/purewrt-zapret-check.status \
+        "" /tmp/purewrt-zapret-check.lock \
+        env PUREWRT_ZAPRET_CHECK_STREAM=1 /usr/bin/purewrt zapret-check \
+        "$domain" "$iface" "$scan" "$repeats" "$http" "$tls12" "$tls13" "$http3" "$https_get" ;;
+    zapret_check_status)
+      poll_bg_job /tmp/purewrt-zapret-check.status /tmp/purewrt-zapret-check.log \
+        /tmp/purewrt-zapret-check.lock ;;
+
+    # ---- Wave-2 diagnostic methods (LuCI option-2 rpcd plumbing) ----
+    # Each shells out to the matching purewrt CLI subcommand in --json mode
+    # and emits raw JSON back to the rpcd caller. The CLI is the source of
+    # truth — keeps the rpcd shim tiny and idempotent.
+    doctor_warnings)
+      out=$(/usr/bin/purewrt doctor-warnings 2>/dev/null)
+      case "$out" in ""|"null") out="[]" ;; esac
+      printf '{"warnings":%s}' "$out" ;;
+    inspect_ipv6)
+      /usr/bin/purewrt inspect-ipv6 ;;
+    resolvers_probe)
+      canary=$(echo "$input" | jsonfilter -e '@.canary' 2>/dev/null)
+      if [ -n "$canary" ]; then
+        /usr/bin/purewrt resolvers-probe --json "$canary"
+      else
+        /usr/bin/purewrt resolvers-probe --json
+      fi ;;
+    blocking_heuristics)
+      # Two input shapes accepted, both optional:
+      #   {"targets":[...]}     legacy blacklist override
+      #   {"blacklist":[...], "whitelist":[...]}  rkn-style report mode
+      # Empty arrays → CLI uses Go-side default lists.
+      blacklist=$(echo "$input" | jsonfilter -e '@.blacklist[*]' 2>/dev/null | tr '\n' ' ')
+      [ -z "$blacklist" ] && blacklist=$(echo "$input" | jsonfilter -e '@.targets[*]' 2>/dev/null | tr '\n' ' ')
+      whitelist=$(echo "$input" | jsonfilter -e '@.whitelist[*]' 2>/dev/null | tr '\n' ' ')
+      flags=""
+      for b in $blacklist; do flags="$flags --blacklist=$b"; done
+      for w in $whitelist; do flags="$flags --whitelist=$w"; done
+      out=$(/usr/bin/purewrt doctor --canaries --report --json $flags 2>/dev/null)
+      case "$out" in ""|"null") out='{"whitelist":[],"blacklist":[],"verdict":"inconclusive","reason":"probe failed to run"}' ;; esac
+      # Emit both shapes so old JS that reads `r.results` still works
+      # (sees the blacklist as a flat array); new JS reads `r.report` for
+      # the full whitelist/blacklist/verdict structure.
+      legacy=$(echo "$out" | jsonfilter -e '@.blacklist' 2>/dev/null)
+      [ -z "$legacy" ] && legacy="[]"
+      printf '{"report":%s,"results":%s}' "$out" "$legacy" ;;
+    zapret_restart)
+      run_rpc purewrt-rpc /usr/bin/purewrt zapret-restart && echo '{"result":"ok"}' || echo '{"result":"failed"}' ;;
+    zapret_compiled_opt)
+      printf '{"output":"'
+      /usr/bin/purewrt zapret-compiled-opt 2>&1 | json_string
+      printf '"}' ;;
+    geo_refresh)
+      /usr/bin/purewrt geo-refresh --json ;;
+    subscription_expiry)
+      out=$(/usr/bin/purewrt subscription-expiry 2>/dev/null)
+      case "$out" in ""|"null") out="[]" ;; esac
+      printf '{"entries":%s}' "$out" ;;
+    mihomo_traffic_sample)
+      /usr/bin/purewrt mihomo-traffic-sample 2>/dev/null || echo '{"up":0,"down":0}' ;;
+    config_state)
+      # Drives the LuCI "Last applied / dirty config" banner. Prefer
+      # /tmp/purewrt/.last_applied (touched by run_rpc_verbose on every
+      # successful reload/import — including no-op applies) over the
+      # mihomo.yaml mtime, since cache-hit applies skip the write but the
+      # config IS in the applied state. Falls back to mihomo.yaml mtime
+      # for routers upgraded mid-deploy where the marker doesn't exist yet.
+      # OpenWrt busybox has no `stat`, so we use `date -r FILE +%s`.
+      applied=$(cat /tmp/purewrt/.last_applied 2>/dev/null)
+      [ -z "$applied" ] && applied=$(date -r /etc/purewrt/generated/mihomo.yaml +%s 2>/dev/null)
+      config=$(date -r /etc/config/purewrt +%s 2>/dev/null)
+      applied=${applied:-0}
+      config=${config:-0}
+      dirty="false"
+      [ "$config" -gt "$applied" ] && dirty="true"
+      printf '{"applied_unix":%s,"config_unix":%s,"dirty":%s}' "$applied" "$config" "$dirty" ;;
+    zapret_autotune)
+      # Legacy synchronous variant. Kept for CLI/scripting compatibility;
+      # the LuCI UI now uses zapret_autotune_start/_status for fire-and-forget.
+      hosts=$(echo "$input" | jsonfilter -e '@.hosts[*]' 2>/dev/null | tr '\n' ' ')
+      [ -z "$hosts" ] && { printf '{"result":"failed","error":"no hosts"}'; exit 0; }
+      /usr/bin/purewrt zapret-autotune $hosts 2>&1 | awk 'BEGIN{printf "{\"output\":\""}{gsub(/\\/,"\\\\"); gsub(/"/,"\\\""); printf "%s\\n",$0}END{print "\"}"}' ;;
+    zapret_autotune_start)
+      # Mirror of zapret_check_start: stream blockcheck2.sh through a
+      # background worker so multi-minute autotune runs survive tab close
+      # and outlast ubus's call timeout. Builds positional args from the
+      # JSON hosts array via shell setargs so a host with spaces (unlikely
+      # but possible) doesn't break the eventual exec.
+      set --
+      for h in $(echo "$input" | jsonfilter -e '@.hosts[*]' 2>/dev/null); do
+        set -- "$@" "$h"
+      done
+      [ $# -eq 0 ] && { printf '{"result":"failed","error":"no hosts"}'; exit 0; }
+      start_bg_job /tmp/purewrt-zapret-autotune.log /tmp/purewrt-zapret-autotune.status \
+        "" /tmp/purewrt-zapret-autotune.lock \
+        /usr/bin/purewrt zapret-autotune "$@" ;;
+    zapret_autotune_status)
+      poll_bg_job /tmp/purewrt-zapret-autotune.status /tmp/purewrt-zapret-autotune.log \
+        /tmp/purewrt-zapret-autotune.lock ;;
+
+    # ---- Client traffic diagnostic (passive observation of a LAN client) ----
+    # Spawns `purewrt client-traffic --json --live <ip>` in the background; the
+    # CLI writes NDJSON events (one per line) to the log file. _status returns
+    # only events whose byte offset is > the caller-supplied offset, so LuCI
+    # can poll-tail without re-rendering the entire stream every tick.
+    client_traffic_start)
+      ip=$(echo "$input" | jsonfilter -e '@.ip' 2>/dev/null)
+      ms=$(echo "$input" | jsonfilter -e '@.max_seconds' 2>/dev/null)
+      live=$(echo "$input" | jsonfilter -e '@.live' 2>/dev/null)
+      [ -z "$ip" ] && { printf '{"result":"failed","error":"missing ip"}'; exit 0; }
+      set -- "$ip"
+      [ -n "$ms" ]      && set -- "$@" "--max-seconds=$ms"
+      [ "$live" = "1" ] && set -- "$@" "--live"
+      # Reset the NDJSON log so a fresh session doesn't accumulate ghosts from
+      # the previous one. The lockfile in start_bg_job prevents two concurrent
+      # sessions; the truncate here is safe because that lock guarantees no
+      # writer is touching the file when we get here.
+      : > /tmp/purewrt-client-traffic.log
+      start_bg_job /tmp/purewrt-client-traffic.log /tmp/purewrt-client-traffic.status \
+        "" /tmp/purewrt-client-traffic.lock \
+        /usr/bin/purewrt client-traffic --json "$@" ;;
+    client_traffic_status)
+      offset=$(echo "$input" | jsonfilter -e '@.offset' 2>/dev/null)
+      offset=${offset:-0}
+      log=/tmp/purewrt-client-traffic.log
+      statusfile=/tmp/purewrt-client-traffic.status
+      lockfile=/tmp/purewrt-client-traffic.lock
+      rc=""
+      [ -s "$statusfile" ] && rc=$(cat "$statusfile")
+      running=0
+      if [ -z "$rc" ] && [ -f "$lockfile" ]; then
+        if ( exec 9>"$lockfile"; flock -nx 9 ) 2>/dev/null; then :; else running=1; fi
+      fi
+      size=$(wc -c <"$log" 2>/dev/null || echo 0)
+      # NDJSON tail: read everything past $offset, wrap in a JSON array. awk
+      # joins non-empty lines with "," — the final array is fed back to LuCI
+      # which just appends the events to its render queue.
+      events="[]"
+      if [ "$offset" -lt "$size" ]; then
+        events=$(tail -c +"$((offset+1))" "$log" 2>/dev/null | \
+          awk 'NF{printf "%s%s", sep, $0; sep=","}END{print ""}' | \
+          sed 's/^/[/;s/$/]/')
+      fi
+      printf '{"running":%s,"rc":"%s","next_offset":%s,"events":%s}' \
+        "$running" "$rc" "$size" "$events" ;;
+    # ---- IP-to-ASN offline database (iptoasn.com, public domain) ----
+    # Optional enrichment for the Client Traffic page. Snapshot + refresh
+    # are both rare actions so we use the simple bg-job pattern (start +
+    # poll) — the body transfer can run 10–30 s on a slow uplink.
+    zapret_installed)
+      /usr/bin/purewrt zapret-installed ;;
+    mihomo_status)
+      /usr/bin/purewrt mihomo-status ;;
+    mihomo_check_update_channel)
+      channel=$(echo "$input" | jsonfilter -e '@.channel' 2>/dev/null)
+      /usr/bin/purewrt mihomo-check-update "$channel" ;;
+    mihomo_install_release_start)
+      # Async — actual install can take 30 s+ on a slow uplink. start_bg_job
+      # writes the JSON report to .log, status method tails it.
+      channel=$(echo "$input" | jsonfilter -e '@.channel' 2>/dev/null)
+      [ -z "$channel" ] && channel=alpha
+      start_bg_job /tmp/purewrt-mihomo-install.log /tmp/purewrt-mihomo-install.status \
+        "" /tmp/purewrt-mihomo-install.lock \
+        /usr/bin/purewrt mihomo-install-release "$channel" ;;
+    mihomo_install_release_status)
+      log=/tmp/purewrt-mihomo-install.log
+      statusfile=/tmp/purewrt-mihomo-install.status
+      lockfile=/tmp/purewrt-mihomo-install.lock
+      rc=""
+      [ -s "$statusfile" ] && rc=$(cat "$statusfile")
+      running=0
+      if [ -z "$rc" ] && [ -f "$lockfile" ]; then
+        if ( exec 9>"$lockfile"; flock -nx 9 ) 2>/dev/null; then :; else running=1; fi
+      fi
+      # Extract the JSON payload from the log (CLI emits indented JSON
+      # on success; lines starting with "ERROR" or unstructured text on
+      # failure).
+      report='null'
+      if [ "$rc" = "0" ] && [ -s "$log" ]; then
+        report=$(tr -d '\n' < "$log" | sed 's/^[^{]*//;s/[^}]*$//')
+        [ -z "$report" ] && report='null'
+      fi
+      printf '{"running":%s,"rc":"%s","report":%s,"log":"' "$running" "$rc" "$report"
+      tail -n 200 "$log" 2>/dev/null | json_string
+      printf '"}' ;;
+    mihomo_revert_package)
+      run_rpc_verbose purewrt-rpc "" /usr/bin/purewrt mihomo-revert-package ;;
+    mihomo_auto_update)
+      # Manual fire-now of the cron entry. Cheap so we don't bother with
+      # the bg-job dance — auto-update path takes <30 s including the
+      # /version warmup wait, well under ubus's call timeout.
+      /usr/bin/purewrt mihomo-auto-update ;;
+    proxy_groups)
+      # Wrap the CLI's JSON array in {items: [...]} — ubus rejects
+      # top-level JSON arrays; the view declares expect:{items:[]}.
+      out=$(/usr/bin/purewrt proxy-groups 2>/dev/null)
+      case "$out" in ""|"null") out="[]" ;; esac
+      printf '{"items":%s}' "$out" ;;
+    proxy_select)
+      group=$(echo "$input" | jsonfilter -e '@.group' 2>/dev/null)
+      node=$(echo "$input" | jsonfilter -e '@.node' 2>/dev/null)
+      /usr/bin/purewrt proxy-select "$group" "$node" ;;
+    proxy_delay_test)
+      # Short-running (<15 s budget in the Go client) — no bg-job dance.
+      group=$(echo "$input" | jsonfilter -e '@.group' 2>/dev/null)
+      /usr/bin/purewrt proxy-delay-test "$group" ;;
+    config_export)
+      # Full-config backup as UCI text wrapped in a JSON envelope. Secrets
+      # stay redacted — the read-ACL covers this method, so an unprivileged
+      # session must never receive subscription tokens.
+      printf '{"config":"'
+      /usr/bin/purewrt export 2>/dev/null | json_string
+      printf '"}' ;;
+    config_import)
+      # Validates before replacing /etc/config/purewrt; never auto-applies.
+      # The CLI prints an ImportConfigResult JSON object on success.
+      body=$(echo "$input" | jsonfilter -e '@.body' 2>/dev/null)
+      if out=$(printf '%s' "$body" | /usr/bin/purewrt import-config - 2>&1); then
+        printf '%s' "$out"
+      else
+        printf '{"ok":false,"error":"'
+        printf '%s' "$out" | json_string
+        printf '"}'
+      fi ;;
+    wizard_reset)
+      # Flush config to defaults (preserve VPN/Zapret/credentials/binary).
+      # The wizard calls this first, then stages + applies its choices.
+      if /usr/bin/purewrt wizard-reset >/dev/null 2>&1; then
+        printf '{"ok":true}'
+      else
+        printf '{"ok":false,"error":"wizard-reset failed"}'
+      fi ;;
+    native_list_add)
+      # Persist-only (the wizard batches several then applies once). Prints
+      # {"name":"native_<x>"}. Optional priority sets the rule provider +
+      # new-section precedence (from the catalog entry).
+      url=$(echo "$input" | jsonfilter -e '@.url' 2>/dev/null)
+      section=$(echo "$input" | jsonfilter -e '@.section' 2>/dev/null)
+      priority=$(echo "$input" | jsonfilter -e '@.priority' 2>/dev/null)
+      prio_arg=""
+      [ -n "$priority" ] && prio_arg="--priority=$priority"
+      /usr/bin/purewrt add-native-list "$url" "$section" --no-apply $prio_arg ;;
+    default_lists_catalog)
+      # Fetch the published catalog.json (bootstrap client). Wrapped so a
+      # fetch error returns a JSON object rather than breaking the caller.
+      if out=$(/usr/bin/purewrt default-lists-catalog 2>/dev/null); then
+        printf '{"catalog":%s}' "$out"
+      else
+        printf '{"catalog":[],"error":"fetch failed"}'
+      fi ;;
+    mihomo_mixin_get)
+      /usr/bin/purewrt mihomo-mixin-get ;;
+    mihomo_mixin_set)
+      body=$(echo "$input" | jsonfilter -e '@.body' 2>/dev/null)
+      if printf '%s' "$body" | /usr/bin/purewrt mihomo-mixin-set 2>&1; then
+        printf '{"ok":true}'
+      else
+        out=$?
+        printf '{"ok":false,"error":"mixin-set rc=%s"}' "$out"
+      fi ;;
+    mihomo_mixin_preview)
+      body=$(echo "$input" | jsonfilter -e '@.body' 2>/dev/null)
+      printf '{"output":"'
+      printf '%s' "$body" | /usr/bin/purewrt mihomo-mixin-preview 2>&1 | json_string
+      printf '"}' ;;
+    geo_list)
+      # Wrap the CLI's JSON array in {items: [...]} — ubus rejects
+      # top-level JSON arrays. LuCI declares expect:{items:[]} so the
+      # array shows through transparently on the JS side.
+      kind=$(echo "$input" | jsonfilter -e '@.kind' 2>/dev/null)
+      out=$(/usr/bin/purewrt geo-list "$kind" 2>/dev/null)
+      case "$out" in ""|"null") out="[]" ;; esac
+      printf '{"items":%s}' "$out" ;;
+    geo_default_sources)
+      # Tiny helper so the LuCI Rule Providers page can seed
+      # Settings.GeoRefresh*URL when a user first adds a geo provider
+      # without hardcoding the default URLs in JS (Go side is the
+      # single source of truth — config.DefaultGeoSources()).
+      printf '{"geoip":"https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geoip.dat","geosite":"https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat","mmdb":"https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/country.mmdb"}' ;;
+    apk_updates_available)
+      # ubus rejects top-level JSON arrays; wrap the CLI's array in an
+      # object so the rpcd response stays compliant. LuCI view declares
+      # `expect: { updates: [] }` so it unwraps the array transparently.
+      force=$(echo "$input" | jsonfilter -e '@.force' 2>/dev/null)
+      if [ "$force" = "1" ]; then
+        out=$(/usr/bin/purewrt updates-available --force 2>/dev/null)
+      else
+        out=$(/usr/bin/purewrt updates-available 2>/dev/null)
+      fi
+      case "$out" in ""|"null") out="[]" ;; esac
+      printf '{"updates":%s}' "$out" ;;
+    ipdb_status)
+      /usr/bin/purewrt ipdb-status ;;
+    ipdb_asn)
+      asn=$(echo "$input" | jsonfilter -e '@.asn' 2>/dev/null)
+      [ -z "$asn" ] && { printf '{"asn":0,"prefixes":[]}'; exit 0; }
+      /usr/bin/purewrt ipdb-asn "$asn" ;;
+    ipdb_update_start)
+      start_bg_job /tmp/purewrt-ipdb-update.log /tmp/purewrt-ipdb-update.status \
+        "" /tmp/purewrt-ipdb-update.lock \
+        /usr/bin/purewrt ipdb-update ;;
+    ipdb_update_status)
+      poll_bg_job /tmp/purewrt-ipdb-update.status /tmp/purewrt-ipdb-update.log \
+        /tmp/purewrt-ipdb-update.lock ;;
+
+    client_traffic_stop)
+      # SIGTERM the Go CLI so its signal handler can kill the child tcpdump
+      # cleanly. busybox pgrep -f matches against the full cmdline; the
+      # "purewrt client-traffic" prefix is distinctive enough to identify
+      # the bg job started by client_traffic_start.
+      for pid in $(pgrep -f "purewrt client-traffic" 2>/dev/null); do
+        kill -TERM "$pid" 2>/dev/null
+      done
+      printf '{"result":"ok"}' ;;
+  esac ;;
+esac

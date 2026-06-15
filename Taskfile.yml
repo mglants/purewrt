@@ -1,0 +1,226 @@
+version: '3'
+
+vars:
+  OPENWRT_VERSION: '{{.OPENWRT_VERSION | default "24.10.0"}}'
+  OPENWRT_TARGET: '{{.OPENWRT_TARGET | default "x86"}}'
+  OPENWRT_SUBTARGET: '{{.OPENWRT_SUBTARGET | default "64"}}'
+  OPENWRT_ARCH: '{{.OPENWRT_ARCH | default "x86_64"}}'
+  OPENWRT_GCC_VERSION: '{{.OPENWRT_GCC_VERSION | default "13.3.0"}}'
+  OPENWRT_SDK_BASE_URL: '{{.OPENWRT_SDK_BASE_URL | default "https://downloads.openwrt.org/releases"}}'
+  BUILD_DIR: '{{.BUILD_DIR | default ".build/openwrt"}}'
+  MAKE_JOBS: '{{.MAKE_JOBS | default "$(nproc)"}}'
+  MAKE_FLAGS: '-j{{.MAKE_JOBS}} V=s'
+  SDK_NAME: 'openwrt-sdk-{{.OPENWRT_VERSION}}-{{.OPENWRT_TARGET}}-{{.OPENWRT_SUBTARGET}}_gcc-{{.OPENWRT_GCC_VERSION}}_musl.Linux-{{.OPENWRT_ARCH}}'
+  SDK_ARCHIVE: '{{.SDK_NAME}}.tar.zst'
+  SDK_TMP_ARCHIVE: '{{.SDK_NAME}}.tar.zst.tmp'
+  SDK_URL: '{{.OPENWRT_SDK_BASE_URL}}/{{.OPENWRT_VERSION}}/targets/{{.OPENWRT_TARGET}}/{{.OPENWRT_SUBTARGET}}/{{.SDK_ARCHIVE}}'
+  SDK_DIR: '{{.BUILD_DIR}}/{{.SDK_NAME}}'
+  PACKAGE_DIR: '{{.SDK_DIR}}/package/network/services'
+  ROUTER: '{{.ROUTER | default "root@192.168.1.1"}}'
+
+silent: false
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+
+  doctor:
+    desc: Check host tools needed for NixOS/OpenWrt SDK build
+    cmds:
+      - |
+        set -e
+        for bin in curl tar zstd rsync git make bash patch perl python3 unzip wget file find xargs swig; do
+          command -v "$bin" >/dev/null || { echo "missing host tool: $bin"; exit 1; }
+        done
+        python3 -c 'import setuptools'
+        if [ -z "${NIX_LD:-}" ]; then echo "warning: NIX_LD is not set; OpenWrt Go bootstrap may fail on NixOS"; fi
+        echo "host tool check OK"
+
+  clean:
+    desc: Remove downloaded/extracted OpenWrt SDK build directory
+    cmds:
+      - rm -rf '{{.BUILD_DIR}}'
+
+  sdk:reset:
+    desc: Remove only the extracted SDK directory and keep downloaded archive
+    cmds:
+      - rm -rf '{{.SDK_DIR}}'
+
+  sdk:clean-go-host:
+    desc: Remove failed OpenWrt Go hostpkg build artifacts
+    cmds:
+      - rm -rf '{{.SDK_DIR}}/build_dir/hostpkg/go-'* '{{.SDK_DIR}}/staging_dir/hostpkg/lib/go-'* '{{.SDK_DIR}}/staging_dir/hostpkg/bin/go'
+
+  sdk:download:
+    desc: Download OpenWrt SDK archive
+    deps: [doctor]
+    cmds:
+      - mkdir -p '{{.BUILD_DIR}}'
+      - |
+        if [ ! -f '{{.BUILD_DIR}}/{{.SDK_ARCHIVE}}' ]; then
+          echo 'Downloading {{.SDK_URL}}'
+          rm -f '{{.BUILD_DIR}}/{{.SDK_TMP_ARCHIVE}}'
+          curl -fL --retry 3 -o '{{.BUILD_DIR}}/{{.SDK_TMP_ARCHIVE}}' '{{.SDK_URL}}'
+          mv '{{.BUILD_DIR}}/{{.SDK_TMP_ARCHIVE}}' '{{.BUILD_DIR}}/{{.SDK_ARCHIVE}}'
+        else
+          echo 'SDK archive already exists: {{.BUILD_DIR}}/{{.SDK_ARCHIVE}}'
+        fi
+
+  sdk:extract:
+    desc: Extract OpenWrt SDK
+    deps: [sdk:download]
+    cmds:
+      - |
+        if [ ! -f '{{.SDK_DIR}}/Makefile' ]; then
+          rm -rf '{{.SDK_DIR}}'
+          tar --use-compress-program=unzstd -xf '{{.BUILD_DIR}}/{{.SDK_ARCHIVE}}' -C '{{.BUILD_DIR}}'
+        else
+          echo 'SDK already extracted: {{.SDK_DIR}}'
+        fi
+
+  sdk:feeds:
+    desc: Update and install OpenWrt feeds in SDK when feeds.conf is present
+    deps: [sdk:extract]
+    dir: '{{.SDK_DIR}}'
+    cmds:
+      - |
+        if [ -f feeds.conf ] || [ -f feeds.conf.default ]; then
+          ./scripts/feeds update base packages routing || ./scripts/feeds update -a
+          ./scripts/feeds install -a
+        else
+          echo 'SDK has no feeds.conf; skipping feeds update for prebuilt SDK'
+        fi
+
+  package:sync:
+    desc: Sync PureWRT, mihomo-alpha, and zapret package definitions into SDK package tree
+    deps: [sdk:feeds]
+    cmds:
+      - mkdir -p '{{.PACKAGE_DIR}}/purewrt' '{{.PACKAGE_DIR}}/mihomo-alpha' '{{.PACKAGE_DIR}}/zapret'
+      - rsync -a --delete --exclude '.git' --exclude '.build' --exclude '.tmp' --exclude 'result' --exclude 'dist' --exclude 'openwrt/purewrt' --exclude 'openwrt/mihomo-alpha' --exclude 'openwrt/zapret' ./ '{{.PACKAGE_DIR}}/purewrt/'
+      - cp openwrt/purewrt/Makefile '{{.PACKAGE_DIR}}/purewrt/Makefile'
+      - rsync -a --delete openwrt/mihomo-alpha/ '{{.PACKAGE_DIR}}/mihomo-alpha/'
+      - rsync -a --delete openwrt/zapret/ '{{.PACKAGE_DIR}}/zapret/'
+      - test -f '{{.PACKAGE_DIR}}/purewrt/Makefile'
+      - test -f '{{.PACKAGE_DIR}}/mihomo-alpha/Makefile'
+      - test -f '{{.PACKAGE_DIR}}/zapret/Makefile'
+      - echo 'Packages synced into {{.PACKAGE_DIR}}'
+
+  sdk:config:
+    desc: Generate SDK .config for PureWRT core and mihomo-alpha
+    deps: [package:sync]
+    dir: '{{.SDK_DIR}}'
+    cmds:
+      - |
+        cat > .config <<'CFG'
+        CONFIG_PACKAGE_mihomo-alpha=m
+        CONFIG_PACKAGE_libcap=m
+        CONFIG_PACKAGE_zapret=m
+        CONFIG_PACKAGE_purewrt=m
+        CONFIG_PACKAGE_dnsmasq-full=m
+        CONFIG_PACKAGE_nftables=m
+        CONFIG_PACKAGE_kmod-nft-tproxy=m
+        CONFIG_PACKAGE_ip-full=m
+        CONFIG_PACKAGE_lua5.4=m
+        CONFIG_PACKAGE_ca-bundle=y
+        CONFIG_PACKAGE_zlib=m
+        CONFIG_PACKAGE_luci-app-purewrt=m
+        CONFIG_PACKAGE_luci-base=m
+        CFG
+      - make defconfig
+
+  sdk:config:luci:
+    desc: Generate SDK .config including luci-app-purewrt
+    deps: [package:sync]
+    dir: '{{.SDK_DIR}}'
+    cmds:
+      - |
+        cat > .config <<'CFG'
+        CONFIG_PACKAGE_mihomo-alpha=m
+        CONFIG_PACKAGE_zapret=m
+        CONFIG_PACKAGE_purewrt=m
+        CONFIG_PACKAGE_luci-app-purewrt=m
+        CONFIG_PACKAGE_dnsmasq-full=m
+        CONFIG_PACKAGE_nftables=m
+        CONFIG_PACKAGE_kmod-nft-tproxy=m
+        CONFIG_PACKAGE_ip-full=m
+        CONFIG_PACKAGE_ca-bundle=y
+        CONFIG_PACKAGE_luci-base=m
+        CONFIG_PACKAGE_kmod-nft-queue=m
+        CFG
+      - make defconfig
+
+  build:mihomo-alpha:
+    desc: Build only mihomo-alpha package in SDK
+    deps: [sdk:config]
+    dir: '{{.SDK_DIR}}'
+    cmds:
+      - make package/mihomo-alpha/compile {{.MAKE_FLAGS}}
+
+  build:zapret:
+    desc: Build only bundled zapret package in SDK
+    deps: [sdk:config]
+    dir: '{{.SDK_DIR}}'
+    cmds:
+      - make package/feeds/packages/lua5.4/compile {{.MAKE_FLAGS}}
+      - make package/zapret/compile {{.MAKE_FLAGS}}
+
+  build:purewrt:
+    desc: Build only purewrt package in SDK
+    deps: [sdk:config]
+    dir: '{{.SDK_DIR}}'
+    cmds:
+      - make package/purewrt/compile {{.MAKE_FLAGS}}
+
+
+  build:
+    desc: Build mihomo-alpha and purewrt packages in SDK
+    deps: [sdk:config]
+    dir: '{{.SDK_DIR}}'
+    cmds:
+      - make package/mihomo-alpha/compile {{.MAKE_FLAGS}}
+      - make package/zapret/compile {{.MAKE_FLAGS}}
+      - make package/purewrt/compile {{.MAKE_FLAGS}}
+      - find bin/packages bin/targets \( -name '*mihomo-alpha*.ipk' -o -name '*zapret*.ipk' -o -name '*purewrt*.ipk' -o -name '*luci-app-purewrt*.ipk' -o -name '*mihomo-alpha*.apk' -o -name '*zapret*.apk' -o -name '*purewrt*.apk' -o -name '*luci-app-purewrt*.apk' \)
+
+  build:24.10:
+    desc: Build packages using OpenWrt 24.10.0 SDK
+    cmds:
+      - task build OPENWRT_VERSION=24.10.0
+
+  build:25.12:
+    desc: Build packages using OpenWrt 25.12.0 SDK
+    cmds:
+      - task build OPENWRT_VERSION=25.12.0 OPENWRT_GCC_VERSION=14.3.0
+
+  test:go:
+    desc: Run Go checks outside SDK
+    cmds:
+      - go test ./...
+      - go vet ./...
+      - go build ./cmd/purewrt ./cmd/purewrt-check ./cmd/purewrt-api
+
+  build:cudy-wr3000h:
+    desc: Build packages for Cudy WR3000H on OpenWrt 25.12 mediatek/filogic
+    cmds:
+      - task build OPENWRT_VERSION=25.12.0 OPENWRT_GCC_VERSION=14.3.0 OPENWRT_TARGET=mediatek OPENWRT_SUBTARGET=filogic OPENWRT_ARCH=x86_64
+
+  build:bananapi-bpi-r3-mini:
+    desc: Build packages for Bananapi BPi-R3 Mini on OpenWrt 25.12 mediatek/filogic
+    cmds:
+      - task build OPENWRT_VERSION=25.12.0 OPENWRT_GCC_VERSION=14.3.0 OPENWRT_TARGET=mediatek OPENWRT_SUBTARGET=filogic OPENWRT_ARCH=x86_64
+
+  deploy:luci:
+    desc: 'Push LuCI assets (views, shared modules, rpcd, ACL, menu) to the router and bust LuCI caches (override host: ROUTER=root@<ip> task deploy:luci)'
+    cmds:
+      # scp -O: Dropbear on the router has no sftp-server (legacy protocol only).
+      - scp -O -r openwrt/luci/htdocs/luci-static/resources/purewrt openwrt/luci/htdocs/luci-static/resources/view '{{.ROUTER}}:/www/luci-static/resources/'
+      - scp -O openwrt/luci/root/usr/libexec/rpcd/purewrt '{{.ROUTER}}:/usr/libexec/rpcd/purewrt'
+      - scp -O openwrt/luci/root/usr/share/rpcd/acl.d/luci-app-purewrt.json '{{.ROUTER}}:/usr/share/rpcd/acl.d/luci-app-purewrt.json'
+      - scp -O openwrt/luci/root/usr/share/luci/menu.d/purewrt.json '{{.ROUTER}}:/usr/share/luci/menu.d/purewrt.json'
+      # Cache-busting ritual (see AGENTS.md): LuCI versions static assets with
+      # ?v=<revision>-<mtime of /lib/apk/db/installed>, so without the touch the
+      # browser keeps serving the old file through every kind of reload.
+      - ssh '{{.ROUTER}}' 'chmod +x /usr/libexec/rpcd/purewrt; touch /lib/apk/db/installed; rm -rf /tmp/luci-*; /etc/init.d/rpcd restart'
+      - 'echo "deployed; ACL changes additionally require a LuCI logout/login (grants bind to the ubus session at login)"'

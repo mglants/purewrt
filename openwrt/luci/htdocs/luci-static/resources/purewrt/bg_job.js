@@ -1,0 +1,75 @@
+'use strict';
+'require baseclass';
+'require rpc';
+
+// Shared start/poll wrapper around any purewrt rpcd method pair that
+// follows the `<name>_start` / `<name>_status` convention (update,
+// dpi_check, zapret_check at the time of writing). Each long-running CLI
+// is forked into the background by rpcd, returns `{result:"started"|"busy"}`
+// on start, and exposes `{running, rc, ...}` on status until completion.
+//
+// Why a shared module: the previous incarnations (update_async.js +
+// dpi_check_async.js) differed only by RPC method names, poll cadence,
+// and the response payload key. They duplicated ~50 lines each — bug
+// fixes (deadline math, initial-poll delay) had to land twice. This
+// factory turns each caller into a 6-line wrapper that names the methods
+// and inherits the polling logic.
+//
+// Caller usage:
+//   var helper = bgJob.make({
+//     startMethod:  'update_start',
+//     statusMethod: 'update_status',
+//     startParams:  [],          // names of params accepted by `_start`
+//     payloadKey:   'output',    // status response field carrying the result blob
+//     pollMs:       2000,
+//     totalMs:      240000,
+//   });
+//   helper.run().then(({ok, rc, output}) => ...);
+//
+// `run()` resolves with `{ok, rc, <payloadKey>}` once the worker reports
+// running=0 with a non-empty rc; rejects with `Error('… did not finish
+// within Ns')` past the total deadline.
+return baseclass.extend({
+  make: function(spec) {
+    var startParams = spec.startParams || [];
+    var startDecl = { object: 'purewrt', method: spec.startMethod };
+    if (startParams.length) startDecl.params = startParams;
+    var statusDecl = { object: 'purewrt', method: spec.statusMethod };
+    var callStart  = rpc.declare(startDecl);
+    var callStatus = rpc.declare(statusDecl);
+    var payloadKey = spec.payloadKey || 'output';
+    var pollMs     = spec.pollMs  || 2000;
+    var totalMs    = spec.totalMs || 240000;
+
+    return {
+      run: function() {
+        var args = Array.prototype.slice.call(arguments);
+        var deadline = Date.now() + totalMs;
+        return callStart.apply(null, args).then(function() {
+          return new Promise(function(resolve, reject) {
+            function tick() {
+              if (Date.now() > deadline) {
+                reject(new Error(spec.startMethod + ' did not finish within ' + Math.round(totalMs / 1000) + 's'));
+                return;
+              }
+              callStatus().then(function(s) {
+                var running = Number(s && s.running);
+                var rc = (s && s.rc) || '';
+                if (running === 0 && rc !== '') {
+                  var result = { ok: rc === '0', rc: rc };
+                  result[payloadKey] = (s && s[payloadKey]) || (payloadKey === 'output' ? '' : null);
+                  resolve(result);
+                } else {
+                  setTimeout(tick, pollMs);
+                }
+              }, reject);
+            }
+            // Small head-start so a fast (cached) job resolves on the
+            // first poll instead of bouncing through a full pollMs wait.
+            setTimeout(tick, 250);
+          });
+        });
+      }
+    };
+  }
+});

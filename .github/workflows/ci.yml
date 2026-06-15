@@ -1,0 +1,44 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: go test + vet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: true
+      - run: go test ./...
+      - run: go vet ./...
+      - run: go build ./cmd/purewrt ./cmd/purewrt-check ./cmd/purewrt-api
+
+  # Cheap package smoke build: the OpenWrt SDK toolchain ships prebuilt in the
+  # gh-action-sdk container, so this catches Makefile/feed breakage in minutes
+  # (container pull only — no toolchain build).
+  smoke-build:
+    name: smoke build (x86_64 / 25.12)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: openwrt/gh-action-sdk@v11
+        env:
+          ARCH: x86_64-openwrt-25.12
+          FEEDNAME: purewrt
+          PACKAGES: mihomo-alpha zapret purewrt luci-app-purewrt
+          NO_REFRESH_CHECK: 1
+      - run: ls -R bin/packages/*/purewrt/ || true

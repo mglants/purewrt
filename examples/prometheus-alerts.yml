@@ -1,0 +1,61 @@
+# Example Prometheus alerting rules for PureWRT's /metrics endpoint
+# (served by purewrt-api when `option metrics_enabled '1'` is set).
+#
+# Scrape config (prometheus.yml) — purewrt-api binds 0.0.0.0:8787 by
+# default (override with the `api_listen` UCI list):
+#   - job_name: purewrt
+#     static_configs:
+#       - targets: ['192.168.1.1:8787']
+#
+# Note: apply/update metrics are observed by the purewrt CLI and bridged
+# to the daemon via /tmp/purewrt/metrics.prom — they refresh on every
+# apply/update, not continuously.
+groups:
+  - name: purewrt
+    rules:
+      - alert: PurewrtApplyFailing
+        expr: increase(purewrt_apply_total{result=~"error|rollback|prepare_error"}[1h]) > 0
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PureWRT apply is failing on {{ $labels.instance }}"
+          description: "{{ $value }} failed/rolled-back applies in the last hour. Routing may be running on stale state."
+
+      - alert: PurewrtProviderDownloadErrors
+        expr: increase(purewrt_provider_download_total{result="error"}[6h]) > 3
+        labels:
+          severity: warning
+        annotations:
+          summary: "Provider downloads erroring on {{ $labels.instance }}"
+          description: "Subscriptions/rule providers failed to refresh repeatedly — check connectivity, the bootstrap DoH pool, or the subscription URL."
+
+      - alert: PurewrtSubscriptionExpiringSoon
+        expr: 0 < purewrt_subscription_min_seconds_to_expiry < 7 * 86400
+        labels:
+          severity: warning
+        annotations:
+          summary: "A PureWRT subscription expires in under 7 days"
+
+      - alert: PurewrtSubscriptionExpired
+        expr: purewrt_subscription_min_seconds_to_expiry <= 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "A PureWRT subscription has expired"
+
+      - alert: PurewrtGeoDataStale
+        expr: purewrt_geoip_data_age_seconds > 14 * 86400
+        labels:
+          severity: warning
+        annotations:
+          summary: "Geo data older than 14 days on {{ $labels.instance }}"
+          description: "geosite/geoip refresh (cron `geo-refresh`) appears to have stopped."
+
+      - alert: PurewrtSlowGenerate
+        expr: histogram_quantile(0.95, rate(purewrt_generate_duration_ms_bucket[6h])) > 5000
+        labels:
+          severity: warning
+        annotations:
+          summary: "PureWRT generation p95 above 5s"
+          description: "Rule-provider growth or a broken artifact cache is slowing generation — check `purewrt generate-cache-status`."

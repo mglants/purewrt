@@ -1,0 +1,34 @@
+#!/bin/sh
+
+case "$ACTION" in
+	ifup|ifdown|ifupdate) ;;
+	*) exit 0 ;;
+esac
+
+enabled="$(uci -q get purewrt.settings.enabled)"
+[ "$enabled" = "0" ] && exit 0
+
+has_zapret=0
+for section in $(uci -q show purewrt | sed -n "s/^purewrt\.\([^=]*\)=zapret_profile$/\1/p"); do
+	p_enabled="$(uci -q get purewrt.$section.enabled)"
+	[ "$p_enabled" = "0" ] && continue
+	mode="$(uci -q get purewrt.$section.interface_mode)"
+	network="$(uci -q get purewrt.$section.network)"
+	if [ "$mode" = "mwan3_members" ] || [ "$network" = "auto" ] || [ "$network" = "$INTERFACE" ]; then
+		has_zapret=1
+		break
+	fi
+done
+
+[ "$has_zapret" = "1" ] || exit 0
+
+stamp=/tmp/purewrt-zapret-mwan3-hotplug.stamp
+now="$(date +%s)"
+last="$(cat "$stamp" 2>/dev/null)"
+[ -n "$last" ] && [ $((now - last)) -lt 10 ] && exit 0
+mkdir -p /tmp
+echo "$now" > "$stamp"
+
+logger -t purewrt-zapret-hotplug "interface event action=$ACTION device=$DEVICE interface=$INTERFACE; scheduling PureWRT reload"
+sleep 3
+/etc/init.d/purewrt reload >/dev/null 2>&1 || logger -t purewrt-zapret-hotplug "PureWRT reload failed after action=$ACTION device=$DEVICE interface=$INTERFACE"

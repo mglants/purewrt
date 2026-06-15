@@ -1,0 +1,55 @@
+#!/bin/sh
+
+STATE='/etc/purewrt/generated/peerdns-managed.list'
+
+is_wan_proto() {
+    case "$1" in
+        dhcp|dhcpv6|pppoe|qmi|mbim|ncm|3g|wwan|l2tp|pptp) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+is_never_wan_name() {
+    case "$1" in
+        lan|loopback|loopback_*|guest|iot) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+apply_peerdns() {
+    mkdir -p "$(dirname "$STATE")"
+    : > "$STATE.tmp"
+
+    for iface in $(uci show network 2>/dev/null | sed -n "s/^network\.\([^.=]*\)=interface$/\1/p"); do
+        is_never_wan_name "$iface" && continue
+        proto="$(uci -q get network.$iface.proto)"
+        is_wan_proto "$proto" || continue
+        current="$(uci -q get network.$iface.peerdns)"
+        [ "$current" = "0" ] && continue
+        uci set "network.$iface.peerdns=0" || continue
+        echo "$iface" >> "$STATE.tmp"
+    done
+
+    if [ -s "$STATE.tmp" ]; then
+        mv "$STATE.tmp" "$STATE"
+        uci commit network
+    else
+        rm -f "$STATE.tmp"
+    fi
+}
+
+restore_peerdns() {
+    [ -s "$STATE" ] || exit 0
+    while IFS= read -r iface; do
+        [ -n "$iface" ] || continue
+        uci -q delete "network.$iface.peerdns"
+    done < "$STATE"
+    uci commit network
+    rm -f "$STATE"
+}
+
+case "$1" in
+    apply) apply_peerdns ;;
+    restore) restore_peerdns ;;
+    *) echo "usage: $0 {apply|restore}" >&2; exit 2 ;;
+esac

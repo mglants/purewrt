@@ -1,0 +1,7 @@
+table inet purewrt {
+  set proxy_ai4 { type ipv4_addr; flags interval; auto-merge; }
+  chain prerouting {
+    type filter hook prerouting priority mangle; policy accept;
+    ip daddr @proxy_ai4 meta l4proto tcp meta mark set meta mark | 0x1 tproxy ip to :7895 accept
+  }
+}

@@ -1,0 +1,55 @@
+mixed-port: 7890
+allow-lan: true
+mode: rule
+log-level: warning
+external-controller: 127.0.0.1:9090
+secret: "generated-secret"
+
+dns:
+  enable: true
+  listen: 127.0.0.1:7874
+  ipv6: true
+  enhanced-mode: normal
+  use-hosts: true
+  respect-rules: true
+  nameserver:
+    - https://dns.google/dns-query
+    - https://cloudflare-dns.com/dns-query
+    - https://dns.quad9.net/dns-query
+
+listeners:
+  - name: tproxy-common
+    type: tproxy
+    port: 7893
+    listen: 0.0.0.0
+  - name: tproxy-media
+    type: tproxy
+    port: 7894
+    listen: 0.0.0.0
+  - name: tproxy-ai
+    type: tproxy
+    port: 7895
+    listen: 0.0.0.0
+
+proxy-groups:
+  - name: DNSProxy
+    type: select
+    use: [main]
+  - name: Common
+    type: url-test
+    use: [main]
+    url: https://cp.cloudflare.com/generate_204
+    interval: 300
+  - name: Media
+    type: select
+    use: [main]
+  - name: AI
+    type: select
+    use: [main]
+
+rules:
+  - DOMAIN-SUFFIX,dns.google,DNSProxy
+  - IN-NAME,tproxy-ai,AI
+  - IN-NAME,tproxy-media,Media
+  - IN-NAME,tproxy-common,Common
+  - MATCH,Common

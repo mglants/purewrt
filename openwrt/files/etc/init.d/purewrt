@@ -1,0 +1,409 @@
+#!/bin/sh /etc/rc.common
+START=95
+STOP=10
+USE_PROCD=1
+CRON_START="# PureWRT auto update start"
+CRON_END="# PureWRT auto update end"
+MIHOMO_CRON_START="# PureWRT mihomo auto update start"
+MIHOMO_CRON_END="# PureWRT mihomo auto update end"
+log_level_num() {
+    case "$(uci -q get purewrt.settings.log_level)" in
+        error|err) echo 0 ;;
+        info|notice) echo 2 ;;
+        debug) echo 3 ;;
+        *) echo 1 ;;
+    esac
+}
+log_msg() {
+    level="$1"
+    shift
+    case "$level" in
+        error|err) need=0 ;;
+        info|notice) need=2 ;;
+        debug) need=3 ;;
+        *) need=1 ;;
+    esac
+    [ "$(log_level_num)" -ge "$need" ] && logger -t purewrt "$level $*"
+}
+PUREWRT_LAST_BG_OUT=/tmp/purewrt-bg-last.txt
+
+run_logged() {
+    # busybox sh doesn't support PIPESTATUS, so capturing the exit status of
+    # the LHS of a pipe via ${PIPESTATUS[0]} always returns 0 (the rc of
+    # `logger`). Capture stdout+stderr first, log it separately, and return
+    # the real rc.
+    #
+    # Also persists the captured text to PUREWRT_LAST_BG_OUT so the caller
+    # (run_bg) can include a one-line reason directly in its "action
+    # failed" log line — the full output stays under the `purewrt-bg`
+    # syslog tag for anything wanting the complete dump.
+    out=$("$@" 2>&1)
+    rc=$?
+    if [ -n "$out" ]; then
+        printf '%s\n' "$out" | logger -t purewrt-bg
+        printf '%s\n' "$out" > "$PUREWRT_LAST_BG_OUT"
+    else
+        : > "$PUREWRT_LAST_BG_OUT"
+    fi
+    return "$rc"
+}
+
+# last_bg_reason returns ~200 chars of the most recent run_logged output —
+# the proximate cause to drop into an "action failed" line so users
+# don't have to cross-reference two log streams just to learn that mihomo
+# wasn't running, or that a subscription URL timed out.
+last_bg_reason() {
+    if [ -s "$PUREWRT_LAST_BG_OUT" ]; then
+        tail -n 1 "$PUREWRT_LAST_BG_OUT" 2>/dev/null | head -c 200
+    else
+        printf '%s' '(no output; see purewrt-bg log)'
+    fi
+}
+now_s() { date +%s 2>/dev/null || echo 0; }
+log_duration() {
+    what="$1"
+    start="$2"
+    end="$(now_s)"
+    [ "$start" -gt 0 ] 2>/dev/null && log_msg debug "$what took=$((end - start))s"
+}
+logrun() {
+    tag="$1"
+    shift
+    start="$(now_s)"
+    log_msg debug "command start tag=$tag cmd=$*"
+    out=$("$@" 2>&1)
+    rc=$?
+    [ -n "$out" ] && printf '%s\n' "$out" | logger -t "$tag"
+    log_duration "command done tag=$tag rc=$rc cmd=$*" "$start"
+    return "$rc"
+}
+unique_existing_dirs() {
+    awk '
+        NF && !seen[$0]++ { print }
+    ' | while IFS= read -r dir; do
+        [ -d "$dir" ] && printf '%s\n' "$dir"
+    done
+}
+get_dnsmasq_confdir() {
+    manual="$(uci -q get purewrt.settings.dnsmasq_include_dir)"
+    if [ -n "$manual" ]; then
+        if [ -d "$manual" ]; then
+            printf '%s\n' "$manual"
+            return 0
+        fi
+        log_msg error "dnsmasq: configured include dir does not exist dir=$manual"
+        return 1
+    fi
+
+    # Wait for dnsmasq to register on ubus instead of polling once per
+    # second for 10 s. `ubus wait_for` is event-driven (kqueue-style) and
+    # returns immediately once the service appears — typically <100 ms
+    # rather than the worst-case 10 s boot stall the polling loop caused.
+    # Fall back to the polling loop on older procd builds that don't ship
+    # `wait_for`, so the script still works after a downgrade.
+    if ubus -t 10 wait_for dnsmasq 2>/dev/null; then
+        :
+    else
+        i=0
+        while [ "$i" -lt 10 ]; do
+            if ubus -t 1 call dnsmasq state >/dev/null 2>&1; then break; fi
+            i=$((i + 1))
+            sleep 1
+        done
+    fi
+
+    # Loop kept (now usually fires exactly once) so a transient ubus reply
+    # without instance mounts still gets a brief retry.
+    i=0
+    while [ "$i" -lt 5 ]; do
+        dirs="$(ubus call service list 2>/dev/null | jsonfilter -e 'VAR=$.dnsmasq.instances.*.mount' 2>/dev/null | awk '
+            BEGIN { RS = " " }
+            {
+                sub("VAR=", "", $0)
+                gsub(/[\047,;\\]/, "", $0)
+                if ($0 ~ /^\/tmp\/dnsmasq\./)
+                    print $0
+            }' | unique_existing_dirs)"
+        count="$(printf '%s\n' "$dirs" | sed '/^$/d' | wc -l)"
+        if [ "$count" = "1" ]; then
+            printf '%s\n' "$dirs"
+            return 0
+        fi
+        if [ "$count" -gt 1 ]; then
+            log_msg error "dnsmasq: multiple runtime dirs detected; set purewrt.settings.dnsmasq_include_dir manually dirs=$(printf '%s' "$dirs" | tr '\n' ' ')"
+            return 1
+        fi
+        i=$((i + 1))
+        sleep 1
+    done
+
+    dirs="$(uci -q show dhcp 2>/dev/null | sed -n "s/^dhcp\.[^.]*\.confdir='\([^']*\)'.*/\1/p; s/^dhcp\.[^.]*\.confdir=\([^']*\).*/\1/p" | unique_existing_dirs)"
+    count="$(printf '%s\n' "$dirs" | sed '/^$/d' | wc -l)"
+    if [ "$count" = "1" ]; then
+        printf '%s\n' "$dirs"
+        return 0
+    fi
+    if [ "$count" -gt 1 ]; then
+        log_msg error "dnsmasq: multiple configured confdirs detected; set purewrt.settings.dnsmasq_include_dir manually dirs=$(printf '%s' "$dirs" | tr '\n' ' ')"
+        return 1
+    fi
+
+    log_msg error "dnsmasq: include dir not found; set purewrt.settings.dnsmasq_include_dir to the dnsmasq confdir"
+    return 1
+}
+prepare_dnsmasq_include_dir() {
+    confdir="$(get_dnsmasq_confdir)"
+    if [ -z "$confdir" ] || [ ! -d "$confdir" ]; then
+        log_msg error "dnsmasq: runtime config dir unavailable"
+        return 1
+    fi
+    current="$(uci -q get purewrt.settings.dnsmasq_include_dir)"
+    if [ "$current" != "$confdir" ]; then
+        uci set purewrt.settings.dnsmasq_include_dir="$confdir"
+        uci commit purewrt
+        rm -f /etc/dnsmasq.d/purewrt.conf
+        log_msg info "dnsmasq: include dir=$confdir"
+    fi
+}
+start_service() {
+    log_msg warn "start: PureWRT service start requested"
+    log_msg info "start: installing cron"
+    install_cron
+    # Auto-detect the dnsmasq confdir before the boot apply. The Go side
+    # never detects it: `PromoteDNSMasqFragments` silently no-ops when
+    # `dnsmasq_include_dir` is empty, so without this step a fresh install
+    # writes its dnsmasq fragments (nftset population!) into the generated
+    # dir where dnsmasq never reads them. Cheap when already set — the
+    # manual-setting fast path returns immediately. Failure is logged but
+    # non-fatal: nft/ip rules still apply, and the next start retries.
+    if ! prepare_dnsmasq_include_dir; then
+        log_msg error "start: dnsmasq include dir detection failed; dnsmasq fragments will not be installed"
+    fi
+    # Force-apply at boot. A previous `purewrt generate` (e.g. from rpcd)
+    # writes the generation fingerprint; a subsequent plain `apply` then
+    # sees the fingerprint match and short-circuits all writes including
+    # `nft -f`, leaving the live nft table empty even though it reports
+    # "applied safely". `apply --force` bypasses the fingerprint check and
+    # unconditionally loads nft + ip rules, which is what boot needs. Run
+    # foreground so update-if-needed can't race with this on the
+    # operation lock.
+    log_msg info "start: running boot apply --force"
+    logrun purewrt /usr/bin/purewrt apply --force
+    # Boot's update-if-needed retries 3 times with 30/60/120 s backoff so
+    # transient DNS / mihomo-not-yet-up failures right after reboot don't
+    # leave subscriptions stale until the next cron tick (6 h later).
+    log_msg info "start: scheduling boot update check (with retries)"
+    run_bg_with_retries update-if-needed boot 3 30
+}
+reload_service() {
+    log_msg warn "reload: PureWRT reload requested"
+    install_cron
+    run_bg reload reload
+}
+stop_service() {
+    log_msg warn "stop: PureWRT disable requested"
+    logrun purewrt /usr/bin/purewrt disable
+}
+service_triggers() { procd_add_reload_trigger purewrt; }
+boot() { start; install_cron; }
+run_bg() {
+    action="$1"
+    reason="$2"
+    [ -n "$IPKG_INSTROOT" ] && return 0
+    [ "$PKG_UPGRADE" = "1" ] && return 0
+    bg="$(uci -q get purewrt.settings.background_updates)"
+    delay="$(uci -q get purewrt.settings.boot_update_delay)"
+    nicev="$(uci -q get purewrt.settings.update_nice)"
+    ioc="$(uci -q get purewrt.settings.update_ionice_class)"
+    ion="$(uci -q get purewrt.settings.update_ionice_level)"
+    [ -n "$delay" ] || delay=0
+    [ -n "$nicev" ] || nicev=19
+    [ -n "$ioc" ] || ioc=3
+    [ -n "$ion" ] || ion=7
+    if [ "$bg" = "0" ]; then
+        log_msg info "action: $action reason=$reason mode=foreground"
+        logrun purewrt /usr/bin/purewrt "$action"
+        return $?
+    fi
+    log_msg info "action: $action reason=$reason mode=background delay=$([ "$reason" = "boot" ] && echo "$delay" || echo 0)s"
+    log_msg debug "action: $action nice=$nicev ionice=$ioc:$ion"
+    (
+        start="$(now_s)"
+        if [ "$reason" = "boot" ]; then
+            log_msg debug "action: $action waiting ${delay}s before boot update"
+            sleep "$delay"
+        fi
+        log_msg info "action: $action started"
+        if command -v ionice >/dev/null 2>&1; then
+            run_logged ionice -c "$ioc" -n "$ion" nice -n "$nicev" /usr/bin/purewrt "$action"
+            rc=$?
+        else
+            run_logged nice -n "$nicev" /usr/bin/purewrt "$action"
+            rc=$?
+        fi
+        # Use explicit if/else — the prior `A && B || C` shortcut silently
+        # fired the error branch when `log_msg info` returned non-zero
+        # because the user's `log_level` was set above `info` (log_msg's
+        # internal threshold test makes the function return false when
+        # the message gets suppressed). That produced bogus
+        # "action: reload failed rc=0" lines on every successful reload.
+        if [ "$rc" = "0" ]; then
+            log_msg info "action: $action finished rc=0"
+        else
+            log_msg error "action: $action failed rc=$rc reason=\"$(last_bg_reason)\""
+        fi
+        log_duration "action: $action complete" "$start"
+    ) &
+}
+# run_bg_with_retries dispatches a background action and retries it up to
+# `attempts` times with exponential backoff starting at `base_delay`
+# seconds. Used at boot for `update-if-needed` so transient DNS or
+# mihomo-not-yet-up failures self-heal within minutes instead of waiting
+# 6h for the next cron tick. Cost when the first attempt succeeds: zero
+# extra delay (the retry loop exits on rc=0).
+run_bg_with_retries() {
+    action="$1"
+    reason="$2"
+    attempts="${3:-3}"
+    base_delay="${4:-30}"
+    [ -n "$IPKG_INSTROOT" ] && return 0
+    [ "$PKG_UPGRADE" = "1" ] && return 0
+    bg="$(uci -q get purewrt.settings.background_updates)"
+    if [ "$bg" = "0" ]; then
+        # Synchronous mode: keep the original single-attempt behaviour
+        # to avoid blocking the boot for minutes on retries.
+        run_bg "$action" "$reason"
+        return
+    fi
+    nicev="$(uci -q get purewrt.settings.update_nice)"; [ -n "$nicev" ] || nicev=19
+    ioc="$(uci -q get purewrt.settings.update_ionice_class)";  [ -n "$ioc" ]   || ioc=3
+    ion="$(uci -q get purewrt.settings.update_ionice_level)";  [ -n "$ion" ]   || ion=7
+    delay="$(uci -q get purewrt.settings.boot_update_delay)";  [ -n "$delay" ] || delay=0
+    log_msg info "action: $action reason=$reason mode=background-retry attempts=$attempts base_delay=${base_delay}s"
+    (
+        start="$(now_s)"
+        if [ "$reason" = "boot" ] && [ "$delay" -gt 0 ] 2>/dev/null; then
+            log_msg debug "action: $action waiting ${delay}s before boot update"
+            sleep "$delay"
+        fi
+        attempt=1
+        retry_delay="$base_delay"
+        rc=1
+        while [ "$attempt" -le "$attempts" ]; do
+            log_msg info "action: $action attempt=$attempt/$attempts started"
+            if command -v ionice >/dev/null 2>&1; then
+                run_logged ionice -c "$ioc" -n "$ion" nice -n "$nicev" /usr/bin/purewrt "$action"
+                rc=$?
+            else
+                run_logged nice -n "$nicev" /usr/bin/purewrt "$action"
+                rc=$?
+            fi
+            if [ "$rc" = "0" ]; then
+                log_msg info "action: $action attempt=$attempt finished rc=0"
+                break
+            fi
+            if [ "$attempt" -lt "$attempts" ]; then
+                log_msg warn "action: $action attempt=$attempt failed rc=$rc reason=\"$(last_bg_reason)\"; retrying in ${retry_delay}s"
+                sleep "$retry_delay"
+                retry_delay=$((retry_delay * 2))
+            else
+                log_msg error "action: $action giving up after $attempts attempts (final rc=$rc) reason=\"$(last_bg_reason)\""
+            fi
+            attempt=$((attempt + 1))
+        done
+        log_duration "action: $action complete" "$start"
+    ) &
+}
+install_cron() {
+    log_msg info "cron: refreshing PureWRT auto-update entries"
+    mkdir -p /etc/crontabs
+    touch /etc/crontabs/root
+    remove_cron_entry quiet
+    remove_mihomo_cron_entry quiet
+    nicev="$(uci -q get purewrt.settings.update_nice)"; [ -n "$nicev" ] || nicev=19
+    ioc="$(uci -q get purewrt.settings.update_ionice_class)"; [ -n "$ioc" ] || ioc=3
+    ion="$(uci -q get purewrt.settings.update_ionice_level)"; [ -n "$ion" ] || ion=7
+    prefix="nice -n $nicev"
+    command -v ionice >/dev/null 2>&1 && prefix="ionice -c $ioc -n $ion nice -n $nicev"
+
+    # Subscription / provider auto-update entry
+    enabled="$(uci -q get purewrt.settings.auto_update_enabled)"
+    if [ "$enabled" = "0" ]; then
+        log_msg info "cron: subscription auto updates disabled"
+    else
+        schedule="$(uci -q get purewrt.settings.auto_update_cron)"
+        [ -n "$schedule" ] || schedule='17 */6 * * *'
+        reload="$(uci -q get purewrt.settings.reload_after_update)"
+        cmd="$prefix /usr/bin/purewrt update-if-needed 2>&1 | logger -t purewrt-cron"
+        [ "$reload" = "0" ] && cmd="$prefix /usr/bin/purewrt update 2>&1 | logger -t purewrt-cron"
+        log_msg info "cron: installing subscription schedule='$schedule' reload_after_update=$reload"
+        log_msg debug "cron: subscription command=$cmd"
+        {
+            echo "$CRON_START"
+            echo "$schedule $cmd"
+            echo "$CRON_END"
+        } >> /etc/crontabs/root
+    fi
+
+    # Mihomo binary auto-update entry — separate block so it can be
+    # toggled independently and the bad-binary auto-revert in
+    # `purewrt mihomo-auto-update` doesn't tangle with the subscription
+    # update path.
+    mihomo_enabled="$(uci -q get purewrt.settings.mihomo_auto_update_enabled)"
+    if [ "$mihomo_enabled" = "1" ]; then
+        mihomo_schedule="$(uci -q get purewrt.settings.mihomo_auto_update_cron)"
+        [ -n "$mihomo_schedule" ] || mihomo_schedule='23 4 * * *'
+        mihomo_cmd="$prefix /usr/bin/purewrt mihomo-auto-update 2>&1 | logger -t purewrt-cron"
+        log_msg info "cron: installing mihomo binary schedule='$mihomo_schedule'"
+        log_msg debug "cron: mihomo command=$mihomo_cmd"
+        {
+            echo "$MIHOMO_CRON_START"
+            echo "$mihomo_schedule $mihomo_cmd"
+            echo "$MIHOMO_CRON_END"
+        } >> /etc/crontabs/root
+    else
+        log_msg info "cron: mihomo binary auto updates disabled"
+    fi
+
+    reload_cron
+}
+reload_cron() {
+    if /etc/init.d/cron reload >/dev/null 2>&1; then
+        log_msg info "cron: cron reloaded"
+    else
+        /etc/init.d/cron restart >/dev/null 2>&1 || true
+        log_msg info "cron: cron restarted"
+    fi
+}
+remove_cron_entry() {
+    mode="$1"
+    [ -f /etc/crontabs/root ] || return 1
+    if grep -qF "$CRON_START" /etc/crontabs/root 2>/dev/null; then
+        [ "$mode" = "quiet" ] || log_msg warn "disable: removing PureWRT cron entry"
+        sed -i "\|$CRON_START|,\|$CRON_END|d" /etc/crontabs/root 2>/dev/null || true
+        return 0
+    fi
+    [ "$mode" = "quiet" ] || log_msg info "disable: PureWRT cron entry already absent"
+    return 1
+}
+remove_mihomo_cron_entry() {
+    mode="$1"
+    [ -f /etc/crontabs/root ] || return 1
+    if grep -qF "$MIHOMO_CRON_START" /etc/crontabs/root 2>/dev/null; then
+        [ "$mode" = "quiet" ] || log_msg warn "disable: removing PureWRT mihomo cron entry"
+        sed -i "\|$MIHOMO_CRON_START|,\|$MIHOMO_CRON_END|d" /etc/crontabs/root 2>/dev/null || true
+        return 0
+    fi
+    [ "$mode" = "quiet" ] || log_msg info "disable: PureWRT mihomo cron entry already absent"
+    return 1
+}
+disable() {
+    removed=0
+    remove_cron_entry        && removed=1
+    remove_mihomo_cron_entry && removed=1
+    [ "$removed" = "1" ] && reload_cron
+    name="$(basename "$initscript")"
+    name="${name##[SK][0-9][0-9]}"
+    rm -f "$IPKG_INSTROOT"/etc/rc.d/S??"$name"
+    rm -f "$IPKG_INSTROOT"/etc/rc.d/K??"$name"
+}
