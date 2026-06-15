@@ -17,3 +17,5 @@ jobs:
     uses: ./.github/workflows/_build.yml
     with:
       runner: arc-runner-set-nikkix
+      # Debug trim — delete this `matrix:` line to build the full curated set.
+      matrix: '{"branch":["openwrt-25.12"],"arch":["mipsel_24kc"]}'
