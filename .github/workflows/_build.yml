@@ -18,13 +18,27 @@ on:
         type: string
         default: purewrt
       matrix:
-        description: JSON strategy matrix. Default = full curated arch x branch set.
+        description: JSON strategy matrix. Default = popular >=128 MB arches x branch set.
         type: string
-        # arches: x86_64; aarch64_cortex-a53 (Cudy WR3000*, BPi-R3 Mini); a72 (RPi4);
-        # a76 (RPi5); mipsel_24kc (ramips/mt7621). branches: openwrt-24.10, openwrt-25.12.
+        # Popular OpenWrt package arches for routers with >=128 MB RAM (lower-RAM /
+        # niche arches omitted — the mihomo proxy needs the headroom). branches:
+        # openwrt-24.10, openwrt-25.12.
+        #   x86_64                    x86 / VMs
+        #   aarch64_cortex-a53        mediatek/filogic (MT7981/86), qualcommax/ipq807x
+        #   aarch64_cortex-a72        bcm27xx (RPi4), mvebu armada-7k/8k
+        #   aarch64_cortex-a76        bcm27xx (RPi5)
+        #   aarch64_generic           rockchip (NanoPi R2S/R4S/R5S), armsr
+        #   arm_cortex-a7_neon-vfpv4  ipq40xx (GL.iNet, Linksys, Netgear)
+        #   arm_cortex-a9_vfpv3-d16   mvebu/cortexa9 (Linksys WRT, Turris Omnia)
+        #   arm_cortex-a15_neon-vfpv4 ipq806x (Netgear R7800/R7500)
+        #   mips_24kc                 ath79 (TP-Link Archer, Ubiquiti)
+        #   mipsel_24kc               ramips/mt7621 (Xiaomi, ZyXEL, very common)
         default: >-
           {"branch":["openwrt-24.10","openwrt-25.12"],
-           "arch":["x86_64","aarch64_cortex-a53","aarch64_cortex-a72","aarch64_cortex-a76","mipsel_24kc"]}
+           "arch":["x86_64",
+                   "aarch64_cortex-a53","aarch64_cortex-a72","aarch64_cortex-a76","aarch64_generic",
+                   "arm_cortex-a7_neon-vfpv4","arm_cortex-a9_vfpv3-d16","arm_cortex-a15_neon-vfpv4",
+                   "mips_24kc","mipsel_24kc"]}
     secrets:
       USIGN_SECRET_KEY:
         required: false

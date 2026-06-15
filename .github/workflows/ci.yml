@@ -35,5 +35,5 @@ jobs:
     if: github.event_name == 'push'
     uses: ./.github/workflows/_build.yml
     with:
-      runner: ubuntu-latest
-      matrix: '{"branch":["openwrt-25.12"],"arch":["x86_64","mipsel_24kc"]}'
+      runner: arc-runner-set-nikkix
+      matrix: '{"branch":["openwrt-25.12"],"arch":["mipsel_24kc"]}'

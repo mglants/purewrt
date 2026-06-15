@@ -8,6 +8,9 @@ PKG_VERSION:=$(strip $(shell cat $(CURDIR)/VERSION 2>/dev/null || cat $(CURDIR)/
 PKG_RELEASE:=1
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)
 PKG_BUILD_PARALLEL:=1
+# Go's runtime/cgo asm (gcc_mipsx.S) is incompatible with MIPS16, so the cgo
+# build fails on mips/mipsel targets that default to -mips16. Build without it.
+PKG_BUILD_FLAGS:=no-mips16
 
 # Source location (purewrt builds from the checked-out repo — NO PKG_SOURCE, so
 # no download/mirror-hash for our own fast-moving source):
