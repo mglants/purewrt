@@ -97,12 +97,15 @@ tasks:
     desc: Sync PureWRT, mihomo-alpha, and zapret package definitions into SDK package tree
     deps: [sdk:feeds]
     cmds:
-      - mkdir -p '{{.PACKAGE_DIR}}/purewrt' '{{.PACKAGE_DIR}}/mihomo-alpha' '{{.PACKAGE_DIR}}/zapret'
-      - rsync -a --delete --exclude '.git' --exclude '.build' --exclude '.tmp' --exclude 'result' --exclude 'dist' --exclude 'openwrt/purewrt' --exclude 'openwrt/mihomo-alpha' --exclude 'openwrt/zapret' ./ '{{.PACKAGE_DIR}}/purewrt/'
+      - mkdir -p '{{.PACKAGE_DIR}}/purewrt' '{{.PACKAGE_DIR}}/luci-app-purewrt' '{{.PACKAGE_DIR}}/mihomo-alpha' '{{.PACKAGE_DIR}}/zapret'
+      - rsync -a --delete --exclude '.git' --exclude '.build' --exclude '.tmp' --exclude 'result' --exclude 'dist' --exclude 'openwrt/purewrt' --exclude 'openwrt/luci-app-purewrt' --exclude 'openwrt/mihomo-alpha' --exclude 'openwrt/zapret' ./ '{{.PACKAGE_DIR}}/purewrt/'
       - cp openwrt/purewrt/Makefile '{{.PACKAGE_DIR}}/purewrt/Makefile'
+      - cp openwrt/luci-app-purewrt/Makefile '{{.PACKAGE_DIR}}/luci-app-purewrt/Makefile'
+      - rsync -a --delete openwrt/luci/ '{{.PACKAGE_DIR}}/luci-app-purewrt/luci/'
       - rsync -a --delete openwrt/mihomo-alpha/ '{{.PACKAGE_DIR}}/mihomo-alpha/'
       - rsync -a --delete openwrt/zapret/ '{{.PACKAGE_DIR}}/zapret/'
       - test -f '{{.PACKAGE_DIR}}/purewrt/Makefile'
+      - test -f '{{.PACKAGE_DIR}}/luci-app-purewrt/Makefile'
       - test -f '{{.PACKAGE_DIR}}/mihomo-alpha/Makefile'
       - test -f '{{.PACKAGE_DIR}}/zapret/Makefile'
       - echo 'Packages synced into {{.PACKAGE_DIR}}'
@@ -182,6 +185,7 @@ tasks:
       - make package/mihomo-alpha/compile {{.MAKE_FLAGS}}
       - make package/zapret/compile {{.MAKE_FLAGS}}
       - make package/purewrt/compile {{.MAKE_FLAGS}}
+      - make package/luci-app-purewrt/compile {{.MAKE_FLAGS}}
       - find bin/packages bin/targets \( -name '*mihomo-alpha*.ipk' -o -name '*zapret*.ipk' -o -name '*purewrt*.ipk' -o -name '*luci-app-purewrt*.ipk' -o -name '*mihomo-alpha*.apk' -o -name '*zapret*.apk' -o -name '*purewrt*.apk' -o -name '*luci-app-purewrt*.apk' \)
 
   build:24.10:

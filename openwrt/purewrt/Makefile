@@ -55,18 +55,6 @@ define Package/purewrt/conffiles
 /etc/config/purewrt
 endef
 
-define Package/luci-app-purewrt
-  SECTION:=luci
-  CATEGORY:=LuCI
-  SUBMENU:=3. Applications
-  TITLE:=LuCI support for PureWRT
-  DEPENDS:=+purewrt +luci-base +rpcd
-endef
-
-define Package/luci-app-purewrt/description
- LuCI web interface for PureWRT.
-endef
-
 Build/Configure=$(call GoPackage/Build/Configure)
 Build/Compile=$(call GoPackage/Build/Compile)
 Build/InstallDev=$(call GoPackage/Build/InstallDev,$(1))
@@ -77,7 +65,6 @@ define Build/Prepare
 	$(Build/Prepare/Default)
 	$(CP) $(PUREWRT_SRC)/cmd $(PUREWRT_SRC)/internal $(PUREWRT_SRC)/go.mod $(PUREWRT_SRC)/go.sum $(PKG_BUILD_DIR)/
 	$(CP) $(PUREWRT_SRC)/openwrt/files $(PKG_BUILD_DIR)/files
-	$(CP) $(PUREWRT_SRC)/openwrt/luci $(PKG_BUILD_DIR)/luci
 endef
 
 define Package/purewrt/install
@@ -95,36 +82,4 @@ define Package/purewrt/install
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/files/etc/init.d/mihomo $(1)/etc/init.d/mihomo
 endef
 
-define Package/luci-app-purewrt/install
-	$(INSTALL_DIR) $(1)/usr/libexec/rpcd
-	$(INSTALL_BIN) $(PKG_BUILD_DIR)/luci/root/usr/libexec/rpcd/purewrt $(1)/usr/libexec/rpcd/purewrt
-	$(INSTALL_DIR) $(1)/usr/share/rpcd/acl.d
-	$(INSTALL_DATA) $(PKG_BUILD_DIR)/luci/root/usr/share/rpcd/acl.d/luci-app-purewrt.json $(1)/usr/share/rpcd/acl.d/luci-app-purewrt.json
-	$(INSTALL_DIR) $(1)/usr/share/luci/menu.d
-	$(INSTALL_DATA) $(PKG_BUILD_DIR)/luci/root/usr/share/luci/menu.d/purewrt.json $(1)/usr/share/luci/menu.d/purewrt.json
-	$(INSTALL_DIR) $(1)/www/luci-static/resources/purewrt
-	$(CP) $(PKG_BUILD_DIR)/luci/htdocs/luci-static/resources/purewrt/* $(1)/www/luci-static/resources/purewrt/
-	$(INSTALL_DIR) $(1)/www/luci-static/resources/view/purewrt
-	$(CP) $(PKG_BUILD_DIR)/luci/htdocs/luci-static/resources/view/purewrt/* $(1)/www/luci-static/resources/view/purewrt/
-endef
-
-define Package/luci-app-purewrt/postinst
-#!/bin/sh
-[ -n "$${IPKG_INSTROOT}" ] || {
-	/etc/init.d/rpcd restart >/dev/null 2>&1 || true
-	rm -rf /tmp/luci-indexcache /tmp/luci-modulecache >/dev/null 2>&1 || true
-}
-exit 0
-endef
-
-define Package/luci-app-purewrt/postrm
-#!/bin/sh
-[ -n "$${IPKG_INSTROOT}" ] || {
-	/etc/init.d/rpcd restart >/dev/null 2>&1 || true
-	rm -rf /tmp/luci-indexcache /tmp/luci-modulecache >/dev/null 2>&1 || true
-}
-exit 0
-endef
-
 $(eval $(call BuildPackage,purewrt))
-$(eval $(call BuildPackage,luci-app-purewrt))
