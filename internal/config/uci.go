@@ -220,6 +220,7 @@ func applySection(c *Config, x struct {
 		c.Settings.WizardVPNPending = b(x.opts, "wizard_vpn_pending", c.Settings.WizardVPNPending)
 		c.Settings.WizardZapretPending = b(x.opts, "wizard_zapret_pending", c.Settings.WizardZapretPending)
 		c.Settings.IPv6WANInterfaces = list(x.opts, "ipv6_wan_interface", c.Settings.IPv6WANInterfaces)
+		c.Settings.LANSourceZones = list(x.opts, "lan_source_zone", c.Settings.LANSourceZones)
 	case "dns":
 		c.DNS.Enabled = b(x.opts, "enabled", c.DNS.Enabled)
 		c.DNS.Backend = one(x.opts, "backend", c.DNS.Backend)

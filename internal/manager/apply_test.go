@@ -169,7 +169,7 @@ func TestApplyFirewallOnlyChangeReloadsFirewallOnly(t *testing.T) {
 		t.Fatalf("apply failed: %v", err)
 	}
 	joined := strings.Join(r.calls, "\n")
-	for _, expected := range []string{"uci -q delete firewall.purewrt_dns_hijack_udp", "uci -q delete firewall.purewrt_dns_hijack_tcp", "uci -m -f " + live.FirewallFile + " import firewall", "uci commit firewall", "/etc/init.d/firewall reload"} {
+	for _, expected := range []string{"uci show firewall", "uci -m -f " + live.FirewallFile + " import firewall", "uci commit firewall", "/etc/init.d/firewall reload"} {
 		if !strings.Contains(joined, expected) {
 			t.Fatalf("expected %q, got calls:\n%s", expected, joined)
 		}
@@ -245,6 +245,7 @@ func TestApplyBackupMaxBytesUsesExplicitConfig(t *testing.T) {
 func TestApplyStagedGenerateForceMarksAllGroupsDirty(t *testing.T) {
 	dir := t.TempDir()
 	c, _, _ := applyTestConfig(t, dir)
+	c.Settings.LANSourceZones = nil // DefaultGeneratedPaths writes firewall to real /etc/config; opt out
 	if err := generator.WriteAllToWithOptions(c, generator.DefaultGeneratedPaths(c), generator.WriteOptions{Force: true}); err != nil {
 		t.Fatal(err)
 	}

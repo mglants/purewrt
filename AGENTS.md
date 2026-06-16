@@ -150,6 +150,29 @@ blip on every apply. **Don't change it back to `reload`** — apply tests in
 `apply_test.go` assert on the `restart` invocation specifically to catch a
 future regression.
 
+## TPROXY'd packets must be accepted at `input` — per LAN source zone
+
+A TPROXY'd connection is delivered to mihomo's **local** listener, so the
+packet traverses fw4's `input` chain and must be ACCEPTed there. On a single
+`lan` zone with `input ACCEPT` this is free; on multi-VLAN setups where client
+zones are `input REJECT` (e.g. `iot`/`guest`/`servers`), the locally-delivered
+packet is dropped and **proxied traffic silently fails while direct traffic
+works**. The accept must match the **exact** fwmark PureWRT sets in the
+prerouting TPROXY rule (`c.Settings.FwMark`/`FwMarkMask`, default `0x1/0xff`) —
+a hand-written rule matching a different mask (a real outage was caused by an
+`0x8/0xe` rule vs PureWRT's `0x1/0xff`) drops everything.
+
+PureWRT therefore generates, for each zone in `Settings.LANSourceZones`
+(`lan_source_zone` UCI list, default `["lan"]`, picked in LuCI → Settings),
+into `/etc/config/purewrt-firewall.generated`: a `purewrt_tproxy_accept_<zone>`
+rule keyed on `FwMark` (always), plus the DNS-hijack redirect +
+`purewrt_dns_accept_<zone>` (when `DNS.HijackLANDNS`). `FirewallRules`
+(`internal/generator/firewall.go`) emits them from `c.Settings.FwMark` so the
+mark can never drift; `applyUCIDNSFirewall` reconciles by deleting **all**
+`purewrt_*` firewall sections (`deletePurewrtFirewallSections`) before
+re-importing, so de-selecting a zone removes its rules. Don't hardcode the
+mask — always derive it from `c.Settings.FwMark`/`FwMarkMask`.
+
 ## Plan files
 
 `~/.claude/plans/*.md` are scratch files for the in-flight task. They get

@@ -13,6 +13,7 @@ import (
 
 func TestUpdateDetailedForceBypassesProviderIntervals(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("PUREWRT_UCI_DIR", filepath.Join(dir, "uci")) // keep firewall/mwan3 writes out of real /etc/config
 	proxySrc := filepath.Join(dir, "proxy-src.yaml")
 	ruleSrc := filepath.Join(dir, "rule-src.list")
 	proxyPath := filepath.Join(dir, "providers", "main.yaml")
@@ -83,6 +84,7 @@ func TestUpdateDetailedForceBypassesProviderIntervals(t *testing.T) {
 // provider's content must still land on disk.
 func TestUpdatePartialFailureWrapsErrPartialUpdate(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("PUREWRT_UCI_DIR", filepath.Join(dir, "uci")) // keep firewall/mwan3 writes out of real /etc/config
 	proxySrc := filepath.Join(dir, "proxy-src.yaml")
 	proxyPath := filepath.Join(dir, "providers", "main.yaml")
 	rulePath := filepath.Join(dir, "rulesets", "main.list")

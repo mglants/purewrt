@@ -3,6 +3,7 @@
 'require form';
 'require rpc';
 'require ui';
+'require uci';
 'require purewrt.styles';
 
 // Global PureWRT settings — everything the Setup Wizard doesn't cover. Each
@@ -92,8 +93,31 @@ function addRow(section, kind, name, title, opts) {
   return o;
 }
 
+// fw4 zone names for the LAN-sources picker, WAN-forwarding ones first
+// (suggested defaults), each labelled. Read from the live firewall config.
+function firewallZoneValues() {
+  var fwdWan = {};
+  uci.sections('firewall', 'forwarding', function(f) {
+    if (f.dest === 'wan') fwdWan[f.src] = true;
+  });
+  var names = [];
+  uci.sections('firewall', 'zone', function(z) {
+    var n = z.name || z['.name'];
+    if (n && names.indexOf(n) < 0) names.push(n);
+  });
+  names.sort(function(a, b) {
+    return (fwdWan[b] ? 1 : 0) - (fwdWan[a] ? 1 : 0) || a.localeCompare(b);
+  });
+  return names.map(function(n) { return [n, n + (fwdWan[n] ? ' (→ wan)' : '')]; });
+}
+
 return view.extend({
+  load: function() {
+    // Needed to enumerate fw4 zones for the LAN-sources picker.
+    return uci.load('firewall').catch(function() { return null; });
+  },
   render: function() {
+    var zoneValues = firewallZoneValues();
     var m = new form.Map('purewrt', _('PureWRT Settings'),
       _('Advanced settings. The Setup Wizard handles the common ones (subscription, IPv6, resource profile, auto-update, dashboard on/off, bootstrap DNS) — this page exposes everything else. Save & Apply triggers a PureWRT reload so changes take effect immediately.'));
 
@@ -277,6 +301,9 @@ return view.extend({
     addRow(fw, form.DynamicList, 'ipv6_wan_interface', _('IPv6 WAN interfaces (override)'),
       { placeholder: 'wan6',
         description: _('Names of /etc/config/network sections to disable when IPv6 routing is off. Empty = autodetect at apply time (every proto=dhcpv6 interface). Set explicitly for multi-WAN setups or non-standard section names.') });
+    addRow(fw, form.DynamicList, 'lan_source_zone', _('LAN source zones (routed)'),
+      { values: zoneValues, placeholder: 'lan',
+        description: _('Firewall zones whose clients route through PureWRT. For each, PureWRT writes the DNS-hijack redirect + a TPROXY input-accept rule keyed on PureWRT\'s fwmark — required so proxied traffic is accepted on zones with input REJECT (multi-VLAN setups). Zones that forward to wan are marked (→ wan). Empty = lan.') });
 
     // ---- Paths ----
     var paths = m.section(form.NamedSection, 'settings', 'main', _('Paths'),

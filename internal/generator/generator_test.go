@@ -490,6 +490,7 @@ func TestGeneratedFingerprintSkipRequiresRuntimeFiles(t *testing.T) {
 	c.Settings.MihomoConfig = filepath.Join(dir, "persistent", "mihomo.yaml")
 	c.Settings.DNSMasqIncludeDir = filepath.Join(dir, "dnsmasq.d")
 	c.DNS.HijackLANDNS = false
+	c.Settings.LANSourceZones = nil // no PureWRT firewall write to /etc/config in this test
 	c.Mwan3.IntegratedRules = false
 
 	if err := WriteAll(c); err != nil {
@@ -521,6 +522,7 @@ func TestGenerationCacheStatusAndForce(t *testing.T) {
 	c.Settings.MihomoConfig = filepath.Join(dir, "generated", "mihomo.yaml")
 	c.Settings.DNSMasqIncludeDir = filepath.Join(dir, "dnsmasq.d")
 	c.DNS.HijackLANDNS = false
+	c.Settings.LANSourceZones = nil // no PureWRT firewall write to /etc/config in this test
 	c.Mwan3.IntegratedRules = false
 
 	if status := CacheStatus(c); !strings.Contains(status, "generation cache: miss") || !strings.Contains(status, "fingerprint missing") {
@@ -568,6 +570,7 @@ func TestWriteAllResultDetectsMihomoOnlyChange(t *testing.T) {
 	c.Settings.MihomoConfig = filepath.Join(dir, "generated", "mihomo.yaml")
 	c.Settings.DNSMasqIncludeDir = filepath.Join(dir, "dnsmasq.d")
 	c.DNS.HijackLANDNS = false
+	c.Settings.LANSourceZones = nil // no PureWRT firewall write to /etc/config in this test
 	c.Mwan3.IntegratedRules = false
 	paths := DefaultGeneratedPaths(c)
 	if err := WriteAllToWithOptions(c, paths, WriteOptions{Force: true}); err != nil {
@@ -591,6 +594,7 @@ func TestWriteAllResultForceMarksAllGroups(t *testing.T) {
 	c.Settings.MihomoConfig = filepath.Join(dir, "generated", "mihomo.yaml")
 	c.Settings.DNSMasqIncludeDir = filepath.Join(dir, "dnsmasq.d")
 	c.DNS.HijackLANDNS = false
+	c.Settings.LANSourceZones = nil // no PureWRT firewall write to /etc/config in this test
 	c.Mwan3.IntegratedRules = false
 	res, err := WriteAllToResult(c, DefaultGeneratedPaths(c), WriteOptions{Force: true})
 	if err != nil {

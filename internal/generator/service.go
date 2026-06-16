@@ -28,6 +28,17 @@ type GeneratedPaths struct {
 	ZapretUpstreamConfig string // /opt/zapret2/config; empty disables
 }
 
+// uciConfigDir is the directory holding fw4/mwan3 UCI config files that
+// PureWRT generates and `uci import`s — "/etc/config" in production. Tests
+// override it via PUREWRT_UCI_DIR (t.Setenv) so full apply/update pipelines
+// don't have to write the real /etc/config.
+func uciConfigDir() string {
+	if d := os.Getenv("PUREWRT_UCI_DIR"); d != "" {
+		return d
+	}
+	return "/etc/config"
+}
+
 func DefaultGeneratedPaths(c config.Config) GeneratedPaths {
 	runtimeDir := c.Settings.RuntimeDir
 	if runtimeDir == "" {
@@ -45,7 +56,7 @@ func DefaultGeneratedPaths(c config.Config) GeneratedPaths {
 	dnsmasqFile := filepath.Join(runtimeGeneratedDir, "purewrt.conf")
 	nftFile := filepath.Join(persistentGeneratedDir, "purewrt.nft")
 	nftSetsFile := filepath.Join(runtimeGeneratedDir, "purewrt-sets.nft")
-	return GeneratedPaths{MihomoConfig: mihomoConfig, DNSMasqFile: dnsmasqFile, DNSMasqFragmentDir: c.Settings.DNSMasqIncludeDir, NFTFile: nftFile, NFTSetsFile: nftSetsFile, FirewallFile: "/etc/config/purewrt-firewall.generated", Mwan3File: "/etc/config/purewrt-mwan3.generated", ZapretEnv: filepath.Join(persistentGeneratedDir, "zapret.env"), ZapretUpstreamConfig: c.Settings.ZapretUpstreamConfigPath}
+	return GeneratedPaths{MihomoConfig: mihomoConfig, DNSMasqFile: dnsmasqFile, DNSMasqFragmentDir: c.Settings.DNSMasqIncludeDir, NFTFile: nftFile, NFTSetsFile: nftSetsFile, FirewallFile: filepath.Join(uciConfigDir(), "purewrt-firewall.generated"), Mwan3File: filepath.Join(uciConfigDir(), "purewrt-mwan3.generated"), ZapretEnv: filepath.Join(persistentGeneratedDir, "zapret.env"), ZapretUpstreamConfig: c.Settings.ZapretUpstreamConfigPath}
 }
 
 func StagedGeneratedPaths(c config.Config, stageDir string) GeneratedPaths {
@@ -271,7 +282,7 @@ func WriteAllToResult(c config.Config, paths GeneratedPaths, opt WriteOptions) (
 		}
 	}
 	if groups.Firewall {
-		if data := FirewallDNSHijack(c); len(data) > 0 {
+		if data := FirewallRules(c); len(data) > 0 {
 			t := time.Now()
 			if changed, err := system.WriteIfChanged(paths.FirewallFile, data, 0600); err != nil {
 				return res, err
@@ -493,7 +504,7 @@ func cleanupDNSMasqFragments(dir string, expected map[string]struct{}) (bool, er
 func outputDirs(c config.Config, paths GeneratedPaths) []string {
 	var dirs []string
 	base := []string{paths.MihomoConfig, dnsmasqFragmentDir(paths), paths.NFTFile, paths.NFTSetsFile, paths.ZapretEnv}
-	if len(FirewallDNSHijack(c)) > 0 {
+	if len(FirewallRules(c)) > 0 {
 		base = append(base, paths.FirewallFile)
 	}
 	if len(Mwan3Rules(c)) > 0 {
@@ -537,7 +548,7 @@ func generatedPathsComplete(c config.Config, paths GeneratedPaths) bool {
 	if info, err := os.Stat(dnsmasqFragmentDir(paths)); err != nil || !info.IsDir() {
 		return false
 	}
-	if len(FirewallDNSHijack(c)) > 0 {
+	if len(FirewallRules(c)) > 0 {
 		if info, err := os.Stat(paths.FirewallFile); err != nil || info.IsDir() {
 			return false
 		}

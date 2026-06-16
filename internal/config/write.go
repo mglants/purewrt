@@ -335,6 +335,7 @@ func writeMain(b *bytes.Buffer, s Settings) {
 	optb(b, "wizard_vpn_pending", s.WizardVPNPending)
 	optb(b, "wizard_zapret_pending", s.WizardZapretPending)
 	listv(b, "ipv6_wan_interface", s.IPv6WANInterfaces)
+	listv(b, "lan_source_zone", s.LANSourceZones)
 	fmt.Fprintln(b)
 }
 func writeDNS(b *bytes.Buffer, d DNS) {

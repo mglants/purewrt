@@ -147,7 +147,7 @@ func generationGroupHashes(c config.Config, in generationFingerprintInput) (map[
 	groups := map[string]any{
 		"mihomo":         map[string]any{"settings": in.Settings, "dns": in.DNS, "sections": in.Sections, "proxy_providers": proxyProviders, "rule_providers": in.RuleProvider},
 		"openwrt_bundle": map[string]any{"settings": in.Settings, "dns": in.DNS, "sections": openWrtSections, "rule_providers": in.RuleProvider, "bypass": in.Bypass, "vpns": in.VPNs, "devices": in.Devices, "zapret": in.Zapret},
-		"firewall":       map[string]any{"dns_hijack": c.DNS.HijackLANDNS},
+		"firewall":       map[string]any{"dns_hijack": c.DNS.HijackLANDNS, "lan_source_zones": c.Settings.LANSourceZones, "fwmark": c.Settings.FwMark, "fwmark_mask": c.Settings.FwMarkMask},
 		"mwan3":          map[string]any{"mwan3": in.Mwan3, "proxy_providers": proxyProviders},
 		"zapret":         map[string]any{"zapret": in.Zapret, "sections": openWrtSections},
 		"policy":         map[string]any{"settings": in.Settings, "vpns": in.VPNs, "devices": in.Devices, "sections": openWrtSections},
@@ -189,7 +189,7 @@ func generationDirtyGroups(c config.Config, fp generationFingerprint, checkPaths
 	if old.Groups["openwrt_bundle"] != fp.Groups["openwrt_bundle"] || !pathComplete(checkPaths.NFTFile) || !pathComplete(checkPaths.NFTSetsFile) || !dirComplete(dnsmasqFragmentDir(checkPaths)) {
 		g.OpenWrtBundle = true
 	}
-	if old.Groups["firewall"] != fp.Groups["firewall"] || (len(FirewallDNSHijack(c)) > 0 && !pathComplete(checkPaths.FirewallFile)) {
+	if old.Groups["firewall"] != fp.Groups["firewall"] || (len(FirewallRules(c)) > 0 && !pathComplete(checkPaths.FirewallFile)) {
 		g.Firewall = true
 	}
 	if old.Groups["mwan3"] != fp.Groups["mwan3"] || (len(Mwan3Rules(c)) > 0 && !pathComplete(checkPaths.Mwan3File)) {
@@ -274,7 +274,7 @@ func generationGroupOutputMissingReason(c config.Config, paths GeneratedPaths, n
 			return "dnsmasq fragment dir missing"
 		}
 	case "firewall":
-		if len(FirewallDNSHijack(c)) > 0 {
+		if len(FirewallRules(c)) > 0 {
 			return missingPathReason(paths.FirewallFile, "firewall output missing")
 		}
 	case "mwan3":

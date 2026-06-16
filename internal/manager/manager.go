@@ -1665,16 +1665,55 @@ func (m Manager) applyNFT(live generator.GeneratedPaths, groups generator.Genera
 	return m.runApplyCommand(r, "nft", "-f", live.NFTSetsFile)
 }
 
+// purewrtFirewallSectionNames extracts the named firewall sections PureWRT owns
+// (prefix "purewrt_") from `uci show firewall` output — the `firewall.<name>=<type>`
+// header lines, ignoring `firewall.<name>.<opt>=` option lines.
+func purewrtFirewallSectionNames(uciShow string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, line := range strings.Split(uciShow, "\n") {
+		key, _, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		const pfx = "firewall."
+		if !strings.HasPrefix(key, pfx) {
+			continue
+		}
+		name := key[len(pfx):]
+		if strings.Contains(name, ".") {
+			continue // option line, not a section header
+		}
+		if strings.HasPrefix(name, "purewrt_") && !seen[name] {
+			seen[name] = true
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// deletePurewrtFirewallSections removes every purewrt_* firewall section (best
+// effort) so the generated rule set can be reconciled. Returns how many were
+// removed. Caller commits + reloads.
+func (m Manager) deletePurewrtFirewallSections(r commandRunner) int {
+	out, err := r.Run("uci", "show", "firewall")
+	if err != nil {
+		return 0
+	}
+	names := purewrtFirewallSectionNames(out)
+	for _, name := range names {
+		_, _ = r.Run("uci", "-q", "delete", "firewall."+name)
+	}
+	return len(names)
+}
+
 func (m Manager) applyUCIDNSFirewall(c config.Config, live generator.GeneratedPaths, groups generator.GenerationGroups, r commandRunner) error {
 	log := newLog(c)
-	if groups.Firewall && c.DNS.HijackLANDNS {
-		log.Info("apply: DNS hijack enabled, importing firewall config path=%s", live.FirewallFile)
-		if err := m.runDeleteIfExists(r, "firewall.purewrt_dns_hijack_udp"); err != nil {
-			return err
-		}
-		if err := m.runDeleteIfExists(r, "firewall.purewrt_dns_hijack_tcp"); err != nil {
-			return err
-		}
+	if groups.Firewall && len(generator.FirewallRules(c)) > 0 {
+		log.Info("apply: importing PureWRT firewall rules path=%s", live.FirewallFile)
+		// Reconcile: drop every prior purewrt_* section (handles de-selected
+		// zones / renamed rules) then import the freshly generated set.
+		m.deletePurewrtFirewallSections(r)
 		if err := m.runApplyCommand(r, "uci", "-m", "-f", live.FirewallFile, "import", "firewall"); err != nil {
 			return err
 		}
@@ -1686,7 +1725,12 @@ func (m Manager) applyUCIDNSFirewall(c config.Config, live generator.GeneratedPa
 		}
 		log.Info("apply: firewall reload complete")
 	} else if groups.Firewall {
-		log.Debug("apply: DNS hijack disabled, skipping firewall UCI import")
+		// No rules to install (no LAN source zones) — clear any leftovers.
+		if m.deletePurewrtFirewallSections(r) > 0 {
+			_ = m.runApplyCommand(r, "uci", "commit", "firewall")
+			_ = m.runApplyCommand(r, initFirewall, "reload")
+		}
+		log.Debug("apply: no PureWRT firewall rules to install")
 	} else {
 		log.Debug("apply: firewall UCI unchanged, skipping firewall reload")
 	}
@@ -1710,7 +1754,8 @@ func (m Manager) applyUCIDNSFirewall(c config.Config, live generator.GeneratedPa
 	// OpenWrtBundle gate because the subsequent dnsmasq restart already
 	// fires on that group; running here keeps the commit + restart in the
 	// same apply phase. `delete` may exit 1 when the option isn't set —
-	// runDeleteIfExists swallows that to keep apply idempotent.
+	// the isNotFoundErr/isUCIQuietDeleteMissingErr guard below swallows that
+	// to keep apply idempotent.
 	if groups.OpenWrtBundle {
 		for _, cmd := range generator.DNSMasqIPv6FilterCommands(c) {
 			if cmd[1] == "-q" && cmd[2] == "delete" {
@@ -1730,14 +1775,6 @@ func (m Manager) applyUCIDNSFirewall(c config.Config, live generator.GeneratedPa
 		} else {
 			log.Info("apply: dnsmasq filter-aaaa enabled (IPv6 routing off)")
 		}
-	}
-	return nil
-}
-
-func (m Manager) runDeleteIfExists(r commandRunner, target string) error {
-	err := m.runApplyCommand(r, "uci", "-q", "delete", target)
-	if err != nil && !isNotFoundErr(err) && !isUCIQuietDeleteMissingErr(err) {
-		return err
 	}
 	return nil
 }
@@ -1867,15 +1904,8 @@ func (m Manager) restoreAndReload(c config.Config, backup system.BackupSet, r co
 	paths := generator.DefaultGeneratedPaths(c)
 	run("nft", "-f", paths.NFTFile)
 	run("nft", "-f", paths.NFTSetsFile)
-	if c.DNS.HijackLANDNS {
-		runOptionalDelete := func(target string) {
-			out, err := r.Run("uci", "-q", "delete", target)
-			if err != nil && !isUCIQuietDeleteMissingErr(fmt.Errorf("uci -q delete %s failed: %v: %s", target, err, out)) {
-				errs = append(errs, fmt.Sprintf("uci -q delete %s failed: %v: %s", target, err, out))
-			}
-		}
-		runOptionalDelete("firewall.purewrt_dns_hijack_udp")
-		runOptionalDelete("firewall.purewrt_dns_hijack_tcp")
+	if len(generator.FirewallRules(c)) > 0 {
+		m.deletePurewrtFirewallSections(r)
 		run("uci", "-m", "-f", "/etc/config/purewrt-firewall.generated", "import", "firewall")
 		run("uci", "commit", "firewall")
 		run(initFirewall, "reload")
@@ -1922,8 +1952,7 @@ func (m Manager) Disable() error {
 		_, _ = r.Run(cmd[0], cmd[1:]...)
 	}
 	_, _ = r.Run(libexecPeerDNS, "restore")
-	_, _ = r.Run("uci", "-q", "delete", "firewall.purewrt_dns_hijack_udp")
-	_, _ = r.Run("uci", "-q", "delete", "firewall.purewrt_dns_hijack_tcp")
+	m.deletePurewrtFirewallSections(r)
 	_, _ = r.Run("uci", "commit", "firewall")
 	_, _ = r.Run(initFirewall, "reload")
 	log.Info("disable: DNS/firewall state restored")
