@@ -8,7 +8,7 @@ on:
       runner:
         description: Runner label(s) for the matrix jobs.
         type: string
-        default: ubuntu-latest
+        default: arc-runner-set-purewrt
       sign:
         description: Sign packages + build the index (release).
         type: boolean
