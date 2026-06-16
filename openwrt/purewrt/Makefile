@@ -44,7 +44,9 @@ define Package/purewrt
   # it. Users who want those install `zapret` separately; the LuCI side
   # detects nfqws/tpws presence at runtime and surfaces a "not installed"
   # notice on the Zapret tab when absent.
-  DEPENDS:=$(GO_ARCH_DEPENDS) +kmod-nft-tproxy +kmod-nft-socket +kmod-nft-queue +kmod-nft-nat +ca-bundle +rpcd +dnsmasq-full +mihomo-alpha
+  # kmod-nft-queue is NFQUEUE for zapret's nfqws — pulled in by the (optional)
+  # zapret package, not needed for the core TPROXY path, so not a hard dep here.
+  DEPENDS:=$(GO_ARCH_DEPENDS) +kmod-nft-tproxy +kmod-nft-socket +kmod-nft-nat +ca-bundle +rpcd +dnsmasq-full +mihomo-alpha
 endef
 
 define Package/purewrt/description

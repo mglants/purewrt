@@ -24,7 +24,10 @@ PKG_BUILD_TIME:=$(shell date -u -Iseconds)
 
 GO_PKG:=github.com/metacubex/mihomo
 GO_PKG_LDFLAGS_X:=$(GO_PKG)/constant.Version=$(PKG_BUILD_VERSION) $(GO_PKG)/constant.BuildTime=$(PKG_BUILD_TIME)
-GO_PKG_TAGS:=with_gvisor
+# No with_gvisor: PureWRT routes via TPROXY/nftables, never mihomo TUN (the only
+# thing gvisor provides). Dropping it cuts the heaviest part of the build and
+# shrinks the binary (helps low-RAM routers). The system gvisor stack is still
+# available if a user manually enables TUN with a mixin.
 GO_PKG_INSTALL_BIN_PATH:=/usr/libexec
 
 include $(INCLUDE_DIR)/package.mk
@@ -35,7 +38,10 @@ define Package/mihomo-alpha
   CATEGORY:=Network
   TITLE:=Mihomo alpha proxy core
   URL:=https://wiki.metacubex.one
-  DEPENDS:=$(GO_ARCH_DEPENDS) +ca-bundle +kmod-inet-diag +kmod-tun
+  # No kmod-tun (TUN mode unused — gvisor dropped) or kmod-inet-diag
+  # (process-matching unused — PureWRT runs find-process-mode off). Avoids
+  # pulling kernel-version-locked kmods that PureWRT never needs.
+  DEPENDS:=$(GO_ARCH_DEPENDS) +ca-bundle
   PROVIDES:=mihomo
   CONFLICTS:=mihomo-meta
   VARIANT:=alpha
