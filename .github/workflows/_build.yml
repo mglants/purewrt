@@ -17,6 +17,10 @@ on:
         description: Artifact name prefix (publish parses feed-<branch>-<arch>).
         type: string
         default: purewrt
+      packages:
+        description: Space-separated feed packages to build.
+        type: string
+        default: mihomo-alpha zapret purewrt luci-app-purewrt
       matrix:
         description: JSON strategy matrix. Default = popular >=128 MB arches x branch set.
         type: string
@@ -61,7 +65,7 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}-${{ matrix.branch }}
           FEEDNAME: purewrt
-          PACKAGES: mihomo-alpha zapret purewrt luci-app-purewrt
+          PACKAGES: ${{ inputs.packages }}
           NO_REFRESH_CHECK: 1
           # Verbose so a swallowed compile failure prints its real cause.
           # Drop once builds are green.

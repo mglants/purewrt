@@ -35,4 +35,8 @@ jobs:
     if: github.event_name == 'push'
     uses: ./.github/workflows/_build.yml
     with:
+      # Only our package — purewrt compiles without building its runtime dep
+      # mihomo-alpha (and zapret), so the per-push gate stays fast. build.yml /
+      # release.yml still build the whole feed.
+      packages: purewrt luci-app-purewrt
       matrix: '{"branch":["openwrt-25.12"],"arch":["mipsel_24kc"]}'

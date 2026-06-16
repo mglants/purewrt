@@ -54,12 +54,25 @@ jobs:
           cp contrib/keys/purewrt-usign.pub   public/ 2>/dev/null || echo "note: usign pub key not committed yet"
           cp contrib/keys/purewrt-apk.rsa.pub public/ 2>/dev/null || echo "note: apk pub key not committed yet"
           cp install.sh feed.sh public/ 2>/dev/null || true
-          {
-            echo "<!doctype html><meta charset=utf-8><title>PureWRT package feed</title>"
-            echo "<h1>PureWRT package feed</h1><pre>"
-            ( cd public && find . -type f \( -name '*.ipk' -o -name '*.apk' -o -name 'Packages*' -o -name 'packages.adb' \) | sort )
-            echo "</pre>"
-          } > public/index.html
+      - name: Generate browsable directory indexes
+        run: |
+          set -e
+          # GitHub Pages serves no auto directory listing, so write an index.html
+          # into every directory (subdirs first, then files) with relative links.
+          ( cd public
+            find . -type d | while IFS= read -r d; do
+              {
+                rel="${d#./}"; [ "$rel" = "." ] && rel="/"
+                echo "<!doctype html><meta charset=utf-8>"
+                echo "<title>PureWRT feed: ${rel}</title>"
+                echo "<h1>PureWRT package feed: /${rel#/}</h1><ul>"
+                [ "$d" != "." ] && echo '<li><a href="../">../</a></li>'
+                for e in "$d"/*/; do [ -d "$e" ] || continue; b="$(basename "$e")"; echo "<li><a href=\"$b/\">$b/</a></li>"; done
+                for e in "$d"/*; do [ -f "$e" ] || continue; b="$(basename "$e")"; [ "$b" = index.html ] && continue; echo "<li><a href=\"$b\">$b</a></li>"; done
+                echo "</ul>"
+              } > "$d/index.html"
+            done
+          )
       - name: Tarball per arch
         run: |
           mkdir -p release
