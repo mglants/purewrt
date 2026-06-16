@@ -25,8 +25,21 @@ define Package/luci-app-purewrt
   CATEGORY:=LuCI
   SUBMENU:=3. Applications
   TITLE:=LuCI support for PureWRT
-  DEPENDS:=+purewrt +luci-base +rpcd
+  DEPENDS:=+purewrt +luci-base +rpcd +PACKAGE_luci-app-purewrt_tcpdump:tcpdump-mini
   PKGARCH:=all
+endef
+
+# tcpdump-mini is an OPTIONAL dependency (opt-in, default-off): the Client
+# Traffic page captures live packets via tcpdump. It is not a hard dependency —
+# like zapret, the LuCI app detects it at runtime (rpcd `tcpdump_installed`) and
+# shows a yellow "not installed" banner with an `apk add tcpdump-mini` hint when
+# absent, so the rest of PureWRT is unaffected and nothing is pulled in by
+# default. Select this (or install tcpdump-mini manually) to enable live capture.
+define Package/luci-app-purewrt/config
+	config PACKAGE_luci-app-purewrt_tcpdump
+		bool "Bundle tcpdump-mini (Client Traffic live packet capture)"
+		default n
+		depends on PACKAGE_luci-app-purewrt
 endef
 
 define Package/luci-app-purewrt/description

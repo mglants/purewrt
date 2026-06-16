@@ -28,6 +28,11 @@ var callStatus = rpc.declare({ object: 'purewrt', method: 'client_traffic_status
                                params: [ 'offset' ] });
 var callStop   = rpc.declare({ object: 'purewrt', method: 'client_traffic_stop' });
 var callLeases = rpc.declare({ object: 'luci-rpc', method: 'getDHCPLeases' });
+// tcpdump is an optional dependency: the live capture shells out to it. When
+// absent we show a yellow "not installed" banner (mirrors the zapret pattern)
+// and disable the capture button. expect:{installed:false} so an ACL/permission
+// hiccup degrades to "assume missing" (banner shown) rather than throwing.
+var callTcpdumpInstalled = rpc.declare({ object: 'purewrt', method: 'tcpdump_installed', expect: { installed: false } });
 var callIpdbStatus       = rpc.declare({ object: 'purewrt', method: 'ipdb_status' });
 var callIpdbUpdateStart  = rpc.declare({ object: 'purewrt', method: 'ipdb_update_start' });
 var callIpdbUpdateStatus = rpc.declare({ object: 'purewrt', method: 'ipdb_update_status' });
@@ -804,9 +809,14 @@ function applyIpdbBanner(banner, status) {
 
 return view.extend({
   render: function() {
-    return Promise.all([callLeases(), callIpdbStatus().catch(function() { return null; })]).then(function(results) {
+    return Promise.all([
+      callLeases(),
+      callIpdbStatus().catch(function() { return null; }),
+      callTcpdumpInstalled().catch(function() { return false; })
+    ]).then(function(results) {
       var leases = results[0];
       var ipdbInitial = results[1];
+      var tcpdumpInstalled = !!(results[2] && results[2].installed);
       var ipv4 = ((leases && leases.dhcp_leases) || []).slice().sort(function(a, b) {
         return (a.ipaddr || '').localeCompare(b.ipaddr || '');
       });
@@ -829,6 +839,29 @@ return view.extend({
       var countdown = E('span', { 'style': 'margin-left:1em;color:#666' });
       var warning  = E('div', { 'class': 'alert-message warning', 'style': 'display:none;margin:1em 0' });
       var ipdbBanner = renderIpdbBanner(ipdbInitial);
+
+      // Optional-dependency warning (mirrors the Zapret "not installed" banner).
+      // Live capture needs tcpdump; without it, disable the start button and
+      // explain how to install. The rest of the page (lookup, IPDB) still works.
+      var tcpdumpBanner = E('div', {});
+      if (!tcpdumpInstalled) {
+        startBtn.setAttribute('disabled', 'disabled');
+        tcpdumpBanner = E('div', {
+          'class': 'alert-message warning',
+          'style': 'margin:1em 0;padding:1em 1.2em;display:flex;flex-direction:column;gap:.4em'
+        }, [
+          E('strong', {}, _('tcpdump is not installed on this router.')),
+          E('p', { 'style': 'margin:.2em 0' }, _(
+            'Live packet capture for a client needs the optional tcpdump package. \
+            Without it this page can still resolve domains and show the IP-to-ASN database, \
+            but the Start live capture button is disabled.')),
+          E('p', { 'style': 'margin:.2em 0' }, [
+            _('To install on OpenWrt 25.12 (apk-based): '),
+            E('code', { 'style': 'background:#21262d;padding:.1em .4em;border-radius:3px' }, 'apk add tcpdump-mini'),
+            _(' — then reload this page.')
+          ])
+        ]);
+      }
 
       var flowsContainer  = E('div', { 'data-role': 'flows-panel', 'style': 'margin-top:.5em' });
       var rejectContainer = E('div', { 'data-role': 'rejections-panel', 'style': 'margin-top:.5em' });
@@ -862,6 +895,7 @@ return view.extend({
           at WHY. Works even for clients that don’t go through PureWRT — \
           the router sees every packet because it’s the default gateway.')),
         warning,
+        tcpdumpBanner,
         ipdbBanner,
         E('div', { 'class': 'cbi-section', 'style': 'margin-top:1em' }, [
           E('div', { 'style': 'display:flex;align-items:center;gap:.5em;flex-wrap:wrap' }, [

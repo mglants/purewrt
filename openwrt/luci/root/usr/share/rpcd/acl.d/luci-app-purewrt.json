@@ -31,6 +31,7 @@
           "ipdb_update_status",
           "ipdb_asn",
           "zapret_installed",
+          "tcpdump_installed",
           "mihomo_status",
           "mihomo_check_update_channel",
           "mihomo_install_release_status",
