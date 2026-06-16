@@ -3,6 +3,7 @@ package manager
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/purewrt/purewrt/internal/config"
 )
@@ -11,6 +12,10 @@ type zapretResolverRunner map[string]string
 
 func (r zapretResolverRunner) Run(name string, args ...string) (string, error) {
 	return r[name+" "+strings.Join(args, " ")], nil
+}
+
+func (r zapretResolverRunner) RunWithTimeout(_ time.Duration, name string, args ...string) (string, error) {
+	return r.Run(name, args...)
 }
 
 func TestResolveZapretProfileInterfacesMwan3Members(t *testing.T) {

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/purewrt/purewrt/internal/config"
 	"github.com/purewrt/purewrt/internal/generator"
@@ -13,13 +14,21 @@ import (
 )
 
 type fakeRunner struct {
-	failContains string
-	calls        []string
+	failContains    string
+	timeoutContains string // commands matching this return a deadline-exceeded error
+	calls           []string
 }
 
 func (f *fakeRunner) Run(name string, args ...string) (string, error) {
+	return f.RunWithTimeout(0, name, args...)
+}
+
+func (f *fakeRunner) RunWithTimeout(_ time.Duration, name string, args ...string) (string, error) {
 	call := name + " " + strings.Join(args, " ")
 	f.calls = append(f.calls, call)
+	if f.timeoutContains != "" && strings.Contains(call, f.timeoutContains) {
+		return "udhcpc: no lease, failing", errors.New("command timed out after 2m0s")
+	}
 	if f.failContains != "" && strings.Contains(call, f.failContains) {
 		return "forced failure", errors.New("forced failure")
 	}
@@ -95,6 +104,43 @@ func TestApplyDNSMasqReloadFailureRollsBack(t *testing.T) {
 	}
 	if string(got) != string(original) {
 		t.Fatalf("expected rollback to restore dnsmasq file, got %q", got)
+	}
+}
+
+// A dnsmasq restart that *times out* (slow startup on a large nftset config)
+// must NOT roll back: the config is already promoted + loaded, the daemon is
+// just slow. Rolling back here re-ran the same slow restart and, because the
+// fingerprint never committed, made update-if-needed re-apply every run (the
+// restart-timeout loop). The apply must succeed and the new dnsmasq file stay.
+func TestApplyDNSMasqRestartTimeoutDoesNotRollBack(t *testing.T) {
+	dir := t.TempDir()
+	c, staged, backup := applyTestConfig(t, dir)
+	live := applyTestLivePaths(dir)
+	original := []byte("original dnsmasq")
+	if err := os.MkdirAll(filepath.Dir(live.DNSMasqFile), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(live.DNSMasqFile, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	backup[live.DNSMasqFile] = filepath.Join(dir, "purewrt.conf.bak")
+	if err := os.WriteFile(backup[live.DNSMasqFile], original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	r := &fakeRunner{timeoutContains: "/etc/init.d/dnsmasq restart"}
+	if err := (Manager{}).applyWithRunnerPaths(c, backup, staged, live, r); err != nil {
+		t.Fatalf("dnsmasq restart timeout must be tolerated, got %v", err)
+	}
+	// A rollback would restart dnsmasq a second time (restoreAndReload); on the
+	// tolerated-timeout path it is restarted exactly once and never rolled back.
+	restarts := 0
+	for _, call := range r.calls {
+		if strings.Contains(call, "/etc/init.d/dnsmasq restart") {
+			restarts++
+		}
+	}
+	if restarts != 1 {
+		t.Fatalf("expected exactly one dnsmasq restart (no rollback), got %d calls: %v", restarts, r.calls)
 	}
 }
 

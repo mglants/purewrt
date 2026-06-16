@@ -45,7 +45,16 @@ type Manager struct {
 
 type commandRunner interface {
 	Run(name string, args ...string) (string, error)
+	RunWithTimeout(t time.Duration, name string, args ...string) (string, error)
 }
+
+// serviceRestartTimeout is the budget for daemon restart/reload commands.
+// `/etc/init.d/dnsmasq restart` on a router with a large nftset config can take
+// well over the 20s default; using the default caused a restart-timeout →
+// rollback → retry loop (the rollback re-runs the same slow restart and the
+// generation fingerprint never commits, so update-if-needed re-applies every
+// run). See runServiceRestart and AGENTS.md.
+const serviceRestartTimeout = 120 * time.Second
 
 type UpdateResult struct {
 	Changed bool
@@ -283,6 +292,11 @@ func (m Manager) GenerateCacheStatus() (string, error) {
 		return "", err
 	}
 	c = config.EnsureDefaults(c)
+	// Resolve zapret network=auto/mwan3_members interfaces exactly as Generate
+	// and applyPrepare do — otherwise this read-only status hashes the raw
+	// config while generate/apply hash the resolved one, and the zapret +
+	// openwrt_bundle groups report a permanent (phantom) cache miss.
+	c = ResolveZapretProfileInterfaces(c)
 	return generator.CacheStatus(c), nil
 }
 
@@ -1820,7 +1834,7 @@ func (m Manager) applyServiceRestarts(c config.Config, groups generator.Generati
 		// makes the directives take effect. The fingerprint gate above
 		// ensures this only fires when the OpenWrt bundle actually
 		// changed, so DNS doesn't blip on every apply.
-		if err := m.runApplyCommand(r, initDnsmasq, "restart"); err != nil {
+		if err := m.runServiceRestart(c, r, initDnsmasq, "restart"); err != nil {
 			return err
 		}
 		log.Info("apply: dnsmasq restart complete")
@@ -1828,7 +1842,7 @@ func (m Manager) applyServiceRestarts(c config.Config, groups generator.Generati
 		log.Debug("apply: dnsmasq restart skipped openwrt_bundle unchanged")
 	}
 	if groups.Mihomo {
-		if err := m.runApplyCommand(r, initMihomo, "restart"); err != nil {
+		if err := m.runServiceRestart(c, r, initMihomo, "restart"); err != nil {
 			return err
 		}
 		log.Info("apply: mihomo restart complete")
@@ -1836,7 +1850,7 @@ func (m Manager) applyServiceRestarts(c config.Config, groups generator.Generati
 		log.Debug("apply: mihomo restart skipped mihomo group unchanged")
 	}
 	if groups.Mwan3 && c.Mwan3.Mode == "integrated" && c.Mwan3.IntegratedRules {
-		if err := m.runApplyCommand(r, initMwan3, "reload"); err != nil {
+		if err := m.runServiceRestart(c, r, initMwan3, "reload"); err != nil {
 			return err
 		}
 		log.Info("apply: mwan3 reload complete")
@@ -1887,6 +1901,34 @@ func isUCIQuietDeleteMissingErr(err error) bool {
 	return strings.Contains(s, "uci -q delete") && strings.Contains(s, "exit status 1")
 }
 
+// isTimeoutErr matches the message system.Runner emits when a command exceeds
+// its deadline (system/exec.go). A daemon restart that times out has almost
+// certainly still come up (it's slow, not broken), so the apply treats it as
+// best-effort rather than a rollback trigger — see runServiceRestart.
+func isTimeoutErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "timed out after")
+}
+
+// runServiceRestart runs a daemon restart/reload with a generous timeout. A
+// timeout is tolerated (logged, treated as success) because the config is
+// already validated, promoted, and loaded into the kernel before we reach the
+// restart step — a slow daemon must not roll the whole apply back and spin the
+// update-if-needed loop. A genuine non-zero exit (e.g. a bad init script) is
+// still returned so the caller rolls back.
+func (m Manager) runServiceRestart(c config.Config, r commandRunner, name string, args ...string) error {
+	log := newLog(c)
+	if _, err := r.RunWithTimeout(serviceRestartTimeout, name, args...); err != nil {
+		joined := name + " " + strings.Join(args, " ")
+		if isTimeoutErr(err) {
+			log.Warn("apply: %s timed out after %s; continuing (daemon restarts are best-effort, it is likely still starting)", joined, serviceRestartTimeout)
+			return nil
+		}
+		log.Error("command failed: %s", joined)
+		return fmt.Errorf("%s failed: %w", joined, err)
+	}
+	return nil
+}
+
 func (m Manager) restoreAndReload(c config.Config, backup system.BackupSet, r commandRunner) error {
 	log := newLog(c)
 	var errs []string
@@ -1901,22 +1943,30 @@ func (m Manager) restoreAndReload(c config.Config, backup system.BackupSet, r co
 			errs = append(errs, fmt.Sprintf("%s %s failed: %v: %s", name, strings.Join(args, " "), err, out))
 		}
 	}
+	// Service restarts during rollback get the same generous timeout as the
+	// forward path (dnsmasq with a large nftset config is slow); a timeout is
+	// tolerated so the rollback itself can't hang. A hard failure is recorded.
+	runService := func(name string, args ...string) {
+		if _, err := r.RunWithTimeout(serviceRestartTimeout, name, args...); err != nil && !isTimeoutErr(err) {
+			errs = append(errs, fmt.Sprintf("%s %s failed: %v", name, strings.Join(args, " "), err))
+		}
+	}
 	paths := generator.DefaultGeneratedPaths(c)
 	run("nft", "-f", paths.NFTFile)
 	run("nft", "-f", paths.NFTSetsFile)
 	if len(generator.FirewallRules(c)) > 0 {
 		m.deletePurewrtFirewallSections(r)
-		run("uci", "-m", "-f", "/etc/config/purewrt-firewall.generated", "import", "firewall")
+		run("uci", "-m", "-f", paths.FirewallFile, "import", "firewall")
 		run("uci", "commit", "firewall")
 		run(initFirewall, "reload")
 	}
 	// See applyServiceRestarts — reload-via-SIGHUP doesn't pick up the
 	// nftset fragments. Use restart so the rollback genuinely restores
 	// dnsmasq state.
-	run(initDnsmasq, "restart")
-	run(initMihomo, "restart")
+	runService(initDnsmasq, "restart")
+	runService(initMihomo, "restart")
 	if c.Mwan3.Mode == "integrated" && c.Mwan3.IntegratedRules {
-		run(initMwan3, "reload")
+		runService(initMwan3, "reload")
 	}
 	if len(errs) > 0 {
 		return errors.New(strings.Join(errs, "; "))

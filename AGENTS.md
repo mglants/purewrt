@@ -150,6 +150,35 @@ blip on every apply. **Don't change it back to `reload`** — apply tests in
 `apply_test.go` assert on the `restart` invocation specifically to catch a
 future regression.
 
+## Service restarts are best-effort on timeout — never roll back a slow daemon
+
+`/etc/init.d/dnsmasq restart` on a router with a large nftset config (many rule
+providers expanded into dnsmasq fragments) can take far longer than the old 20s
+command default. Treating that timeout as a failure was catastrophic: the
+restart timed out → `applyServiceRestarts` errored → `applyRollback` ran, which
+**re-runs the same slow dnsmasq restart** → it timed out again ("rollback
+failed") → apply exited non-zero → the generation fingerprint never committed
+(it commits only on a clean apply, after the restarts) → the next
+`update-if-needed` saw outstanding work and re-applied → **a restart-timeout
+loop** (observed live: `update-if-needed` every minute, each apply rolling back
+on a 20s dnsmasq timeout).
+
+Fixes in `internal/manager/manager.go`:
+
+- Service restart/reload commands (`runServiceRestart`, used by
+  `applyServiceRestarts` and the `restoreAndReload` rollback) run with
+  `serviceRestartTimeout` (120s), not the 20s default in `system/exec.go`.
+- A restart that **times out** (`isTimeoutErr`) is logged and **treated as
+  success** — the daemon is slow, not broken; the config is already validated,
+  promoted, and loaded into the kernel before the restart step, so the apply
+  must complete and commit the fingerprint rather than roll back. A genuine
+  non-zero exit (bad init script, config parse error) still rolls back.
+
+`apply_test.go` guards both: `TestApplyDNSMasqReloadFailureRollsBack` (hard
+failure → rollback) and `TestApplyDNSMasqRestartTimeoutDoesNotRollBack`
+(timeout → tolerated, exactly one restart, no rollback). Don't make a restart
+timeout fatal again, and don't drop the generous timeout.
+
 ## TPROXY'd packets must be accepted at `input` — per LAN source zone
 
 A TPROXY'd connection is delivered to mihomo's **local** listener, so the

@@ -22,6 +22,15 @@ func (r Runner) Run(name string, args ...string) (string, error) {
 	return r.RunContext(context.Background(), name, args...)
 }
 
+// RunWithTimeout runs the command with an explicit timeout, overriding the
+// Runner's default. Service restarts (notably `/etc/init.d/dnsmasq restart`
+// on a router with a large nftset config) can legitimately take far longer
+// than the 20s default; the receiver is a value, so this mutates only a copy.
+func (r Runner) RunWithTimeout(t time.Duration, name string, args ...string) (string, error) {
+	r.Timeout = t
+	return r.RunContext(context.Background(), name, args...)
+}
+
 func (r Runner) RunContext(parent context.Context, name string, args ...string) (string, error) {
 	if r.DryRun {
 		return name + " " + join(args), nil
