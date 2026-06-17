@@ -3,10 +3,28 @@ package generator
 import (
 	"io"
 	"net/netip"
+	"sort"
 	"strings"
 
 	"github.com/purewrt/purewrt/internal/config"
 )
+
+// sectionsByPriority returns the enabled sections ordered by ascending Priority
+// (lowest number = highest precedence). Prerouting evaluates sections in this
+// order so the priority field actually controls routing precedence: a section
+// with a lower priority number wins an overlap (e.g. a VPN section at 10 beats
+// a proxy section at 40 for a domain listed in both). Stable so equal
+// priorities keep config order.
+func sectionsByPriority(sections []config.Section) []config.Section {
+	out := make([]config.Section, 0, len(sections))
+	for _, s := range sections {
+		if s.Enabled {
+			out = append(out, s)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
+	return out
+}
 
 // cgroupExemptionRule returns the nft snippet that exempts mihomo's own
 // outbound from re-marking. OpenWrt 24.10+ ships cgroupv2-only, so we
@@ -95,6 +113,18 @@ func NFTablesWithNative(c config.Config, native map[string][]string) []byte {
 		b.WriteString("    ip6 daddr @proxy_server_bypass6" + counterTag("proxy_server_bypass6") + " return\n")
 	}
 	writeSourceBypassRules(&b, c, includeIPv6)
+	ordered := sectionsByPriority(c.Sections)
+	// Client-identity pass: device (MAC) + source (CIDR) assignments take
+	// precedence over destination-based routing, so a client explicitly
+	// assigned to a section routes ALL its traffic there — a VPN client
+	// tunnels everything even with no domain rules. Emitted in priority order,
+	// after the loop-breakers/LAN/bypass returns (so proxy clients can't loop
+	// back into TPROXY for the proxy-server IP) but before the destination
+	// reject/direct/proxy/vpn sets, which it outranks.
+	for _, s := range ordered {
+		writeSectionDeviceRules(&b, c, s, includeIPv6)
+		writeSectionSourceRules(&b, c, s, includeIPv6)
+	}
 	for _, set := range nftSetRefs("reject4") {
 		b.WriteString("    ip daddr @" + set + counterTag(set) + " reject\n")
 	}
@@ -111,12 +141,10 @@ func NFTablesWithNative(c config.Config, native map[string][]string) []byte {
 			b.WriteString("    ip6 daddr @" + set + counterTag(set) + " return\n")
 		}
 	}
-	for _, s := range c.Sections {
-		if !s.Enabled {
-			continue
-		}
-		writeSectionDeviceRules(&b, c, s, includeIPv6)
-		writeSectionSourceRules(&b, c, s, includeIPv6)
+	// Destination pass: nftset (domain/IP) rules in priority order, so a
+	// higher-priority section wins a destination listed in more than one.
+	// Device/source rules were already emitted above (client-identity pass).
+	for _, s := range ordered {
 		if s.Action == "reject" {
 			for _, set := range nftSetRefs(s.NFTSet4()) {
 				b.WriteString("    ip daddr @" + set + counterTag(set) + " reject\n")

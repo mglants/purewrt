@@ -179,6 +179,32 @@ failure → rollback) and `TestApplyDNSMasqRestartTimeoutDoesNotRollBack`
 (timeout → tolerated, exactly one restart, no rollback). Don't make a restart
 timeout fatal again, and don't drop the generous timeout.
 
+## Prerouting precedence: client-identity first, then sections by priority
+
+`NFTablesWithNative` (`internal/generator/nftables.go`) emits the prerouting
+chain in this fixed order, and the order is load-bearing:
+
+1. loop-breakers (`iifname lo`, already-marked `return`)
+2. LAN/RFC1918 destinations → `return` (never tunnel/proxy local traffic)
+3. bypass / dns-bypass / **proxy-server-bypass** / source-bypass → `return`
+   (proxy-server-bypass MUST stay above any TPROXY rule or a proxy-assigned
+   client's traffic to the proxy node loops)
+4. **client-identity pass** — every section's device (MAC) + source (CIDR)
+   rules, in ascending-`Priority` order. A client assigned to a section routes
+   **all** its traffic there (terminal verdict), beating destination rules — so
+   "VPN for a client" tunnels everything even with no domain rules.
+5. reject / direct destination sets
+6. **destination pass** — per-section nftset rules, in ascending-`Priority`
+   order, so a section with a lower priority number wins a destination listed
+   in more than one (e.g. a `vpn` section at 10 beats a `proxy` section at 40).
+
+`sectionsByPriority` produces the sorted, enabled-only slice used by passes 4
+and 6. Before this, prerouting was emitted in config order with device/source
+rules interleaved per section, so a VPN section (added last) lost to the proxy
+sections' terminal `accept` rules — a VPN client leaked to mihomo, and
+`Priority` had no effect on nft precedence. Don't reorder these passes or drop
+the priority sort; `prerouting_order_test.go` guards all three invariants.
+
 ## TPROXY'd packets must be accepted at `input` — per LAN source zone
 
 A TPROXY'd connection is delivered to mihomo's **local** listener, so the
