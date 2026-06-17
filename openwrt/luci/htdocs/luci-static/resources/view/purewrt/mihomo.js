@@ -137,11 +137,12 @@ function renderStatusSection(status) {
     grid.appendChild(E('dd', {}, r[1]));
   });
 
-  // Dashboard button row — disabled when dashboard is off or mihomo is
-  // not running (in either case the metacubexd page would fail to
+  // Dashboard button row — disabled when dashboard is explicitly off or mihomo
+  // is not running (in either case the metacubexd page would fail to
   // connect). Lives in the Status section so the button sits next to
-  // the version/connection counters it complements.
-  var dashboardEnabled = uci.get('purewrt', 'settings', 'dashboard_enabled') === '1';
+  // the version/connection counters it complements. Unset dashboard_enabled
+  // means the backend default (true) applies, so treat absent as on.
+  var dashboardEnabled = uci.get('purewrt', 'settings', 'dashboard_enabled') !== '0';
   var dashBtn = E('button', {
     'class': 'btn cbi-button cbi-button-action',
     'style': 'margin-top:.6em'

@@ -76,9 +76,11 @@ function actionsRow(applyHandler) {
   // the old quickstart.js (now deleted) constructed: the dashboard HTML
   // lives at <browser-host>:<dashboard-port>/ui/<dashboard-name>/ and the
   // backend params (hostname/port/secret) are passed in the hash so the
-  // dashboard JS knows which mihomo to talk to. Disabled when
-  // dashboard_enabled is off — clicking it then would just 404.
-  var dashboardEnabled = uci.get('purewrt', 'settings', 'dashboard_enabled') === '1';
+  // dashboard JS knows which mihomo to talk to. Disabled only when
+  // dashboard_enabled is explicitly '0' — clicking it then would just 404.
+  // An UNSET key means the backend default (DashboardEnabled=true) applies and
+  // mihomo serves external-ui, so don't gray the button for absent-means-on.
+  var dashboardEnabled = uci.get('purewrt', 'settings', 'dashboard_enabled') !== '0';
   var dashBtn = E('button', {
     'class': 'btn cbi-button cbi-button-action',
     'style': 'margin-right:.5em;margin-bottom:.5em' + (dashboardEnabled ? '' : ';opacity:.4;cursor:not-allowed'),
