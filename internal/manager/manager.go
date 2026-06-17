@@ -620,6 +620,19 @@ func (m Manager) updateRuleProvidersAsync(ruleProviders []config.RuleProvider, n
 	geoChanged := false
 	var geoFailures []string
 	var urlJobs []config.RuleProvider
+	// Self-heal: a geo provider can't materialize without its source .dat, and
+	// nothing else guarantees the .dat is present (geo-refresh is otherwise
+	// manual). Without this, a freshly-added geoip/geosite provider fails every
+	// update (→ partial-failure exit 3 → retry loop) until the user manually
+	// refreshes. If any enabled geo provider's .dat is missing, fetch geo data
+	// once now (best-effort) so the materialize below succeeds. No-op once the
+	// .dat exists, so steady-state updates pay nothing.
+	if geoProvidersNeedData(c, ruleProviders) {
+		log.Info("rule-provider: geo data missing for an enabled geo provider; running geo-refresh once")
+		if _, err := m.GeoRefresh(); err != nil {
+			log.Warn("rule-provider: geo-refresh failed: %v — geo providers may not materialize this run", err)
+		}
+	}
 	for _, rp := range ruleProviders {
 		if !rp.Enabled {
 			log.Debug("rule-provider: %s skipped enabled=false", rp.Name)
@@ -765,6 +778,35 @@ func (m Manager) updateRuleProvidersAsync(ruleProviders []config.RuleProvider, n
 // dnsmasq directive emission unchanged. Returns (changed, error)
 // where changed is true when the on-disk content differs from the
 // previous write.
+// geoProvidersNeedData reports whether any enabled geo-format rule provider's
+// source v2ray .dat (geoip.dat / geosite.dat) is absent from the geo dir, in
+// which case materializeGeoProvider would fail. Drives the one-time geo-refresh
+// in updateRuleProvidersAsync.
+func geoProvidersNeedData(c config.Config, ruleProviders []config.RuleProvider) bool {
+	dir := c.Settings.GeoRefreshGeoIPDir
+	if dir == "" {
+		dir = "/etc/purewrt/geo"
+	}
+	for _, rp := range ruleProviders {
+		if !rp.Enabled || !provider.IsGeoFormat(rp.Format) {
+			continue
+		}
+		var dat string
+		switch rp.Format {
+		case "geosite":
+			dat = filepath.Join(dir, "geosite.dat")
+		case "geoip":
+			dat = filepath.Join(dir, "geoip.dat")
+		default:
+			continue
+		}
+		if _, err := os.Stat(dat); err != nil {
+			return true
+		}
+	}
+	return false
+}
+
 func (m Manager) materializeGeoProvider(c config.Config, rp config.RuleProvider, log logging.Logger) (bool, error) {
 	prov, err := provider.ParseGeoProvider(c, rp)
 	if err != nil {

@@ -190,7 +190,18 @@ func streamRuleOutputs(c config.Config, sinks generationSinks) error {
 			data, err := os.ReadFile(rp.Path)
 			if err != nil {
 				path = "read-failed"
-				log.Warn("generate: rule-provider %s skipped read failed path=%s", rp.Name, rp.Path)
+				if provider.IsGeoFormat(rp.Format) {
+					// Geo providers (geoip/geosite) are materialized from the
+					// local v2ray .dat into rp.Path during update
+					// (materializeGeoProvider). A missing file here is not a
+					// broken download — geo data hasn't been fetched yet
+					// (geo-refresh) or no update has run since the provider was
+					// added. It self-heals on the next update once the .dat is
+					// present; say so instead of an alarming "read failed".
+					log.Warn("generate: geo rule-provider %s (%s/%s) not materialized yet — run geo-refresh then update; skipping", rp.Name, rp.Format, rp.GeoTarget)
+				} else {
+					log.Warn("generate: rule-provider %s skipped read failed path=%s", rp.Name, rp.Path)
+				}
 				return nil
 			}
 			bytes = int64(len(data))
