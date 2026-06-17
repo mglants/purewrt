@@ -52,8 +52,16 @@ return view.extend({
     s.option(form.DynamicList, 'doh_upstream', _('DoH upstreams'));
     var doq = s.option(form.DynamicList, 'doq_upstream', _('DoQ upstreams'));
     doq.description = _('DNS-over-QUIC upstreams used by mihomo (e.g. quic://dns.adguard-dns.com or quic://94.140.14.14). Tried alongside DoH; useful when DoH is selectively filtered.');
-    s.option(form.Flag, 'hijack_lan_dns', _('Hijack LAN DNS'));
-    s.option(form.Flag, 'block_dot', _('Block DoT (tcp/853)'));
+    // These default to ON in the backend (config.Default: HijackLANDNS,
+    // BlockDoT = true). Mirror that with .default='1' so an unset UCI key shows
+    // the toggle ON (matching the rules that actually get generated) AND so
+    // unchecking writes an explicit '0' the backend honours — without it the
+    // flag reads OFF while the backend still generates the rules, and the
+    // toggle can never disable them. (block_doq/block_doh3 below already do this.)
+    var hijack = s.option(form.Flag, 'hijack_lan_dns', _('Hijack LAN DNS'));
+    hijack.default = '1';
+    var blockDot = s.option(form.Flag, 'block_dot', _('Block DoT (tcp/853)'));
+    blockDot.default = '1';
     var blockDoq = s.option(form.Flag, 'block_doq', _('Block DoQ (udp/853)'));
     blockDoq.default = '1';
     blockDoq.description = _('Reject DNS-over-QUIC egress so clients with hardcoded DoQ resolvers (recent Android) fall back to the LAN-hijacked path.');
