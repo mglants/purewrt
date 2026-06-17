@@ -194,8 +194,9 @@ a hand-written rule matching a different mask (a real outage was caused by an
 PureWRT therefore generates, for each zone in `Settings.LANSourceZones`
 (`lan_source_zone` UCI list, default `["lan"]`, picked in LuCI → Settings),
 into `/etc/config/purewrt-firewall.generated`: a `purewrt_tproxy_accept_<zone>`
-rule keyed on `FwMark` (always), plus the DNS-hijack redirect +
-`purewrt_dns_accept_<zone>` (when `DNS.HijackLANDNS`). `FirewallRules`
+rule keyed on `FwMark` (always), plus the `purewrt_dns_hijack_<zone>` redirect
+(one `config redirect` with `proto 'tcp udp'` — fw4 handles both protocols in a
+single rule) + `purewrt_dns_accept_<zone>` (when `DNS.HijackLANDNS`). `FirewallRules`
 (`internal/generator/firewall.go`) emits them from `c.Settings.FwMark` so the
 mark can never drift; `applyUCIDNSFirewall` reconciles by deleting **all**
 `purewrt_*` firewall sections (`deletePurewrtFirewallSections`) before

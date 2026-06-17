@@ -816,7 +816,9 @@ return view.extend({
     ]).then(function(results) {
       var leases = results[0];
       var ipdbInitial = results[1];
-      var tcpdumpInstalled = !!(results[2] && results[2].installed);
+      // expect:{installed:false} already unwraps the RPC to the bare boolean,
+      // so results[2] IS the value (not an object — don't read .installed).
+      var tcpdumpInstalled = !!results[2];
       var ipv4 = ((leases && leases.dhcp_leases) || []).slice().sort(function(a, b) {
         return (a.ipaddr || '').localeCompare(b.ipaddr || '');
       });

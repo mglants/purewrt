@@ -22,8 +22,9 @@ func TestFirewallRules_MultiZoneWithHijack(t *testing.T) {
 		"option src 'iot'",
 		"option src 'guest'",
 		"config rule 'purewrt_dns_accept_iot'",
-		"config redirect 'purewrt_dns_hijack_iot_udp'",
-		"config redirect 'purewrt_dns_hijack_guest_tcp'",
+		"config redirect 'purewrt_dns_hijack_iot'",
+		"config redirect 'purewrt_dns_hijack_guest'",
+		"option proto 'tcp udp'",
 		"option dest_port '53'",
 	} {
 		if !strings.Contains(got, want) {

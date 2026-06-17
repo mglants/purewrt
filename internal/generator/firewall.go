@@ -60,18 +60,13 @@ func FirewallRules(c config.Config) []byte {
 		b.WriteString("    option proto 'tcp udp'\n")
 		b.WriteString("    option dest_port '53'\n")
 		b.WriteString("    option target 'ACCEPT'\n\n")
-		// DNS hijack: force port-53 to the router's dnsmasq.
-		b.WriteString("config redirect 'purewrt_dns_hijack_" + z + "_udp'\n")
-		b.WriteString("    option name 'PureWRT DNS hijack UDP (" + z + ")'\n")
+		// DNS hijack: force port-53 to the router's dnsmasq. fw4 accepts both
+		// protocols on one redirect (`proto 'tcp udp'`), so emit a single rule
+		// rather than duplicating it per protocol.
+		b.WriteString("config redirect 'purewrt_dns_hijack_" + z + "'\n")
+		b.WriteString("    option name 'PureWRT DNS hijack (" + z + ")'\n")
 		b.WriteString("    option src '" + z + "'\n")
-		b.WriteString("    option proto 'udp'\n")
-		b.WriteString("    option src_dport '53'\n")
-		b.WriteString("    option dest_port '53'\n")
-		b.WriteString("    option target 'DNAT'\n\n")
-		b.WriteString("config redirect 'purewrt_dns_hijack_" + z + "_tcp'\n")
-		b.WriteString("    option name 'PureWRT DNS hijack TCP (" + z + ")'\n")
-		b.WriteString("    option src '" + z + "'\n")
-		b.WriteString("    option proto 'tcp'\n")
+		b.WriteString("    option proto 'tcp udp'\n")
 		b.WriteString("    option src_dport '53'\n")
 		b.WriteString("    option dest_port '53'\n")
 		b.WriteString("    option target 'DNAT'\n\n")
