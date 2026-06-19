@@ -60,7 +60,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(inputs.matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: openwrt/gh-action-sdk@v11
         env:
           ARCH: ${{ matrix.arch }}-${{ matrix.branch }}
@@ -73,7 +73,7 @@ jobs:
           INDEX: ${{ inputs.sign && '1' || '0' }}
           KEY_BUILD: ${{ inputs.sign && secrets.USIGN_SECRET_KEY || '' }}
           PRIVATE_KEY: ${{ inputs.sign && secrets.APK_PRIVATE_KEY || '' }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.artifact-prefix }}-${{ matrix.branch }}-${{ matrix.arch }}
           path: bin/packages/*/purewrt/*
