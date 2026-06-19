@@ -46,8 +46,15 @@ func renderMihomoBase(c config.Config) []byte {
 	} else {
 		b.WriteString("geodata-mode: false\ngeo-auto-update: false\n")
 	}
+	// Perf, always on: PureWRT routes by dest-IP nftset (TPROXY), never by
+	// process, so find-process-mode just burns CPU reading /proc per
+	// connection — keep it off. tcp-concurrent dials a domain's resolved IPs
+	// in parallel and uses the fastest, cutting connect latency. (The sniffer
+	// — TLS/HTTP host sniffing — is likewise unused for routing and stays
+	// off; it's opt-in via Settings.Sniffer, default false.)
+	b.WriteString("find-process-mode: off\ntcp-concurrent: true\n")
 	if c.LowResource() {
-		b.WriteString("unified-delay: true\nfind-process-mode: off\nkeep-alive-idle: 15\nkeep-alive-interval: 15\n")
+		b.WriteString("unified-delay: true\nkeep-alive-idle: 15\nkeep-alive-interval: 15\n")
 		for i := range enabledProviders {
 			enabledProviders[i].HealthCheck = false
 		}
@@ -115,6 +122,17 @@ func renderMihomoBase(c config.Config) []byte {
 			b.WriteString("\n    listen: 0.0.0.0\n")
 		}
 	}
+	// VPN interfaces as `direct` outbounds (interface-name binds the socket to
+	// the tunnel). Emitted for every VPN referenced by a section or DNS, so
+	// sections/DNS can pool them with subscription nodes under a proxy group.
+	if vpns := referencedVPNs(c); len(vpns) > 0 {
+		b.WriteString("\nproxies:\n")
+		for _, v := range vpns {
+			// tfo: TCP Fast Open — saves a round trip where the destination
+			// supports it; mihomo falls back to plain TCP otherwise.
+			b.WriteString("  - name: " + vpnProxyName(v.Name) + "\n    type: direct\n    interface-name: " + v.Interface + "\n    tfo: true\n")
+		}
+	}
 	b.WriteString("\nproxy-providers:\n")
 	if len(enabledProviders) == 0 {
 		b.WriteString("  main:\n    type: file\n    path: /etc/purewrt/providers/main.yaml\n")
@@ -142,10 +160,10 @@ func renderMihomoBase(c config.Config) []byte {
 		}
 	}
 	b.WriteString("\nproxy-groups:\n")
-	writeProxyGroup(&b, "DNSProxy", c.DNS.ProxyGroupType, c.DNS.ProxyFilter, c.DNS.ProxyExcludeFilter, c.DNS.ProxyStrategy, "", 0, enabledProviders)
+	writeProxyGroup(&b, "DNSProxy", c.DNS.ProxyGroupType, c.DNS.ProxyFilter, c.DNS.ProxyExcludeFilter, c.DNS.ProxyStrategy, "", 0, enabledProviders, resolveVPNMembers(c, c.DNS.VPNs))
 	for _, sec := range c.Sections {
 		if sec.Enabled && sec.Action == "proxy" {
-			writeProxyGroup(&b, sec.ProxyGroup, sec.ProxyGroupType, sec.ProxyFilter, sec.ProxyExcludeFilter, sec.ProxyStrategy, sec.ProxyHealthCheckURL, sec.ProxyHealthCheckInterval, enabledProviders)
+			writeProxyGroup(&b, sec.ProxyGroup, sec.ProxyGroupType, sec.ProxyFilter, sec.ProxyExcludeFilter, sec.ProxyStrategy, sec.ProxyHealthCheckURL, sec.ProxyHealthCheckInterval, enabledProviders, resolveVPNMembers(c, sec.VPNs))
 		}
 	}
 	b.WriteString("\nrules:\n  - DOMAIN-SUFFIX,dns.google,DNSProxy\n  - DOMAIN-SUFFIX,cloudflare-dns.com,DNSProxy\n  - DOMAIN-SUFFIX,dns.quad9.net,DNSProxy\n  - IP-CIDR,1.1.1.1/32,DNSProxy,no-resolve\n  - IP-CIDR,8.8.8.8/32,DNSProxy,no-resolve\n  - IP-CIDR,9.9.9.9/32,DNSProxy,no-resolve\n")
@@ -175,14 +193,66 @@ func mihomoLogLevel(level string) string {
 	}
 }
 
-func writeProxyGroup(b *strings.Builder, name, typ, filter, excludeFilter, strategy, healthURL string, healthInterval int, providers []config.ProxyProvider) {
+func vpnProxyName(n string) string { return "vpn_" + n }
+
+// resolveVPNMembers maps a section/DNS VPN-name list to mihomo proxy names,
+// keeping only enabled VPNs that have an interface.
+func resolveVPNMembers(c config.Config, names []string) []string {
+	out := []string{}
+	for _, n := range names {
+		if _, ok := c.VPNForName(n); ok {
+			out = append(out, vpnProxyName(n))
+		}
+	}
+	return out
+}
+
+// referencedVPNs returns the unique enabled VPNs referenced by DNS or any
+// enabled section, so a `direct` outbound is emitted for each.
+func referencedVPNs(c config.Config) []config.VPN {
+	seen := map[string]bool{}
+	var out []config.VPN
+	add := func(names []string) {
+		for _, n := range names {
+			if seen[n] {
+				continue
+			}
+			if v, ok := c.VPNForName(n); ok {
+				seen[n] = true
+				out = append(out, v)
+			}
+		}
+	}
+	add(c.DNS.VPNs)
+	for _, s := range c.Sections {
+		if s.Enabled {
+			add(s.VPNs)
+		}
+	}
+	return out
+}
+
+func writeProxyGroup(b *strings.Builder, name, typ, filter, excludeFilter, strategy, healthURL string, healthInterval int, providers []config.ProxyProvider, vpnMembers []string) {
 	typ = normalizedProxyGroupType(typ)
-	b.WriteString("  - name: " + name + "\n    type: " + typ + "\n    use:\n")
-	if len(providers) == 0 {
-		b.WriteString("      - main\n")
+	b.WriteString("  - name: " + name + "\n    type: " + typ + "\n")
+	// Pool = subscription providers (via `use:`) + selected VPN interfaces (via
+	// `proxies:`). filter/exclude-filter apply to the provider proxies only;
+	// the explicit VPN `proxies:` entries are always kept. With neither,
+	// fall back to the empty `main` provider so the group is still valid.
+	if len(providers) == 0 && len(vpnMembers) == 0 {
+		b.WriteString("    use:\n      - main\n")
 	} else {
-		for _, p := range providers {
-			b.WriteString("      - " + p.Name + "\n")
+		if len(providers) > 0 {
+			b.WriteString("    use:\n")
+			for _, p := range providers {
+				b.WriteString("      - " + p.Name + "\n")
+			}
+		}
+		if len(vpnMembers) > 0 {
+			b.WriteString("    proxies:\n")
+			for _, m := range vpnMembers {
+				b.WriteString("      - " + m + "\n")
+			}
 		}
 	}
 	if filter != "" {

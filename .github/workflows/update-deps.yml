@@ -1,0 +1,131 @@
+# Dependabot-equivalent for the bundled OpenWrt packages pinned by git
+# commit/tag in their Makefiles (Dependabot has no ecosystem for these). Weekly
+# (and on-demand) it checks upstream, bumps the Makefile, recomputes
+# PKG_MIRROR_HASH via an OpenWrt SDK, and opens a PR per package. The package's
+# build CI (build.yml) is the final validation gate.
+#
+# PKG_MIRROR_HASH is the sha256 of the source tarball OpenWrt repacks into dl/;
+# `make package/<pkg>/check FIXUP=1` downloads it and rewrites the hash in the
+# Makefile. That runs in an SDK container (best-effort): if it fails (SDK image
+# moved, upstream fetch hiccup), we fall back to `skip` so the PR still opens —
+# the git SHA/tag in PKG_SOURCE_VERSION is the real integrity anchor, and the
+# build CI re-fetches the exact source regardless.
+name: update-deps
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  # OpenWrt SDK image used only to download the source + compute PKG_MIRROR_HASH
+  # (the repacked-tarball hash is SDK-version-independent, so any recent image
+  # works; bump if the tag is retired).
+  SDK_IMAGE: ghcr.io/openwrt/sdk:x86-64-24.10.4
+
+jobs:
+  mihomo-alpha:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve latest Prerelease-Alpha commit
+        id: up
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha=$(gh api repos/MetaCubeX/mihomo/commits/Prerelease-Alpha --jq .sha)
+          [ -n "$sha" ] || { echo "could not resolve upstream sha"; exit 1; }
+          echo "sha=$sha" >>"$GITHUB_OUTPUT"
+          echo "short=${sha:0:8}" >>"$GITHUB_OUTPUT"
+          echo "date=$(date -u +%Y.%m.%d)" >>"$GITHUB_OUTPUT"
+      - name: Bump Makefile
+        id: bump
+        run: |
+          mk=openwrt/mihomo-alpha/Makefile
+          cur=$(sed -nE 's/^PKG_SOURCE_VERSION:=//p' "$mk")
+          if [ "$cur" = "${{ steps.up.outputs.sha }}" ]; then
+            echo "changed=false" >>"$GITHUB_OUTPUT"; echo "already up to date ($cur)"; exit 0
+          fi
+          sed -i -E \
+            -e "s|^PKG_VERSION:=.*|PKG_VERSION:=${{ steps.up.outputs.date }}|" \
+            -e "s|^PKG_SOURCE_VERSION:=.*|PKG_SOURCE_VERSION:=${{ steps.up.outputs.sha }}|" \
+            -e "s|^PKG_MIRROR_HASH:=.*|PKG_MIRROR_HASH:=skip|" \
+            -e "s|^PKG_BUILD_VERSION:=.*|PKG_BUILD_VERSION:=alpha-${{ steps.up.outputs.short }}|" \
+            "$mk"
+          echo "changed=true" >>"$GITHUB_OUTPUT"
+          echo "old=$cur" >>"$GITHUB_OUTPUT"
+      - name: Recompute PKG_MIRROR_HASH (best-effort)
+        if: steps.bump.outputs.changed == 'true'
+        continue-on-error: true
+        run: ./.github/scripts/pin-mirror-hash.sh mihomo-alpha
+      - name: Open PR
+        if: steps.bump.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: deps/mihomo-alpha
+          commit-message: "deps(mihomo-alpha): bump to ${{ steps.up.outputs.short }}"
+          title: "deps(mihomo-alpha): bump to ${{ steps.up.outputs.short }} (${{ steps.up.outputs.date }})"
+          labels: dependencies
+          body: |
+            Auto-bump mihomo-alpha to upstream `Prerelease-Alpha`.
+
+            - PKG_SOURCE_VERSION: `${{ steps.bump.outputs.old }}` → `${{ steps.up.outputs.sha }}`
+            - PKG_VERSION → `${{ steps.up.outputs.date }}`, PKG_BUILD_VERSION → `alpha-${{ steps.up.outputs.short }}`
+            - PKG_MIRROR_HASH recomputed via SDK (or `skip` if that step failed — see the Makefile).
+
+            Merge once the package build CI is green.
+
+  zapret:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve latest zapret2 release tag
+        id: up
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(gh api repos/bol-van/zapret2/releases/latest --jq .tag_name 2>/dev/null || true)
+          if [ -z "$tag" ] || [ "$tag" = "null" ]; then
+            tag=$(gh api repos/bol-van/zapret2/tags --jq '.[0].name')
+          fi
+          [ -n "$tag" ] || { echo "could not resolve upstream tag"; exit 1; }
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+          echo "ver=${tag#v}" >>"$GITHUB_OUTPUT"
+      - name: Bump Makefile
+        id: bump
+        run: |
+          mk=openwrt/zapret/Makefile
+          cur=$(sed -nE 's/^PKG_SOURCE_VERSION:=//p' "$mk")
+          if [ "$cur" = "${{ steps.up.outputs.tag }}" ]; then
+            echo "changed=false" >>"$GITHUB_OUTPUT"; echo "already up to date ($cur)"; exit 0
+          fi
+          sed -i -E \
+            -e "s|^PKG_VERSION:=.*|PKG_VERSION:=${{ steps.up.outputs.ver }}|" \
+            -e "s|^PKG_SOURCE_VERSION:=.*|PKG_SOURCE_VERSION:=${{ steps.up.outputs.tag }}|" \
+            -e "s|^PKG_MIRROR_HASH:=.*|PKG_MIRROR_HASH:=skip|" \
+            "$mk"
+          echo "changed=true" >>"$GITHUB_OUTPUT"
+          echo "old=$cur" >>"$GITHUB_OUTPUT"
+      - name: Recompute PKG_MIRROR_HASH (best-effort)
+        if: steps.bump.outputs.changed == 'true'
+        continue-on-error: true
+        run: ./.github/scripts/pin-mirror-hash.sh zapret
+      - name: Open PR
+        if: steps.bump.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: deps/zapret
+          commit-message: "deps(zapret): bump to ${{ steps.up.outputs.tag }}"
+          title: "deps(zapret): bump to ${{ steps.up.outputs.tag }}"
+          labels: dependencies
+          body: |
+            Auto-bump zapret to upstream `${{ steps.up.outputs.tag }}`.
+
+            - PKG_SOURCE_VERSION: `${{ steps.bump.outputs.old }}` → `${{ steps.up.outputs.tag }}`, PKG_VERSION → `${{ steps.up.outputs.ver }}`
+            - PKG_MIRROR_HASH recomputed via SDK (or `skip` if that step failed — see the Makefile).
+
+            Merge once the package build CI is green.

@@ -34,8 +34,20 @@ start_service() {
 		log_msg info "start: mihomo config missing, generating PureWRT config"
 		/usr/bin/purewrt generate 2>&1 | logger -t mihomo-purewrt-generate
 	fi
+	# Enable TCP Fast Open (client+server) so mihomo's tfo: outbounds can
+	# negotiate it. Best-effort; harmless if the knob is absent.
+	sysctl -w net.ipv4.tcp_fastopen=3 >/dev/null 2>&1
 	procd_open_instance
-    procd_set_param command "$bin" -d "$workdir" -f "$config"
+    # Wrap the exec to (1) raise RLIMIT_NOFILE and (2) pin GOMAXPROCS to all
+    # cores. nofile: a proxy core holds a socket + pipes per live connection and
+    # health-checks every node in its url-test/load-balance groups; the default
+    # (~4096) is exhausted fast on a real subscription → "socket: too many open
+    # files". `procd_set_param limits nofile` is clamped by procd's (pid 1) own
+    # hard limit (4096), so it does NOT work — a root child instead raises its
+    # own limit up to fs.nr_open via ulimit. GOMAXPROCS: Go already defaults to
+    # NumCPU, but set it explicitly so a future cgroup CPU quota can't silently
+    # throttle the proxy to one core.
+    procd_set_param command /bin/sh -c 'ulimit -n 1000000 2>/dev/null; c=$(grep -c ^processor /proc/cpuinfo 2>/dev/null); [ "${c:-0}" -gt 1 ] && export GOMAXPROCS="$c"; exec "$1" -d "$2" -f "$3"' mihomo "$bin" "$workdir" "$config"
     procd_set_param stdout 1
     procd_set_param stderr 1
     procd_set_param respawn

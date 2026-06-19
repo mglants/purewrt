@@ -1169,37 +1169,36 @@ func TestStandardSectionDedupAllowsCrossSectionDuplicate(t *testing.T) {
 	}
 }
 
-func TestMultipleVPNConfigurations(t *testing.T) {
+// VPNs are mihomo `direct` outbounds selected per section, pooled with
+// providers — no kernel marks/ip-rules/masquerade.
+func TestVPNAsMihomoProxies(t *testing.T) {
 	c := config.Default()
 	c.VPNs = []config.VPN{
-		{Name: "work", Enabled: true, Interface: "wg0", RouteTable: "200", FwMark: "0x2", FwMarkMask: "0xff", IPRulePriority: "110", Masquerade: true},
-		{Name: "home", Enabled: true, Interface: "tun0", RouteTable: "201", FwMark: "0x4", FwMarkMask: "0xff", IPRulePriority: "111", Masquerade: true},
+		{Name: "work", Enabled: true, Interface: "wg0"},
+		{Name: "home", Enabled: true, Interface: "tun0"},
 	}
 	c.Sections = []config.Section{
-		{Name: "work", Enabled: true, Action: "vpn", VPN: "work", IPv4Enabled: true, IPv6Enabled: true},
-		{Name: "home", Enabled: true, Action: "vpn", VPN: "home", IPv4Enabled: true, IPv6Enabled: true},
+		{Name: "common", Enabled: true, Action: "proxy", TPROXYPort: 7893, ProxyGroup: "Common", ProxyGroupType: "url-test", IPv4Enabled: true, IPv6Enabled: true, VPNs: []string{"work", "home"}},
 	}
-	nft := string(NFTables(c))
+	mi := string(Mihomo(c))
 	for _, want := range []string{
-		`ip daddr @vpn_work4 meta mark set meta mark | 0x2 counter name "vpn_work4" accept`,
-		`ip daddr @vpn_home4 meta mark set meta mark | 0x4 counter name "vpn_home4" accept`,
-		"oifname \"wg0\" masquerade",
-		"oifname \"tun0\" masquerade",
+		"name: vpn_work\n    type: direct\n    interface-name: wg0",
+		"name: vpn_home\n    type: direct\n    interface-name: tun0",
+		"      - vpn_work\n",
+		"      - vpn_home\n",
 	} {
-		if !strings.Contains(nft, want) {
-			t.Fatalf("missing %q in:\n%s", want, nft)
+		if !strings.Contains(mi, want) {
+			t.Fatalf("missing %q in mihomo.yaml:\n%s", want, mi)
 		}
+	}
+	// Kernel VPN paths are gone.
+	nft := string(NFTables(c))
+	if strings.Contains(nft, "vpn_work") || strings.Contains(nft, "masquerade") {
+		t.Fatalf("kernel VPN nft rules must be gone:\n%s", nft)
 	}
 	cmds := strings.Join(PolicyCommands(c), "\n")
-	for _, want := range []string{
-		"ip rule add priority 110 fwmark 0x2/0xff table 200",
-		"ip route replace default dev wg0 table 200",
-		"ip rule add priority 111 fwmark 0x4/0xff table 201",
-		"ip route replace default dev tun0 table 201",
-	} {
-		if !strings.Contains(cmds, want) {
-			t.Fatalf("missing %q in:\n%s", want, cmds)
-		}
+	if strings.Contains(cmds, "dev wg0") || strings.Contains(cmds, "dev tun0") {
+		t.Fatalf("per-VPN ip rules/routes must be gone:\n%s", cmds)
 	}
 }
 
@@ -1270,57 +1269,6 @@ func renderDNSMasqForTest(t *testing.T, c config.Config, domains map[string][]st
 		}
 	}
 	return b.String()
-}
-
-func TestVPNRoutingDefaultsAreDerived(t *testing.T) {
-	c := config.Default()
-	c.VPNs = []config.VPN{
-		{Name: "work", Enabled: true, Interface: "wg0"},
-		{Name: "home", Enabled: true, Interface: "tun0"},
-	}
-	c.Sections = []config.Section{
-		{Name: "work", Enabled: true, Action: "vpn", VPN: "work", IPv4Enabled: true, IPv6Enabled: true},
-		{Name: "home", Enabled: true, Action: "vpn", VPN: "home", IPv4Enabled: true, IPv6Enabled: true},
-	}
-	nft := string(NFTables(c))
-	for _, want := range []string{
-		`ip daddr @vpn_work4 meta mark set meta mark | 0x2 counter name "vpn_work4" accept`,
-		`ip daddr @vpn_home4 meta mark set meta mark | 0x4 counter name "vpn_home4" accept`,
-	} {
-		if !strings.Contains(nft, want) {
-			t.Fatalf("missing %q in:\n%s", want, nft)
-		}
-	}
-	cmds := strings.Join(PolicyCommands(c), "\n")
-	for _, want := range []string{
-		"ip rule add priority 110 fwmark 0x2/0xff table 200",
-		"ip route replace default dev wg0 table 200",
-		"ip rule add priority 111 fwmark 0x4/0xff table 201",
-		"ip route replace default dev tun0 table 201",
-	} {
-		if !strings.Contains(cmds, want) {
-			t.Fatalf("missing %q in:\n%s", want, cmds)
-		}
-	}
-}
-
-func TestVPNMasqueradeIsExplicit(t *testing.T) {
-	c := config.Default()
-	c.VPNs = []config.VPN{
-		{Name: "work", Enabled: true, Interface: "wg0", RouteTable: "200", FwMark: "0x2", FwMarkMask: "0xff", IPRulePriority: "110", Masquerade: false},
-		{Name: "home", Enabled: true, Interface: "tun0", RouteTable: "201", FwMark: "0x4", FwMarkMask: "0xff", IPRulePriority: "111", Masquerade: true},
-	}
-	c.Sections = []config.Section{
-		{Name: "work", Enabled: true, Action: "vpn", VPN: "work", IPv4Enabled: true, IPv6Enabled: true},
-		{Name: "home", Enabled: true, Action: "vpn", VPN: "home", IPv4Enabled: true, IPv6Enabled: true},
-	}
-	nft := string(NFTables(c))
-	if strings.Contains(nft, "oifname \"wg0\" masquerade") {
-		t.Fatalf("masquerade must not be generated for VPN with masquerade disabled:\n%s", nft)
-	}
-	if !strings.Contains(nft, "oifname \"tun0\" masquerade") {
-		t.Fatalf("masquerade must be generated for VPN with masquerade enabled:\n%s", nft)
-	}
 }
 
 func TestSourceCIDRRoutingRules(t *testing.T) {

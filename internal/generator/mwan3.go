@@ -51,19 +51,7 @@ func PolicyCommandArgs(c config.Config) [][]string {
 		append([]string{"ip", "-6", "rule", "add"}, rule...),
 		{"ip", "-6", "route", "replace", "local", "default", "dev", "lo", "table", c.Settings.RouteTable},
 	}
-	for _, v := range c.NormalizedVPNs() {
-		if !v.Enabled || v.Interface == "" {
-			continue
-		}
-		vpnRule := []string{"priority", v.IPRulePriority, "fwmark", v.FwMark + "/" + v.FwMarkMask, "table", v.RouteTable}
-		cmds = append(cmds,
-			append([]string{"ip", "rule", "del"}, vpnRule...),
-			append([]string{"ip", "rule", "add"}, vpnRule...),
-			[]string{"ip", "route", "replace", "default", "dev", v.Interface, "table", v.RouteTable},
-			append([]string{"ip", "-6", "rule", "del"}, vpnRule...),
-			append([]string{"ip", "-6", "rule", "add"}, vpnRule...),
-			[]string{"ip", "-6", "route", "replace", "default", "dev", v.Interface, "table", v.RouteTable},
-		)
-	}
+	// VPN routing is no longer kernel policy-routed — VPNs are mihomo `direct`
+	// outbounds (interface-name), so there are no per-VPN ip rules/tables.
 	return cmds
 }

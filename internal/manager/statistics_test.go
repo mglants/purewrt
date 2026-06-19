@@ -132,8 +132,8 @@ func TestEffectiveSectionAction(t *testing.T) {
 	t.Parallel()
 
 	c := config.Default()
-	c.Sections = []config.Section{{Name: "media", Action: "vpn"}}
-	if got := effectiveSectionAction(c, "media"); got != "vpn" {
+	c.Sections = []config.Section{{Name: "media", Action: "direct"}}
+	if got := effectiveSectionAction(c, "media"); got != "direct" {
 		t.Fatalf("effectiveSectionAction = %q", got)
 	}
 	if got := effectiveSectionAction(c, "missing"); got != "" {

@@ -87,30 +87,13 @@ function renderForm(initial, devices) {
   var enabledChk = E('input', { 'type': 'checkbox' });
   if (initial.enabled !== '0') enabledChk.checked = true;
 
-  // -- masquerade --
-  var masqChk = E('input', { 'type': 'checkbox' });
-  if (initial.masquerade === '1') masqChk.checked = true;
-
-  // -- advanced (route table / fwmark / mask / priority) --
-  var routeInput = E('input', { 'class': 'cbi-input-text', 'value': initial.route_table || '', 'placeholder': 'auto', 'style': 'width:10em' });
-  var fwmarkInput = E('input', { 'class': 'cbi-input-text', 'value': initial.fwmark || '', 'placeholder': 'auto (0x2 etc.)', 'style': 'width:10em' });
-  var fwmaskInput = E('input', { 'class': 'cbi-input-text', 'value': initial.fwmark_mask || '', 'placeholder': 'auto (0xff)', 'style': 'width:10em' });
-  var prioInput = E('input', { 'class': 'cbi-input-text', 'value': initial.ip_rule_priority || '', 'placeholder': 'auto', 'style': 'width:10em' });
-
-  var advancedDetails = E('details', { 'style': 'margin-top:.5em' }, [
-    E('summary', { 'style': 'cursor:pointer;color:#888;margin-bottom:.4em' }, _('Advanced (auto-assigned when blank)')),
-    row(_('Route table'), routeInput),
-    row(_('Firewall mark'), fwmarkInput),
-    row(_('Firewall mark mask'), fwmaskInput),
-    row(_('ip rule priority'), prioInput)
-  ]);
-
+  // VPNs are mihomo `direct` outbounds now — only the interface matters.
+  // Routing (table/fwmark/priority/masquerade) is handled by mihomo, so those
+  // kernel knobs are gone.
   var formEl = E('div', { 'style': 'min-width:32em' }, [
     row(_('Enabled'),    enabledChk),
-    row(_('Name'),       nameInput, _('Used to bind a routing section to this VPN. Lowercase, no spaces.')),
-    row(_('Interface'),  ifaceSelect, _('Pick an existing network device. WireGuard/TUN/TAP interfaces are listed first.')),
-    row(_('Masquerade'), masqChk, _('Enable for typical client VPNs (the remote peer expects traffic from the VPN address). Disable when the VPN zone is already NAT\'d by OpenWrt firewall.')),
-    advancedDetails
+    row(_('Name'),       nameInput, _('Used to add this VPN to a section/DNS proxy pool. Lowercase, no spaces.')),
+    row(_('Interface'),  ifaceSelect, _('Pick an existing network device. WireGuard/TUN/TAP interfaces are listed first. mihomo binds outbound sockets to it.'))
   ]);
 
   return {
@@ -119,12 +102,7 @@ function renderForm(initial, devices) {
       return {
         name: (nameInput.value || '').trim(),
         interface: ifaceSelect.value,
-        enabled: enabledChk.checked ? '1' : '0',
-        masquerade: masqChk.checked ? '1' : '0',
-        route_table: (routeInput.value || '').trim(),
-        fwmark: (fwmarkInput.value || '').trim(),
-        fwmark_mask: (fwmaskInput.value || '').trim(),
-        ip_rule_priority: (prioInput.value || '').trim()
+        enabled: enabledChk.checked ? '1' : '0'
       };
     }
   };
@@ -139,13 +117,6 @@ function writeVPN(existing, values) {
   uci.set('purewrt', sid, 'name', values.name);
   uci.set('purewrt', sid, 'interface', values.interface);
   uci.set('purewrt', sid, 'enabled', values.enabled);
-  uci.set('purewrt', sid, 'masquerade', values.masquerade);
-  // Optional fields: only persist non-empty so we don't write "" into UCI
-  // (which serializes as `option route_table ''` and looks ugly).
-  ['route_table', 'fwmark', 'fwmark_mask', 'ip_rule_priority'].forEach(function(k) {
-    if (values[k]) uci.set('purewrt', sid, k, values[k]);
-    else if (existing && existing[k]) uci.unset('purewrt', sid, k);
-  });
   return sid;
 }
 
@@ -188,15 +159,10 @@ function openVPNModal(opts) {
   opts = opts || {};
   var existing = findVPNByName(opts.name);
   var initial = existing ? {
-    name:             existing.name || '',
-    interface:        existing.interface || '',
-    enabled:          existing.enabled || '1',
-    masquerade:       existing.masquerade || '0',
-    route_table:      existing.route_table || '',
-    fwmark:           existing.fwmark || '',
-    fwmark_mask:      existing.fwmark_mask || '',
-    ip_rule_priority: existing.ip_rule_priority || ''
-  } : { enabled: '1', masquerade: '0' };
+    name:      existing.name || '',
+    interface: existing.interface || '',
+    enabled:   existing.enabled || '1'
+  } : { enabled: '1' };
 
   // Capture the parent modal state NOW, before ui.showModal for the VPN
   // form wipes it. opts.snapshotParent=false lets a caller opt out (e.g.

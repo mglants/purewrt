@@ -392,7 +392,7 @@ func dnsmasqDNSSetNames(c config.Config) []string {
 		}
 	}
 	for _, sec := range c.Sections {
-		if sec.Action == "proxy" || sec.Action == "zapret" || sec.Action == "vpn" {
+		if sec.Action == "proxy" || sec.Action == "zapret" {
 			add(sec.NFTSet4())
 			if c.Settings.IPv6 && !c.LowResource() {
 				add(sec.NFTSet6())
@@ -471,40 +471,28 @@ func parseDNSMasqNFTJSONElement(data json.RawMessage) (DNSMasqSetElement, bool) 
 	return DNSMasqSetElement{}, false
 }
 
+// vpnRouteStats reports each VPN interface's liveness. VPNs are now mihomo
+// `direct` outbounds (interface-name) rather than kernel routing tables, so
+// "healthy" just means the interface exists and is up; mihomo's own url-test
+// (dashboard) reflects per-VPN reachability.
 func vpnRouteStats(c config.Config) []VPNRouteStatistics {
 	var out []VPNRouteStatistics
-	for _, v := range c.NormalizedVPNs() {
-		st := VPNRouteStatistics{Name: v.Name, Interface: v.Interface, RouteTable: v.RouteTable, Enabled: v.Enabled}
+	for _, v := range c.VPNs {
+		st := VPNRouteStatistics{Name: v.Name, Interface: v.Interface, Enabled: v.Enabled}
 		if !v.Enabled {
 			st.OK = true
 			out = append(out, st)
 			continue
 		}
-		if v.Interface == "" || v.RouteTable == "" {
-			st.Error = "missing interface or route table"
+		if v.Interface == "" {
+			st.Error = "missing interface"
 			out = append(out, st)
 			continue
 		}
 		if err := exec.Command("ip", "link", "show", "dev", v.Interface, "up").Run(); err != nil {
 			st.Error = "interface down"
-			out = append(out, st)
-			continue
-		}
-		data, err := exec.Command("ip", "route", "show", "table", v.RouteTable).Output()
-		if err != nil {
-			st.Error = "route table unavailable"
-			out = append(out, st)
-			continue
-		}
-		for _, line := range strings.Split(string(data), "\n") {
-			line = strings.TrimSpace(line)
-			if strings.HasPrefix(line, "default") || strings.HasPrefix(line, "local") {
-				st.OK = true
-				break
-			}
-		}
-		if !st.OK {
-			st.Error = "missing default/local route"
+		} else {
+			st.OK = true
 		}
 		out = append(out, st)
 	}

@@ -225,6 +225,7 @@ func applySection(c *Config, x struct {
 		c.DNS.Enabled = b(x.opts, "enabled", c.DNS.Enabled)
 		c.DNS.Backend = one(x.opts, "backend", c.DNS.Backend)
 		c.DNS.UpstreamMode = one(x.opts, "upstream_mode", c.DNS.UpstreamMode)
+		c.DNS.VPNs = list(x.opts, "vpns", c.DNS.VPNs)
 		c.DNS.HijackLANDNS = b(x.opts, "hijack_lan_dns", c.DNS.HijackLANDNS)
 		c.DNS.BlockDoT = b(x.opts, "block_dot", c.DNS.BlockDoT)
 		c.DNS.BlockDoH3 = b(x.opts, "block_doh3", c.DNS.BlockDoH3)
@@ -287,17 +288,12 @@ func applySection(c *Config, x struct {
 		zs.FakeDir = one(x.opts, "fake_dir", "")
 		c.ZapretStrategies = append(c.ZapretStrategies, zs)
 	case "vpn":
-		v := VPN{Name: one(x.opts, "name", x.name), Interface: "wg0", Masquerade: false}
+		v := VPN{Name: one(x.opts, "name", x.name), Interface: "wg0"}
 		if v.Name == "" {
 			v.Name = "vpn"
 		}
 		v.Enabled = b(x.opts, "enabled", v.Enabled)
 		v.Interface = one(x.opts, "interface", v.Interface)
-		v.RouteTable = one(x.opts, "route_table", v.RouteTable)
-		v.FwMark = one(x.opts, "fwmark", v.FwMark)
-		v.FwMarkMask = one(x.opts, "fwmark_mask", v.FwMarkMask)
-		v.IPRulePriority = one(x.opts, "ip_rule_priority", v.IPRulePriority)
-		v.Masquerade = b(x.opts, "masquerade", v.Masquerade)
 		c.VPNs = append(c.VPNs, v)
 	case "device":
 		d := Device{
@@ -310,7 +306,7 @@ func applySection(c *Config, x struct {
 			c.Devices = append(c.Devices, d)
 		}
 	case "section":
-		c.Sections = append(c.Sections, Section{Name: x.name, Enabled: b(x.opts, "enabled", true), Action: one(x.opts, "action", "proxy"), TPROXYPort: i(x.opts, "tproxy_port", 7893), ProxyGroup: one(x.opts, "proxy_group", TitleASCII(x.name)), ProxyGroupType: one(x.opts, "proxy_group_type", "url-test"), ProxyFilter: one(x.opts, "proxy_filter", ""), ProxyExcludeFilter: one(x.opts, "proxy_exclude_filter", ""), ProxyStrategy: one(x.opts, "proxy_strategy", "sticky-sessions"), ProxyHealthCheckURL: one(x.opts, "proxy_health_check_url", ""), ProxyHealthCheckInterval: i(x.opts, "proxy_health_check_interval", 0), UserOverriddenProxyGroup: b(x.opts, "user_overridden_proxy_group", false), IPv4Enabled: b(x.opts, "ipv4_enabled", true), IPv6Enabled: b(x.opts, "ipv6_enabled", true), UDPMode: one(x.opts, "udp_mode", "proxy"), Priority: i(x.opts, "priority", 100), Mwan3Policy: one(x.opts, "mwan3_policy", ""), VPN: one(x.opts, "vpn", ""), ZapretStrategies: list(x.opts, "zapret_strategy", nil), SourceCIDR4: list(x.opts, "source_cidr4", nil), SourceCIDR6: list(x.opts, "source_cidr6", nil)})
+		c.Sections = append(c.Sections, Section{Name: x.name, Enabled: b(x.opts, "enabled", true), Action: one(x.opts, "action", "proxy"), TPROXYPort: i(x.opts, "tproxy_port", 7893), ProxyGroup: one(x.opts, "proxy_group", TitleASCII(x.name)), ProxyGroupType: one(x.opts, "proxy_group_type", "url-test"), ProxyFilter: one(x.opts, "proxy_filter", ""), ProxyExcludeFilter: one(x.opts, "proxy_exclude_filter", ""), ProxyStrategy: one(x.opts, "proxy_strategy", "sticky-sessions"), ProxyHealthCheckURL: one(x.opts, "proxy_health_check_url", ""), ProxyHealthCheckInterval: i(x.opts, "proxy_health_check_interval", 0), UserOverriddenProxyGroup: b(x.opts, "user_overridden_proxy_group", false), IPv4Enabled: b(x.opts, "ipv4_enabled", true), IPv6Enabled: b(x.opts, "ipv6_enabled", true), UDPMode: one(x.opts, "udp_mode", "proxy"), Priority: i(x.opts, "priority", 100), Mwan3Policy: one(x.opts, "mwan3_policy", ""), VPNs: list(x.opts, "vpns", nil), ZapretStrategies: list(x.opts, "zapret_strategy", nil), SourceCIDR4: list(x.opts, "source_cidr4", nil), SourceCIDR6: list(x.opts, "source_cidr6", nil)})
 	case "subscription":
 		c.Subscriptions = append(c.Subscriptions, Subscription{Name: one(x.opts, "name", x.name), Enabled: b(x.opts, "enabled", true), URL: one(x.opts, "url", ""), Mode: one(x.opts, "mode", "auto"), PresetIfNoRules: one(x.opts, "preset_if_no_rules", "minimal"), ImportRulesOnLowResource: b(x.opts, "import_rules_on_low_resource", false), AutoApply: b(x.opts, "auto_apply", false), Interval: i(x.opts, "interval", 86400), HWID: one(x.opts, "hwid", ""), DeviceName: one(x.opts, "device_name", ""), UserAgent: one(x.opts, "user_agent", "mihomo-purewrt"), Headers: list(x.opts, "header", nil), Mirrors: list(x.opts, "mirror", nil), PinSHA256: one(x.opts, "pin_sha256", ""), SuppressHWID: b(x.opts, "suppress_hwid", false)})
 	case "proxy_provider":

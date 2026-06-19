@@ -3,6 +3,7 @@
 'require form';
 'require rpc';
 'require ui';
+'require uci';
 
 var callResolversProbe = rpc.declare({ object: 'purewrt', method: 'resolvers_probe' });
 
@@ -47,6 +48,15 @@ return view.extend({
     backend.cfgvalue = function() { return 'dnsmasq'; };
     backend.description = _('PureWRT uses dnsmasq nftset integration as the supported DNS backend.');
     s.option(form.Value, 'listen', _('Mihomo DNS listen'));
+    // DNS upstream via VPN: VPN interfaces added to the DNSProxy pool, so
+    // mihomo's DoH/DoT/DoQ upstream egress routes through them — reach censored
+    // resolvers with no subscription. Multiple VPNs = url-test failover.
+    var dnsVpns = s.option(form.DynamicList, 'vpns', _('DNS upstream via VPN'));
+    (uci.sections('purewrt', 'vpn') || []).forEach(function(v) {
+      var n = v.name || v['.name'];
+      if (n) dnsVpns.value(n, n + (v.interface ? ' (' + v.interface + ')' : ''));
+    });
+    dnsVpns.description = _('VPN interfaces added to the DNSProxy pool, so DNS-upstream queries egress via VPN — reach censored DoH/DoT resolvers with no subscription. Empty = DNS via proxy/direct.');
     var udp = s.option(form.DynamicList, 'udp_upstream', _('UDP DNS fallback upstreams'));
     udp.description = _('Plain DNS servers used before DoH so a fresh router can resolve/bootstrap even when DoH endpoints are blocked.');
     s.option(form.DynamicList, 'doh_upstream', _('DoH upstreams'));

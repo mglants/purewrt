@@ -179,6 +179,29 @@ failure → rollback) and `TestApplyDNSMasqRestartTimeoutDoesNotRollBack`
 (timeout → tolerated, exactly one restart, no rollback). Don't make a restart
 timeout fatal again, and don't drop the generous timeout.
 
+## VPN routing is a mihomo proxy backend, not kernel policy routing
+
+VPNs are mihomo `type: direct` + `interface-name` outbounds, NOT kernel marks/ip-rules. The `VPN` struct is
+just `{Name, Enabled, Interface}`; there is **no** `action=vpn`, no per-VPN fwmark/route-table/masquerade,
+no `vpn_<sec>` nftset, no per-VPN `ip rule`. A proxy section selects VPNs via `Section.VPNs` and DNS via
+`DNS.VPNs`; those names join the section's / DNSProxy's mihomo proxy group **pooled with subscription
+nodes** (`writeProxyGroup` emits `use:` providers + `proxies:` vpn outbounds), so the existing
+url-test/select/load-balance + filter + strategy + health logic gives multi-VPN failover and works with
+zero subscription.
+
+Generation (`internal/generator/mihomo.go`): `referencedVPNs` emits a `proxies:` `vpn_<name>` per VPN used
+by DNS or a section; `resolveVPNMembers` maps a section/DNS VPN list to those proxy names. egress binds the
+socket to the tunnel (SO_BINDTODEVICE) — mihomo is cgroup-exempt in nft, so no loop, no kernel rules, no
+masquerade (router-originated traffic sources from the tunnel IP). `Config.VPNForName` gates on
+enabled+interface. The `mihomo` fingerprint group now includes `vpns` so an interface change regenerates.
+
+**Breaking vs the old kernel model**: `action=vpn` sections must be re-created as `action=proxy` with
+`list vpns '<name>'`; VPN sections lose their kernel-only options. There is no auto-migration. Guarded by
+`TestVPNAsMihomoProxies` (generator_test.go). Don't reintroduce kernel VPN marking.
+
+Rationale + an executable recipe to add an **opt-in kernel fast-path** later (if a measured gigabit+ need
+appears) live in `docs/vpn-routing.md`.
+
 ## Prerouting precedence: client-identity first, then sections by priority
 
 `NFTablesWithNative` (`internal/generator/nftables.go`) emits the prerouting

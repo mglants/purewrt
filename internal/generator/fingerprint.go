@@ -80,7 +80,7 @@ type openWrtSectionFPEntry struct {
 	UDPMode     string
 	Priority    int
 	Mwan3Policy string
-	VPN         string
+	VPNs        []string
 	SourceCIDR4 []string
 	SourceCIDR6 []string
 }
@@ -141,11 +141,11 @@ func currentGenerationFingerprint(c config.Config) (generationFingerprint, error
 func generationGroupHashes(c config.Config, in generationFingerprintInput) (map[string]string, error) {
 	openWrtSections := make([]openWrtSectionFPEntry, 0, len(c.Sections))
 	for _, s := range c.Sections {
-		openWrtSections = append(openWrtSections, openWrtSectionFPEntry{Name: s.Name, Enabled: s.Enabled, Action: s.Action, TPROXYPort: s.TPROXYPort, IPv4Enabled: s.IPv4Enabled, IPv6Enabled: s.IPv6Enabled, UDPMode: s.UDPMode, Priority: s.Priority, Mwan3Policy: s.Mwan3Policy, VPN: s.VPN, SourceCIDR4: s.SourceCIDR4, SourceCIDR6: s.SourceCIDR6})
+		openWrtSections = append(openWrtSections, openWrtSectionFPEntry{Name: s.Name, Enabled: s.Enabled, Action: s.Action, TPROXYPort: s.TPROXYPort, IPv4Enabled: s.IPv4Enabled, IPv6Enabled: s.IPv6Enabled, UDPMode: s.UDPMode, Priority: s.Priority, Mwan3Policy: s.Mwan3Policy, VPNs: s.VPNs, SourceCIDR4: s.SourceCIDR4, SourceCIDR6: s.SourceCIDR6})
 	}
 	proxyProviders := c.ProxyProviders
 	groups := map[string]any{
-		"mihomo":         map[string]any{"settings": in.Settings, "dns": in.DNS, "sections": in.Sections, "proxy_providers": proxyProviders, "rule_providers": in.RuleProvider},
+		"mihomo":         map[string]any{"settings": in.Settings, "dns": in.DNS, "sections": in.Sections, "proxy_providers": proxyProviders, "rule_providers": in.RuleProvider, "vpns": in.VPNs},
 		"openwrt_bundle": map[string]any{"settings": in.Settings, "dns": in.DNS, "sections": openWrtSections, "rule_providers": in.RuleProvider, "bypass": in.Bypass, "vpns": in.VPNs, "devices": in.Devices, "zapret": in.Zapret},
 		"firewall":       map[string]any{"dns_hijack": c.DNS.HijackLANDNS, "lan_source_zones": c.Settings.LANSourceZones, "fwmark": c.Settings.FwMark, "fwmark_mask": c.Settings.FwMarkMask},
 		"mwan3":          map[string]any{"mwan3": in.Mwan3, "proxy_providers": proxyProviders},

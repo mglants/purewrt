@@ -1,0 +1,23 @@
+# Dependabot covers what it natively understands: the Go modules and the
+# GitHub Actions used by our workflows. The bundled OpenWrt packages
+# (mihomo-alpha, zapret) are pinned by git commit/tag + PKG_MIRROR_HASH in
+# their Makefiles, which Dependabot has no ecosystem for — those are bumped by
+# .github/workflows/update-deps.yml instead.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "ci"
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "deps"

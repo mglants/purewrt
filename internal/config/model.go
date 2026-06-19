@@ -276,6 +276,10 @@ type DNS struct {
 	Enabled            bool
 	Backend            string
 	UpstreamMode       string
+	// VPNs lists VPN names whose interfaces join the DNSProxy pool, so mihomo's
+	// DNS-upstream egress can route out a VPN — lets a no-subscription setup
+	// reach censored DoH/DoT/DoQ resolvers. Empty = today (providers/direct).
+	VPNs               []string
 	HijackLANDNS       bool
 	BlockDoT           bool
 	BlockDoH3          bool
@@ -345,15 +349,14 @@ type ZapretStrategy struct {
 	FakeDir   string
 }
 
+// VPN is a tunnel interface mihomo can egress through. Routing is done by
+// mihomo (a `type: direct` outbound bound to Interface via interface-name),
+// not the kernel — so only the interface name matters here. Sections/DNS pick
+// VPNs by Name and pool them with subscription nodes under a proxy group.
 type VPN struct {
-	Name           string
-	Enabled        bool
-	Interface      string
-	RouteTable     string
-	FwMark         string
-	FwMarkMask     string
-	IPRulePriority string
-	Masquerade     bool
+	Name      string
+	Enabled   bool
+	Interface string
 }
 
 // Device maps one LAN device (by MAC) to a routing section — the LuCI
@@ -386,7 +389,7 @@ type Section struct {
 	UDPMode                  string
 	Priority                 int
 	Mwan3Policy              string
-	VPN                      string
+	VPNs                     []string // VPN names whose interfaces join this section's proxy pool
 	ZapretStrategies         []string
 	SourceCIDR4              []string
 	SourceCIDR6              []string
@@ -679,45 +682,18 @@ func (c Config) VPNByName(name string) (VPN, bool) {
 	return VPN{}, false
 }
 
-func (c Config) NormalizedVPNs() []VPN {
-	out := make([]VPN, 0, len(c.VPNs))
-	for i, v := range c.VPNs {
-		out = append(out, c.NormalizeVPN(v, i))
-	}
-	return out
-}
-
-func (c Config) NormalizeVPN(v VPN, index int) VPN {
-	if v.RouteTable == "" {
-		v.RouteTable = fmt.Sprintf("%d", 200+index)
-	}
-	if v.FwMark == "" {
-		v.FwMark = fmt.Sprintf("0x%x", 0x2<<index)
-	}
-	if v.FwMarkMask == "" {
-		v.FwMarkMask = c.Settings.FwMarkMask
-		if v.FwMarkMask == "" {
-			v.FwMarkMask = "0xff"
-		}
-	}
-	if v.IPRulePriority == "" {
-		v.IPRulePriority = fmt.Sprintf("%d", 110+index)
-	}
-	return v
-}
-
-func (c Config) VPNForSection(s Section) (VPN, bool) {
-	if s.VPN != "" {
-		for i, v := range c.VPNs {
-			if v.Name == s.VPN {
-				return c.NormalizeVPN(v, i), true
-			}
-		}
+// VPNForName returns the VPN with the given name if it is enabled and has an
+// interface — the eligibility check for joining a mihomo proxy pool.
+func (c Config) VPNForName(name string) (VPN, bool) {
+	if name == "" {
 		return VPN{}, false
 	}
-	for i, v := range c.VPNs {
-		if v.Enabled {
-			return c.NormalizeVPN(v, i), true
+	for _, v := range c.VPNs {
+		if v.Name == name {
+			if v.Enabled && v.Interface != "" {
+				return v, true
+			}
+			return VPN{}, false
 		}
 	}
 	return VPN{}, false
@@ -753,9 +729,6 @@ func (s Section) NFTSet4() string {
 	if s.Action == "reject" {
 		return "reject4"
 	}
-	if s.Action == "vpn" {
-		return "vpn_" + s.Name + "4"
-	}
 	return "proxy_" + s.Name + "4"
 }
 func (s Section) NFTSet6() string {
@@ -764,9 +737,6 @@ func (s Section) NFTSet6() string {
 	}
 	if s.Action == "reject" {
 		return "reject6"
-	}
-	if s.Action == "vpn" {
-		return "vpn_" + s.Name + "6"
 	}
 	return "proxy_" + s.Name + "6"
 }

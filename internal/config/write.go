@@ -343,6 +343,7 @@ func writeDNS(b *bytes.Buffer, d DNS) {
 	optb(b, "enabled", d.Enabled)
 	opt(b, "backend", d.Backend)
 	opt(b, "upstream_mode", d.UpstreamMode)
+	listv(b, "vpns", d.VPNs)
 	optb(b, "hijack_lan_dns", d.HijackLANDNS)
 	optb(b, "block_dot", d.BlockDoT)
 	optb(b, "block_doh3", d.BlockDoH3)
@@ -414,19 +415,6 @@ func writeVPN(b *bytes.Buffer, v VPN) {
 	opt(b, "name", v.Name)
 	optb(b, "enabled", v.Enabled)
 	opt(b, "interface", v.Interface)
-	if v.RouteTable != "" {
-		opt(b, "route_table", v.RouteTable)
-	}
-	if v.FwMark != "" {
-		opt(b, "fwmark", v.FwMark)
-	}
-	if v.FwMarkMask != "" {
-		opt(b, "fwmark_mask", v.FwMarkMask)
-	}
-	if v.IPRulePriority != "" {
-		opt(b, "ip_rule_priority", v.IPRulePriority)
-	}
-	optb(b, "masquerade", v.Masquerade)
 	fmt.Fprintln(b)
 }
 func writeDevice(b *bytes.Buffer, d Device) {
@@ -455,7 +443,7 @@ func writeSection(b *bytes.Buffer, s Section) {
 	opt(b, "udp_mode", s.UDPMode)
 	opti(b, "priority", s.Priority)
 	opt(b, "mwan3_policy", s.Mwan3Policy)
-	opt(b, "vpn", s.VPN)
+	listv(b, "vpns", s.VPNs)
 	listv(b, "zapret_strategy", s.ZapretStrategies)
 	listv(b, "source_cidr4", s.SourceCIDR4)
 	listv(b, "source_cidr6", s.SourceCIDR6)

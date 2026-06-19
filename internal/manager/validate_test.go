@@ -18,16 +18,6 @@ func TestValidateZapretProfileMarkOverlapsPureWRTMask(t *testing.T) {
 	}
 }
 
-func TestValidateZapretProfileMarkOverlapsVPNMark(t *testing.T) {
-	c := config.Default()
-	c.ZapretProfiles = []config.ZapretProfile{{Name: "bad", Enabled: true, Interfaces: []string{"wan"}, FwMark: "0x2"}}
-	c.VPNs = []config.VPN{{Name: "vpn", Enabled: true, Interface: "wg0", FwMark: "0x2", FwMarkMask: "0xff"}}
-	err := validateZapretProfileMarks(c)
-	if err == nil || !strings.Contains(err.Error(), "VPN") {
-		t.Fatalf("expected VPN mark conflict, got %v", err)
-	}
-}
-
 func TestZapretStrategyQueueAutoDerivation(t *testing.T) {
 	c := config.Default()
 	c.ZapretStrategies = []config.ZapretStrategy{
@@ -87,7 +77,7 @@ func TestValidateRejectsZapretOnProxySection(t *testing.T) {
 func TestValidateRejectsZapretOnVPNSection(t *testing.T) {
 	c := config.Default()
 	c.Sections = []config.Section{{
-		Name: "vpn_only", Enabled: true, Action: "vpn",
+		Name: "vpn_only", Enabled: true, Action: "proxy",
 		TPROXYPort: 7894, IPv4Enabled: true, IPv6Enabled: true,
 		ZapretStrategies: []string{"youtube_tcp"},
 	}}
@@ -148,7 +138,7 @@ func TestValidateRejectsUnsafeProviderPathAndInterface(t *testing.T) {
 		t.Fatalf("expected provider path validation error, got %v", err)
 	}
 	c = config.Default()
-	c.VPNs = []config.VPN{{Name: "vpn", Enabled: true, Interface: "wg0;reboot", RouteTable: "200", FwMark: "0x2", FwMarkMask: "0xff", IPRulePriority: "110"}}
+	c.VPNs = []config.VPN{{Name: "vpn", Enabled: true, Interface: "wg0;reboot"}}
 	if err := validateConfigHardening(c); err == nil || !strings.Contains(err.Error(), "interface") {
 		t.Fatalf("expected interface validation error, got %v", err)
 	}

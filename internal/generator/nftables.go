@@ -73,12 +73,6 @@ func NFTablesWithNative(c config.Config, native map[string][]string) []byte {
 				sets = append(sets, s.NFTSet6())
 			}
 		}
-		if s.Action == "vpn" {
-			sets = append(sets, s.NFTSet4())
-			if includeIPv6 {
-				sets = append(sets, s.NFTSet6())
-			}
-		}
 	}
 	for _, set := range sets {
 		b.WriteString(nftSetDefinition(set, false))
@@ -171,19 +165,6 @@ func NFTablesWithNative(c config.Config, native map[string][]string) []byte {
 			writeZapretPreroutingRules(&b, c, s, includeIPv6)
 			continue
 		}
-		if s.Action == "vpn" {
-			if v, ok := c.VPNForSection(s); ok && v.Enabled {
-				for _, set := range nftSetRefs(s.NFTSet4()) {
-					b.WriteString("    ip daddr @" + set + " meta mark set meta mark | " + v.FwMark + counterTag(set) + " accept\n")
-				}
-				if includeIPv6 {
-					for _, set := range nftSetRefs(s.NFTSet6()) {
-						b.WriteString("    ip6 daddr @" + set + " meta mark set meta mark | " + v.FwMark + counterTag(set) + " accept\n")
-					}
-				}
-			}
-			continue
-		}
 		if s.Action != "proxy" {
 			continue
 		}
@@ -215,11 +196,6 @@ func NFTablesWithNative(c config.Config, native map[string][]string) []byte {
 					b.WriteString("    ip6 daddr @" + set + " meta l4proto udp meta mark set meta mark | " + c.Settings.FwMark + counterTag(set) + " tproxy ip6 to :" + itoa(s.TPROXYPort) + " accept\n")
 				}
 			}
-		}
-	}
-	for _, v := range c.VPNs {
-		if v.Enabled && v.Masquerade && v.Interface != "" {
-			nat.WriteString("    oifname \"" + v.Interface + "\" masquerade\n")
 		}
 	}
 	if c.DNS.BlockDoT {
@@ -351,17 +327,6 @@ func writeOutputChain(b *strings.Builder, c config.Config, includeIPv6 bool) {
 					b.WriteString("    ip6 daddr @" + set + counterTag(set) + " return\n")
 				}
 			}
-		case "vpn":
-			if v, ok := c.VPNForSection(s); ok && v.Enabled {
-				for _, set := range nftSetRefs(s.NFTSet4()) {
-					b.WriteString("    ip daddr @" + set + " meta mark set meta mark | " + v.FwMark + counterTag(set) + " accept\n")
-				}
-				if includeIPv6 {
-					for _, set := range nftSetRefs(s.NFTSet6()) {
-						b.WriteString("    ip6 daddr @" + set + " meta mark set meta mark | " + v.FwMark + counterTag(set) + " accept\n")
-					}
-				}
-			}
 		case "proxy", "":
 			for _, set := range nftSetRefs(s.NFTSet4()) {
 				b.WriteString("    ip daddr @" + set + " meta l4proto tcp meta mark set meta mark | " + c.Settings.FwMark + counterTag(set) + " accept\n")
@@ -418,10 +383,6 @@ func writeSectionDeviceRules(b *strings.Builder, c config.Config, s config.Secti
 		b.WriteString("    ether saddr " + set + " reject\n")
 	case "direct":
 		b.WriteString("    ether saddr " + set + " return\n")
-	case "vpn":
-		if v, ok := c.VPNForSection(s); ok && v.Enabled {
-			b.WriteString("    ether saddr " + set + " meta mark set meta mark | " + v.FwMark + " accept\n")
-		}
 	case "proxy", "":
 		b.WriteString("    meta nfproto ipv4 ether saddr " + set + " meta l4proto tcp meta mark set meta mark | " + c.Settings.FwMark + " tproxy ip to :" + itoa(s.TPROXYPort) + " accept\n")
 		if s.UDPMode != "tcp_only" {
@@ -459,15 +420,6 @@ func writeSectionSourceRules(b *strings.Builder, c config.Config, s config.Secti
 		}
 		if v6 != "" {
 			b.WriteString("    ip6 saddr " + v6 + " return\n")
-		}
-	case "vpn":
-		if v, ok := c.VPNForSection(s); ok && v.Enabled {
-			if v4 != "" {
-				b.WriteString("    ip saddr " + v4 + " meta mark set meta mark | " + v.FwMark + " accept\n")
-			}
-			if v6 != "" {
-				b.WriteString("    ip6 saddr " + v6 + " meta mark set meta mark | " + v.FwMark + " accept\n")
-			}
 		}
 	case "zapret":
 		writeZapretSourcePreroutingRules(b, c, s, v4, v6)
@@ -698,7 +650,7 @@ func nftPayloadSets(c config.Config) []string {
 		sets = append(sets, "bypass6", "proxy_server_bypass6", "direct6", "reject6")
 	}
 	for _, s := range c.Sections {
-		if s.Action == "proxy" || s.Action == "zapret" || s.Action == "vpn" {
+		if s.Action == "proxy" || s.Action == "zapret" {
 			sets = append(sets, s.NFTSet4())
 			if includeIPv6 {
 				sets = append(sets, s.NFTSet6())

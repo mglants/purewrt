@@ -948,11 +948,9 @@ func (m Manager) Validate() error {
 	if err != nil {
 		return err
 	}
-	log := newLog(c)
 	if err := validateConfigHardening(c); err != nil {
 		return err
 	}
-	warnVPNMasquerade(c, log)
 	if c.Settings.FakeIP {
 		return fmt.Errorf("fake-ip is not default-safe; disable or use advanced mode")
 	}
@@ -963,21 +961,6 @@ func (m Manager) Validate() error {
 		return err
 	}
 	return nil
-}
-
-func warnVPNMasquerade(c config.Config, log logging.Logger) {
-	seen := map[string]bool{}
-	for _, s := range c.Sections {
-		if !s.Enabled || s.Action != "vpn" {
-			continue
-		}
-		v, ok := c.VPNForSection(s)
-		if !ok || !v.Enabled || v.Masquerade || seen[v.Name] {
-			continue
-		}
-		seen[v.Name] = true
-		log.Warn("vpn %q is used by section %q with masquerade disabled; this is valid only when the remote peer routes LAN subnets back or external/OpenWrt firewall NAT is configured", v.Name, s.Name)
-	}
 }
 
 var (
@@ -1023,7 +1006,7 @@ func validateConfigHardening(c config.Config) error {
 		if !safeNFTIdentRE.MatchString(s.NFTSet4()) || !safeNFTIdentRE.MatchString(s.NFTSet6()) {
 			return fmt.Errorf("section %q generates unsafe nft set name", s.Name)
 		}
-		if !knownValue(s.Action, "proxy", "direct", "reject", "vpn", "zapret") {
+		if !knownValue(s.Action, "proxy", "direct", "reject", "zapret") {
 			return fmt.Errorf("section %q has unsupported action %q", s.Name, s.Action)
 		}
 		if s.UDPMode != "" && !knownValue(s.UDPMode, "proxy", "direct", "reject", "block_quic", "block", "off") {
@@ -1045,7 +1028,7 @@ func validateConfigHardening(c config.Config) error {
 		// which breaks the proxy itself. Reject the misconfig at validate
 		// time so the user sees a clear error instead of mysterious
 		// connection resets after apply.
-		if s.Enabled && len(s.ZapretStrategies) > 0 && (s.Action == "proxy" || s.Action == "vpn") {
+		if s.Enabled && len(s.ZapretStrategies) > 0 && s.Action == "proxy" {
 			return fmt.Errorf("section %q has action=%q AND zapret_strategies set — zapret only applies to direct traffic; either drop the strategies or change the section's action to direct/zapret", s.Name, s.Action)
 		}
 	}
@@ -1059,24 +1042,12 @@ func validateConfigHardening(c config.Config) error {
 			return err
 		}
 	}
-	for _, v := range c.NormalizedVPNs() {
+	for _, v := range c.VPNs {
 		if !safeProviderRE.MatchString(v.Name) {
 			return fmt.Errorf("vpn %q has unsafe name", v.Name)
 		}
 		if v.Interface != "" && !safeIfaceRE.MatchString(v.Interface) {
 			return fmt.Errorf("vpn %q has unsafe interface %q", v.Name, v.Interface)
-		}
-		if err := validateNumericRange("vpn "+v.Name+" route_table", v.RouteTable, 1, 4294967295); err != nil {
-			return err
-		}
-		if err := validateNumericRange("vpn "+v.Name+" ip_rule_priority", v.IPRulePriority, 0, 32767); err != nil {
-			return err
-		}
-		if err := validateHexField("vpn "+v.Name+" fwmark", v.FwMark, true); err != nil {
-			return err
-		}
-		if err := validateHexField("vpn "+v.Name+" fwmark_mask", v.FwMarkMask, true); err != nil {
-			return err
 		}
 	}
 	for _, p := range c.EnabledZapretProfiles() {
@@ -1248,22 +1219,8 @@ func validateZapretProfileMarks(c config.Config) error {
 		if pureMarkOK && pureMaskOK && pureMask != 0 && zapretMark&pureMask == pureMark&pureMask {
 			return fmt.Errorf("zapret profile %q fwmark %s overlaps PureWRT fwmark %s/%s", p.Name, p.FwMark, c.Settings.FwMark, c.Settings.FwMarkMask)
 		}
-		for _, v := range c.NormalizedVPNs() {
-			if !v.Enabled {
-				continue
-			}
-			vpnMark, ok := parseHexMark(v.FwMark)
-			if !ok {
-				continue
-			}
-			vpnMask, ok := parseHexMark(v.FwMarkMask)
-			if !ok || vpnMask == 0 {
-				continue
-			}
-			if zapretMark&vpnMask == vpnMark&vpnMask {
-				return fmt.Errorf("zapret profile %q fwmark %s overlaps VPN %q fwmark %s/%s", p.Name, p.FwMark, v.Name, v.FwMark, v.FwMarkMask)
-			}
-		}
+		// VPNs no longer carry an fwmark (routed via mihomo, not kernel marks),
+		// so there's no VPN↔zapret mark overlap to check.
 	}
 	return nil
 }

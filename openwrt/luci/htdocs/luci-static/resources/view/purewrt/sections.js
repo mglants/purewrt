@@ -166,7 +166,10 @@ function vpnTitle(section) {
 
 function routingSummary(sid) {
   var action = uci.get('purewrt', sid, 'action') || 'proxy';
-  var target = action === 'proxy' ? (uci.get('purewrt', sid, 'tproxy_port') || '-') : (action === 'vpn' ? (uci.get('purewrt', sid, 'vpn') || _('First enabled VPN')) : (action === 'zapret' ? ((uci.get('purewrt', sid, 'zapret_strategy') || []).join(', ') || '-') : '-'));
+  var vpns = (uci.get('purewrt', sid, 'vpns') || []);
+  var target = action === 'proxy'
+    ? (uci.get('purewrt', sid, 'tproxy_port') || '-') + (vpns.length ? ' vpn:' + vpns.join(',') : '')
+    : (action === 'zapret' ? ((uci.get('purewrt', sid, 'zapret_strategy') || []).join(', ') || '-') : '-');
   return [
     sectionTitle(sid),
     action,
@@ -215,7 +218,6 @@ return view.extend({
     action.value('direct', _('Direct — no proxy'));
     action.value('reject', _('Reject — drop traffic'));
     action.value('zapret', _('Zapret — DPI bypass'));
-    action.value('vpn', _('VPN — route via VPN interface'));
     action.rmempty = false;
     var tproxy = s.option(form.Value, 'tproxy_port', _('TPROXY port'));
     tproxy.retain = true;
@@ -306,106 +308,29 @@ return view.extend({
     udp.depends('action', 'proxy');
     s.option(form.Flag, 'ipv4_enabled', _('IPv4'));
     s.option(form.Flag, 'ipv6_enabled', _('IPv6'));
-    var vpn = s.option(form.ListValue, 'vpn', _('VPN configuration'));
-    vpn.depends('action', 'vpn');
-    vpn.rmempty = true;
-    vpn.placeholder = _('Use first enabled VPN');
-    // Empty-list sentinel so the dropdown isn't unselectable when no VPN
-    // exists yet — the "+ Add VPN" button (wired below) creates one.
-    var existingVPNs = uci.sections('purewrt', 'vpn') || [];
-    if (existingVPNs.length === 0) {
-      vpn.value('', _('(none defined — click + Add VPN)'));
-    }
-    existingVPNs.forEach(function(section) {
+    // VPN members: VPN interfaces added to this section's mihomo proxy pool
+    // (alongside subscription nodes). mihomo routes the section through the
+    // pool with its group type/strategy + url-test failover across the VPNs.
+    var vpns = s.option(form.DynamicList, 'vpns', _('VPN members'));
+    vpns.depends('action', 'proxy');
+    vpns.rmempty = true;
+    vpns.description = _('VPN interfaces this section routes through (pooled with any subscription nodes, url-test failover). Define VPNs with "Manage VPNs".');
+    (uci.sections('purewrt', 'vpn') || []).forEach(function(section) {
       var name = vpnTitle(section);
-      if (name)
-        vpn.value(name, name + (section.interface ? ' (' + section.interface + ')' : ''));
+      if (name) vpns.value(name, name + (section.interface ? ' (' + section.interface + ')' : ''));
     });
-
-    // Wrap the default ListValue widget with two affordances so users can
-    // create / edit VPN entries inline. The standalone VPN Routing tab is
-    // gone; these buttons are how new VPNs get defined.
-    //
-    // On save: the simplest reliable refresh is location.reload — UCI is
-    // already committed by the modal, the page state we'd lose is the
-    // unsaved edits on whatever section the user was editing. Acceptable
-    // trade-off given how rarely VPN entries change.
-    // syncVPNSelect / removeVPNOption update the section's VPN dropdown
-    // after the VPN modal commits its UCI write. We intentionally do NOT
-    // dispatch a `change` event on the select: that cascades into the form
-    // map's checkDepends + triggerValidation, which can crash inside
-    // `dom.findClassInstance` when the parent modal was just detached and
-    // re-attached (some sibling option's `data-idref` no longer resolves in
-    // the registry). The action field hasn't moved, so depends-driven
-    // visibility is still correct — we only need to make the new value
-    // visible and mark the field changed so the section's Save picks it up.
-    //
-    // `data-changed=true` is the same flag the LuCI widget's own change
-    // listener sets; CBIValue.parse uses formvalue (= live DOM) regardless,
-    // so even without the flag the value would write — the flag is mainly
-    // for the dirty-state indicator.
-    function syncVPNSelect(section_id, oldName, newName) {
-      var sel = document.getElementById('widget.cbid.purewrt.' + section_id + '.vpn');
-      if (!sel) return;
-      var have = Array.prototype.some.call(sel.options, function(o) { return o.value === newName; });
-      if (oldName && oldName !== newName) {
-        Array.prototype.forEach.call(sel.options, function(o) {
-          if (o.value === oldName) { o.value = newName; o.text = newName; }
-        });
-        have = true;
-      }
-      if (!have) sel.appendChild(E('option', { 'value': newName }, newName));
-      sel.value = newName;
-      var frame = sel.parentNode;
-      if (frame) frame.setAttribute('data-changed', 'true');
-    }
-
-    function removeVPNOption(section_id, deletedName) {
-      var sel = document.getElementById('widget.cbid.purewrt.' + section_id + '.vpn');
-      if (!sel) return;
-      var wasSelected = (sel.value === deletedName);
-      Array.prototype.slice.call(sel.options).forEach(function(o) {
-        if (o.value === deletedName) sel.removeChild(o);
-      });
-      if (wasSelected) sel.value = '';
-      var frame = sel.parentNode;
-      if (frame) frame.setAttribute('data-changed', 'true');
-    }
-
-    var origRenderWidget = vpn.renderWidget.bind(vpn);
-    vpn.renderWidget = function(section_id, option_id, cfgvalue) {
-      var dropdown = origRenderWidget.call(this, section_id, option_id, cfgvalue);
-
-      var addBtn = E('button', { 'class': 'btn cbi-button cbi-button-action', 'style': 'margin-left:.5em;white-space:nowrap' }, [ '+ ', _('Add VPN') ]);
+    // Inline "Manage VPNs" button opens the VPN modal to define interfaces.
+    // On save we reload (UCI is committed by the modal) so the option list
+    // repopulates — VPN definitions change rarely, so the reload is fine.
+    var origVpnsRender = vpns.renderWidget.bind(vpns);
+    vpns.renderWidget = function(section_id, option_id, cfgvalue) {
+      var widget = origVpnsRender.call(this, section_id, option_id, cfgvalue);
+      var addBtn = E('button', { 'class': 'btn cbi-button cbi-button-action', 'style': 'margin-left:.5em;white-space:nowrap' }, [ '+ ', _('Manage VPNs') ]);
       addBtn.addEventListener('click', function(ev) {
         ev.preventDefault();
-        vpnModal.openVPNModal({
-          onSave: function(newName) { syncVPNSelect(section_id, null, newName); }
-        });
+        vpnModal.openVPNModal({ onSave: function() { location.reload(); } });
       });
-
-      var editBtn = E('button', { 'class': 'btn cbi-button cbi-button-edit', 'style': 'margin-left:.25em;white-space:nowrap' }, [ _('Edit') ]);
-      editBtn.addEventListener('click', function(ev) {
-        ev.preventDefault();
-        // Read the dropdown's current value rather than cfgvalue — cfgvalue
-        // is the saved state, but the user may have switched the dropdown
-        // selection mid-session and we want to edit what they're looking at.
-        var sel = dropdown.querySelector('select') || dropdown.querySelector('input[type=hidden]');
-        var name = sel ? sel.value : cfgvalue;
-        if (!name) {
-          ui.addNotification(null, E('p', _('Pick an existing VPN to edit, or click "+ Add VPN" to create one.')), 'warning');
-          return;
-        }
-        vpnModal.openVPNModal({
-          name: name,
-          onSave: function(newName) { syncVPNSelect(section_id, name, newName); },
-          onDelete: function(deletedName) { removeVPNOption(section_id, deletedName); }
-        });
-      });
-
-      return E('div', { 'style': 'display:flex;align-items:center;flex-wrap:wrap;gap:.25em' }, [
-        dropdown, addBtn, editBtn
-      ]);
+      return E('div', { 'style': 'display:flex;align-items:center;flex-wrap:wrap;gap:.25em' }, [ widget, addBtn ]);
     };
 
     var zapretStrategies = s.option(form.DynamicList, 'zapret_strategy', _('Zapret strategies'));

@@ -21,7 +21,7 @@ func TestWizardResetPreservesAndFlushes(t *testing.T) {
 	c.Settings.LogLevel = "debug"
 	c.Settings.AutoUpdateCron = "0 0 * * *"
 	// Stuff that must be preserved.
-	c.VPNs = []config.VPN{{Name: "wg0", Enabled: true, Interface: "wg0", FwMark: "0x40000002"}}
+	c.VPNs = []config.VPN{{Name: "wg0", Enabled: true, Interface: "wg0"}}
 	c.ZapretProfiles = []config.ZapretProfile{{Name: "custom", Enabled: true, Interfaces: []string{"wan"}}}
 	c.ZapretStrategies = []config.ZapretStrategy{{Name: "myst", Enabled: true, Profile: "custom", Params: "--foo"}}
 	c.Settings.Secret = "my-real-secret-token"
