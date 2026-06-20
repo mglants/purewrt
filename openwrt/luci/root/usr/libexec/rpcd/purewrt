@@ -176,6 +176,7 @@ call)
         update) read_logread 'purewrt-bg|purewrt-cron|update-rule-provider|update-proxy-provider|providers.*updated|provider.*updated' ;;
         mihomo) read_logread 'mihomo|clash' ;;
         zapret) read_logread 'purewrt-zapret|zapret|nfqws|tpws' ;;
+        ooni) read_logread 'ooniprobe' ;;
         *) read_logread 'purewrt|purewrt-bg|purewrt-cron|mihomo|clash|zapret|nfqws|tpws' ;;
       esac ;;
     mihomo_config) read_file /etc/purewrt/generated/mihomo.yaml ;;

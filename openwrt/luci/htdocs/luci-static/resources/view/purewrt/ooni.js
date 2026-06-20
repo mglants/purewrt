@@ -15,6 +15,7 @@ var callOONIInstalled = rpc.declare({ object: 'purewrt', method: 'ooni_installed
 var callOONIStatus = rpc.declare({ object: 'purewrt', method: 'ooni_status' });
 var callOONIRunStart = rpc.declare({ object: 'purewrt', method: 'ooni_run_start' });
 var callOONIRunStatus = rpc.declare({ object: 'purewrt', method: 'ooni_run_status', params: [] });
+var callLogs = rpc.declare({ object: 'purewrt', method: 'logs', params: [ 'source' ], expect: { output: '' } });
 
 function notInstalled() {
   return E('div', { 'class': 'cbi-section' }, [
@@ -76,10 +77,31 @@ return view.extend({
     o.depends('enabled', '1');
 
     return m.render().then(function(formEl) {
-      return E('div', {}, [ formEl, renderRunPanel() ]);
+      return E('div', {}, [ formEl, renderRunPanel(), renderLogPanel() ]);
     });
   }
 });
+
+function renderLogPanel() {
+  var out = E('pre', { 'style': 'white-space:pre-wrap;max-height:28em;overflow:auto' }, _('Loading…'));
+
+  function refresh() {
+    return callLogs('ooni').then(function(text) {
+      out.textContent = (text && text.length) ? text : _('No ooniprobe log lines yet.');
+    }).catch(function(e) { out.textContent = e.message; });
+  }
+
+  var refreshBtn = E('button', { 'class': 'btn cbi-button' }, _('Refresh'));
+  refreshBtn.addEventListener('click', function(ev) { ev.preventDefault(); refresh(); });
+
+  refresh();
+  return E('div', { 'class': 'cbi-section' }, [
+    E('h3', {}, _('Logs')),
+    E('p', {}, _('Recent ooniprobe output from the system log (check-in, per-test progress, upload).')),
+    E('div', { 'style': 'margin-bottom:1em' }, [ refreshBtn ]),
+    out
+  ]);
+}
 
 function renderRunPanel() {
   var out = E('pre', { 'style': 'white-space:pre-wrap;max-height:24em;overflow:auto' }, _('Idle.'));
