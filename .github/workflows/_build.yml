@@ -61,11 +61,20 @@ jobs:
       matrix: ${{ fromJSON(inputs.matrix) }}
     steps:
       - uses: actions/checkout@v7
+      - name: Compute package list
+        # ooniprobe requires Go 1.24 and only builds on the 25.12 SDK (24.10
+        # ships Go 1.23). Append it to the 25.12 leg only; 24.10 keeps the base set.
+        run: |
+          pkgs="${{ inputs.packages }}"
+          if [ "${{ matrix.branch }}" = "openwrt-25.12" ]; then
+            pkgs="$pkgs ooniprobe"
+          fi
+          echo "PACKAGES=$pkgs" >> "$GITHUB_ENV"
       - uses: openwrt/gh-action-sdk@v11
         env:
           ARCH: ${{ matrix.arch }}-${{ matrix.branch }}
           FEEDNAME: purewrt
-          PACKAGES: ${{ inputs.packages }}
+          PACKAGES: ${{ env.PACKAGES }}
           NO_REFRESH_CHECK: 1
           # Verbose so a swallowed compile failure prints its real cause.
           # Drop once builds are green.

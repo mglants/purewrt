@@ -57,6 +57,7 @@ type generationFingerprintInput struct {
 	Devices          []config.Device         `json:"devices"`
 	Zapret           []config.ZapretProfile  `json:"zapret"`
 	ZapretStrategies []config.ZapretStrategy `json:"zapret_strategies"`
+	OONI             config.OONI             `json:"ooni"`
 }
 
 type ruleProviderFPEntry struct {
@@ -111,7 +112,7 @@ func currentGenerationFingerprint(c config.Config) (generationFingerprint, error
 	c.Settings.RuntimeDir = ""
 	c.Settings.MihomoConfig = ""
 	c.Settings.DNSMasqIncludeDir = ""
-	in := generationFingerprintInput{CacheVersion: rules.ArtifactVersion, Settings: c.Settings, DNS: c.DNS, Mwan3: c.Mwan3, Sections: c.Sections, Bypass: c.Bypass, VPNs: c.VPNs, Devices: c.Devices, Zapret: c.ZapretProfiles, ZapretStrategies: c.ZapretStrategies}
+	in := generationFingerprintInput{CacheVersion: rules.ArtifactVersion, Settings: c.Settings, DNS: c.DNS, Mwan3: c.Mwan3, Sections: c.Sections, Bypass: c.Bypass, VPNs: c.VPNs, Devices: c.Devices, Zapret: c.ZapretProfiles, ZapretStrategies: c.ZapretStrategies, OONI: c.OONI}
 	// Per-provider checksum reads are the most expensive part of fingerprint
 	// — each call reads the file and SHA-256s it. Track aggregate size +
 	// wall time so we can see if this stage alone explains a slow apply.
@@ -146,7 +147,7 @@ func generationGroupHashes(c config.Config, in generationFingerprintInput) (map[
 	proxyProviders := c.ProxyProviders
 	groups := map[string]any{
 		"mihomo":         map[string]any{"settings": in.Settings, "dns": in.DNS, "sections": in.Sections, "proxy_providers": proxyProviders, "rule_providers": in.RuleProvider, "vpns": in.VPNs},
-		"openwrt_bundle": map[string]any{"settings": in.Settings, "dns": in.DNS, "sections": openWrtSections, "rule_providers": in.RuleProvider, "bypass": in.Bypass, "vpns": in.VPNs, "devices": in.Devices, "zapret": in.Zapret},
+		"openwrt_bundle": map[string]any{"settings": in.Settings, "dns": in.DNS, "sections": openWrtSections, "rule_providers": in.RuleProvider, "bypass": in.Bypass, "vpns": in.VPNs, "devices": in.Devices, "zapret": in.Zapret, "ooni": in.OONI},
 		"firewall":       map[string]any{"dns_hijack": c.DNS.HijackLANDNS, "lan_source_zones": c.Settings.LANSourceZones, "fwmark": c.Settings.FwMark, "fwmark_mask": c.Settings.FwMarkMask},
 		"mwan3":          map[string]any{"mwan3": in.Mwan3, "proxy_providers": proxyProviders},
 		"zapret":         map[string]any{"zapret": in.Zapret, "sections": openWrtSections},

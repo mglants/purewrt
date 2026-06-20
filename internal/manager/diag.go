@@ -50,6 +50,25 @@ func (m Manager) ZapretInstalled() bool {
 	return false
 }
 
+// ooniBinaries is the install signal for the optional OONI Probe package
+// (a 25.12-only Go companion; can't build on the 24.10 SDK's Go 1.23).
+var ooniBinaries = []string{
+	"/usr/bin/ooniprobe",
+	"/usr/sbin/ooniprobe",
+}
+
+// OONIInstalled reports whether the ooniprobe binary is present, so LuCI can
+// gate the OONI page (render a "not installed" placeholder otherwise — same
+// pattern as ZapretInstalled).
+func (m Manager) OONIInstalled() bool {
+	for _, p := range ooniBinaries {
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
 func subscriptionExpiryLines(c config.Config) []string {
 	now := time.Now()
 	out := []string{}

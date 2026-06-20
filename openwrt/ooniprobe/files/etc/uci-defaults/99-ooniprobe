@@ -1,0 +1,20 @@
+#!/bin/sh
+# Create the unprivileged `ooniprobe` system user that PureWRT runs OONI
+# measurements as (via cron, `su` to this user). PureWRT's nft OUTPUT chain
+# exempts this user's uid (resolved dynamically from /etc/passwd) so the
+# probe's measurement sockets stay direct instead of being TPROXY'd into
+# mihomo. Idempotent: only adds when missing.
+if ! grep -q '^ooniprobe:' /etc/passwd 2>/dev/null; then
+    if command -v addgroup >/dev/null 2>&1; then
+        addgroup -S ooniprobe 2>/dev/null || true
+        adduser -S -D -H -G ooniprobe -h /tmp/ooni -s /bin/false ooniprobe 2>/dev/null || true
+    fi
+fi
+
+# Best-effort: grant cap_net_raw so raw-socket nettests (e.g. dnscheck,
+# traceroute) work unprivileged. Core Web Connectivity runs fine without it,
+# so a missing setcap is non-fatal.
+if command -v setcap >/dev/null 2>&1 && [ -x /usr/bin/ooniprobe ]; then
+    setcap cap_net_raw+ep /usr/bin/ooniprobe 2>/dev/null || true
+fi
+exit 0

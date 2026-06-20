@@ -276,6 +276,7 @@ func (m Manager) GenerateWithOptions(force bool) error {
 	}
 	c = config.EnsureDefaults(c)
 	c = ResolveZapretProfileInterfaces(c)
+	c = ResolveOONIUser(c)
 	log := newLog(c)
 	defer log.DebugTimer("generate: total")()
 	log.Info("generate: start")
@@ -297,6 +298,7 @@ func (m Manager) GenerateCacheStatus() (string, error) {
 	// config while generate/apply hash the resolved one, and the zapret +
 	// openwrt_bundle groups report a permanent (phantom) cache miss.
 	c = ResolveZapretProfileInterfaces(c)
+	c = ResolveOONIUser(c)
 	return generator.CacheStatus(c), nil
 }
 
@@ -1339,6 +1341,7 @@ func (m Manager) applyPrepare(force bool) (config.Config, system.BackupSet, gene
 		return c, nil, generator.GeneratedPaths{}, generator.GenerationResult{}, func() {}, err
 	}
 	c = ResolveZapretProfileInterfaces(c)
+	c = ResolveOONIUser(c)
 	log := newLog(c)
 	defer log.DebugTimer("apply: prepare")()
 	log.Info("apply: validating config")

@@ -644,6 +644,17 @@ func main() {
 		// UI (logs panel, diagnostics section). Menu entry hiding is
 		// driven by /usr/bin/nfqws's depends.fs, not by this method.
 		printJSON(map[string]bool{"installed": m.ZapretInstalled()})
+	case "ooni-installed":
+		// Stat-based gate for the OONI LuCI page (ooniprobe is an optional
+		// 25.12-only companion package).
+		printJSON(map[string]bool{"installed": m.OONIInstalled()})
+	case "ooni-status":
+		printJSON(m.OONIStatus())
+	case "ooni-prepare":
+		// Writes the ooniprobe home + config.json (informed consent + upload
+		// flag), chowned to the ooni user. Invoked as root by the cron
+		// wrapper before su-ing to the ooni user for the measurement.
+		fatal(m.OONIPrepare())
 	case "ipdb-status":
 		// Cheap stat-only status; loadCount=false because the CLI is also
 		// invoked from rpcd-driven LuCI poll where we want sub-100ms

@@ -95,6 +95,7 @@ type Config struct {
 	ProxyProviders   []ProxyProvider
 	RuleProviders    []RuleProvider
 	Bypass           Bypass
+	OONI             OONI
 }
 
 type Settings struct {
@@ -482,6 +483,29 @@ type Bypass struct {
 	SourceCIDR6      []string
 }
 
+// OONI configures the optional OONI Probe censorship-measurement runner.
+// The probe runs via cron (not a daemon — `ooniprobe run unattended` is a
+// oneshot) as a dedicated non-root user. Its backend/API traffic (check-in,
+// upload) is routed through mihomo's mixed-port via the `--proxy` flag, while
+// measurements go direct (OONI's `--proxy` is backend-only by design, and the
+// nft OUTPUT-chain `skuid` exemption keeps the probe's direct sockets from
+// being transparently TPROXY'd). ooniprobe is an optional 25.12 companion
+// package; LuCI degrades gracefully when the binary is absent.
+type OONI struct {
+	Enabled  bool
+	Upload   bool   // submit measurements to OONI's public archive
+	Schedule string // cron expression for the run
+	Proxy    string // --proxy value; mihomo mixed-port by default
+	Home     string // OONI_HOME (config.json + measurement DB live here)
+	User     string // dedicated non-root user the probe runs as
+
+	// UID is resolved from User at apply time (getpwnam) and used for the
+	// nft OUTPUT-chain `meta skuid` exemption. Not persisted to UCI; a zero
+	// value means the user could not be resolved (treat OONI as inactive for
+	// nft purposes so a stale enable flag can't break ruleset load).
+	UID int
+}
+
 func Default() Config {
 	return Config{
 		Settings:         Settings{ConfigVersion: 1, Enabled: true, Workdir: DefaultWorkdir, RuntimeDir: DefaultRuntimeDir, DNSMasqIncludeDir: "", MihomoBin: "/usr/bin/mihomo", MihomoConfig: DefaultMihomoConfig, MihomoAllowLAN: false, ExternalController: "127.0.0.1:9090", Secret: "auto-generated-secret", DNSBackend: "dnsmasq", FirewallBackend: "nftables", FwMark: "0x1", FwMarkMask: "0xff", RouteTable: "100", IPRulePriority: "100", IPv6: true, DNSListen: "127.0.0.1:7874", AutoReload: true, SafeApply: true, RollbackOnFail: true, BackupRetention: 3, ApplyBackupMaxBytes: 0, MihomoChannel: "alpha", MihomoReleaseAPI: "https://api.github.com/repos/MetaCubeX/mihomo/releases/tags/Prerelease-Alpha", MihomoStableReleaseAPI: "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest", MihomoMixinEnabled: false, MihomoAutoUpdateEnabled: false, MihomoAutoUpdateCron: "23 4 * * *", MihomoGeodataEnabled: false, UpdateViaProxy: false, UpdateProxyURL: "http://127.0.0.1:7890", UpdateConcurrency: 2, AutoUpdateEnabled: true, AutoUpdateCron: "17 */6 * * *", ReloadAfterUpdate: true, BackgroundUpdates: true, BootUpdateDelay: 0, UpdateNice: 19, UpdateIONiceClass: 3, UpdateIONiceLevel: 7, DashboardEnabled: true, DashboardListen: "0.0.0.0:9090", DashboardPath: "/etc/purewrt/dashboard", DashboardURL: "https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip", DashboardName: "metacubexd", DefaultListsBaseURL: "https://github.com/mglants/purewrt-lists/releases/latest/download/", ResourceProfile: "standard", CacheMode: "auto", CacheDir: "", ArtifactCacheMode: "auto", ArtifactCacheMaxBytes: 16777216, ArtifactCacheMaxEntries: 50000, RuleDedupMode: "auto", LogLevel: "warn", BootstrapDoHEnabled: true, BootstrapDoHResolvers: DefaultBootstrapDoHResolvers(), BootstrapDoHTimeoutMs: 8000, BootstrapProxyFallback: true, BootstrapTLSFingerprint: "browser", IPv6Mode: "auto", IPv6RejectWhenOff: false, RouterOutputProxy: true, CgroupV2Path: "services/mihomo", LANSourceZones: []string{"lan"}},
@@ -498,7 +522,28 @@ func Default() Config {
 		VPNs:             []VPN{},
 		Sections:         []Section{{Name: "media", Enabled: true, Action: "proxy", TPROXYPort: 7894, ProxyGroup: "Media", ProxyGroupType: "url-test", ProxyStrategy: "sticky-sessions", IPv4Enabled: true, IPv6Enabled: true, UDPMode: "proxy", Priority: 10}, {Name: "ai", Enabled: true, Action: "proxy", TPROXYPort: 7895, ProxyGroup: "AI", ProxyGroupType: "url-test", ProxyStrategy: "sticky-sessions", IPv4Enabled: true, IPv6Enabled: true, UDPMode: "proxy", Priority: 20}, {Name: "common", Enabled: true, Action: "proxy", TPROXYPort: 7893, ProxyGroup: "Common", ProxyGroupType: "url-test", ProxyStrategy: "sticky-sessions", IPv4Enabled: true, IPv6Enabled: true, UDPMode: "proxy", Priority: 60}},
 		Bypass:           Bypass{Name: "bypass"},
+		OONI:             OONI{Enabled: false, Upload: true, Schedule: "0 * * * *", Proxy: "socks5://127.0.0.1:7890", Home: "/tmp/ooni", User: "ooniprobe"},
 	}
+}
+
+// OONISettings returns the OONI config with empty fields filled from defaults,
+// so generator/cron callers never emit a blank proxy/home/schedule/user.
+func (c Config) OONISettings() OONI {
+	o := c.OONI
+	d := Default().OONI
+	if o.Schedule == "" {
+		o.Schedule = d.Schedule
+	}
+	if o.Proxy == "" {
+		o.Proxy = d.Proxy
+	}
+	if o.Home == "" {
+		o.Home = d.Home
+	}
+	if o.User == "" {
+		o.User = d.User
+	}
+	return o
 }
 
 func (c Config) EnabledZapretProfiles() []ZapretProfile {

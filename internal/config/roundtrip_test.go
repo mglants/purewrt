@@ -56,6 +56,7 @@ func TestConfigRoundTripPreservesKeyFields(t *testing.T) {
 	c.Sections[0].UserOverriddenProxyGroup = true
 	c.Sections[0].ZapretStrategies = []string{"zap_a"}
 	c.Bypass = Bypass{Name: "bypass", SourceCIDR4: []string{"172.16.10.11"}, SourceCIDR6: []string{"fd00::2/128"}}
+	c.OONI = OONI{Enabled: true, Upload: false, Schedule: "30 */4 * * *", Proxy: "socks5://127.0.0.1:7890", Home: "/srv/ooni", User: "ooni"}
 
 	path := filepath.Join(t.TempDir(), "purewrt")
 	if err := Save(path, c); err != nil {
@@ -101,6 +102,9 @@ func TestConfigRoundTripPreservesKeyFields(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got.Bypass, c.Bypass) {
 		t.Fatalf("bypass mismatch\ngot:  %#v\nwant: %#v", got.Bypass, c.Bypass)
+	}
+	if !reflect.DeepEqual(got.OONI, c.OONI) {
+		t.Fatalf("ooni mismatch\ngot:  %#v\nwant: %#v", got.OONI, c.OONI)
 	}
 }
 

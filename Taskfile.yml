@@ -97,17 +97,19 @@ tasks:
     desc: Sync PureWRT, mihomo-alpha, and zapret package definitions into SDK package tree
     deps: [sdk:feeds]
     cmds:
-      - mkdir -p '{{.PACKAGE_DIR}}/purewrt' '{{.PACKAGE_DIR}}/luci-app-purewrt' '{{.PACKAGE_DIR}}/mihomo-alpha' '{{.PACKAGE_DIR}}/zapret'
-      - rsync -a --delete --exclude '.git' --exclude '.build' --exclude '.tmp' --exclude 'result' --exclude 'dist' --exclude 'openwrt/purewrt' --exclude 'openwrt/luci-app-purewrt' --exclude 'openwrt/mihomo-alpha' --exclude 'openwrt/zapret' ./ '{{.PACKAGE_DIR}}/purewrt/'
+      - mkdir -p '{{.PACKAGE_DIR}}/purewrt' '{{.PACKAGE_DIR}}/luci-app-purewrt' '{{.PACKAGE_DIR}}/mihomo-alpha' '{{.PACKAGE_DIR}}/zapret' '{{.PACKAGE_DIR}}/ooniprobe'
+      - rsync -a --delete --exclude '.git' --exclude '.build' --exclude '.tmp' --exclude 'result' --exclude 'dist' --exclude 'openwrt/purewrt' --exclude 'openwrt/luci-app-purewrt' --exclude 'openwrt/mihomo-alpha' --exclude 'openwrt/zapret' --exclude 'openwrt/ooniprobe' ./ '{{.PACKAGE_DIR}}/purewrt/'
       - cp openwrt/purewrt/Makefile '{{.PACKAGE_DIR}}/purewrt/Makefile'
       - cp openwrt/luci-app-purewrt/Makefile '{{.PACKAGE_DIR}}/luci-app-purewrt/Makefile'
       - rsync -a --delete openwrt/luci/ '{{.PACKAGE_DIR}}/luci-app-purewrt/luci/'
       - rsync -a --delete openwrt/mihomo-alpha/ '{{.PACKAGE_DIR}}/mihomo-alpha/'
       - rsync -a --delete openwrt/zapret/ '{{.PACKAGE_DIR}}/zapret/'
+      - rsync -a --delete openwrt/ooniprobe/ '{{.PACKAGE_DIR}}/ooniprobe/'
       - test -f '{{.PACKAGE_DIR}}/purewrt/Makefile'
       - test -f '{{.PACKAGE_DIR}}/luci-app-purewrt/Makefile'
       - test -f '{{.PACKAGE_DIR}}/mihomo-alpha/Makefile'
       - test -f '{{.PACKAGE_DIR}}/zapret/Makefile'
+      - test -f '{{.PACKAGE_DIR}}/ooniprobe/Makefile'
       - echo 'Packages synced into {{.PACKAGE_DIR}}'
 
   sdk:config:
@@ -168,6 +170,13 @@ tasks:
     cmds:
       - make package/feeds/packages/lua5.4/compile {{.MAKE_FLAGS}}
       - make package/zapret/compile {{.MAKE_FLAGS}}
+
+  build:ooniprobe:
+    desc: Build only bundled ooniprobe package in SDK (25.12 only — needs Go 1.24)
+    deps: [sdk:config]
+    dir: '{{.SDK_DIR}}'
+    cmds:
+      - make package/ooniprobe/compile {{.MAKE_FLAGS}}
 
   build:purewrt:
     desc: Build only purewrt package in SDK
