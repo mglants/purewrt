@@ -9,9 +9,8 @@ PKG_SOURCE_SUBDIR:=$(PKG_NAME)-$(PKG_VERSION)
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/ooni/probe-cli.git
 PKG_SOURCE_VERSION:=v$(PKG_VERSION)
-# Recompute with: .github/scripts/pin-mirror-hash.sh ooniprobe
-# (left as `skip` until first build pins it; the git tag is the integrity anchor).
-PKG_MIRROR_HASH:=skip
+# Recompute on version bump with: .github/scripts/pin-mirror-hash.sh ooniprobe
+PKG_MIRROR_HASH:=17954ff52fd6bdbb3dd6ac6c574f8953da9fda2c0e7da4e2d32a759aad06f9d2
 
 PKG_LICENSE:=GPL-3.0-or-later
 PKG_LICENSE_FILES:=LICENSE.md
