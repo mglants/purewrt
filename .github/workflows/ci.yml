@@ -39,4 +39,4 @@ jobs:
       # mihomo-alpha (and zapret), so the per-push gate stays fast. build.yml /
       # release.yml still build the whole feed.
       packages: purewrt luci-app-purewrt
-      matrix: '{"branch":["openwrt-25.12"],"arch":["x86_64"]}'
+      matrix: '{"branch":["openwrt-24.10","openwrt-25.12"],"arch":["x86_64"]}'
