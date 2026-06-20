@@ -107,6 +107,14 @@ function renderRunPanel() {
   var out = E('pre', { 'style': 'white-space:pre-wrap;max-height:24em;overflow:auto' }, _('Idle.'));
   var pollTimer = null;
 
+  // On load, reflect any measurement already in flight (cron/on-demand/other)
+  // so the panel doesn't read "Idle" while a scheduled run is active.
+  callOONIStatus().then(function(s) {
+    if (s && (s.running === true || s.running === 1)) {
+      out.textContent = _('A measurement is currently running (scheduled or external). Watch progress in the Logs panel below.');
+    }
+  }).catch(function() {});
+
   function stop() { if (pollTimer) { window.clearTimeout(pollTimer); pollTimer = null; } }
 
   function poll() {

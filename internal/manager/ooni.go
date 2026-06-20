@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/purewrt/purewrt/internal/config"
 	"github.com/purewrt/purewrt/internal/generator"
@@ -65,5 +66,31 @@ func (m Manager) OONIStatus() map[string]any {
 		"home":      o.Home,
 		"user":      o.User,
 		"uid":       c.OONI.UID,
+		// running reflects ANY ooniprobe measurement in flight — cron,
+		// on-demand, or external — not just the rpcd bg-job, so the LuCI
+		// panel doesn't show "Idle" while a scheduled run is active.
+		"running": ooniRunning(),
 	}
+}
+
+// ooniRunning scans /proc for a live `ooniprobe ... run` process.
+func ooniRunning() bool {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join("/proc", e.Name(), "cmdline"))
+		if err != nil {
+			continue
+		}
+		cmd := strings.ReplaceAll(string(b), "\x00", " ")
+		if strings.Contains(cmd, "ooniprobe") && strings.Contains(cmd, " run") {
+			return true
+		}
+	}
+	return false
 }
