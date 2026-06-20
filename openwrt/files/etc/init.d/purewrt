@@ -378,7 +378,11 @@ install_cron() {
         [ -n "$ooni_schedule" ] || ooni_schedule='0 * * * *'
         ooni_home="$(uci -q get purewrt.ooni.home)"; [ -n "$ooni_home" ] || ooni_home='/tmp/ooni'
         ooni_proxy="$(uci -q get purewrt.ooni.proxy)"; [ -n "$ooni_proxy" ] || ooni_proxy='socks5://127.0.0.1:7890'
-        ooni_cmd="/usr/bin/purewrt ooni-prepare && su -s /bin/sh ooniprobe -c 'OONI_HOME=$ooni_home /usr/bin/ooniprobe --log-handler=syslog --proxy $ooni_proxy run unattended' 2>&1 | logger -t ooniprobe"
+        # Drop to the ooniprobe user with start-stop-daemon (-c): busybox here
+        # may lack `su`/`runuser`, and s-s-d`s chuid works everywhere + its
+        # exe-match dedup skips a new run if the previous one is still going.
+        # OONI_HOME is inherited from the env; --proxy points at the mixed-port.
+        ooni_cmd="/usr/bin/purewrt ooni-prepare && OONI_HOME=$ooni_home start-stop-daemon -S -c ooniprobe -x /usr/bin/ooniprobe -- --log-handler=syslog --proxy $ooni_proxy run unattended 2>&1 | logger -t ooniprobe"
         log_msg info "cron: installing ooni schedule='$ooni_schedule'"
         log_msg debug "cron: ooni command=$ooni_cmd"
         {

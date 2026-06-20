@@ -1,19 +1,30 @@
 #!/bin/sh
 # Create the unprivileged `ooniprobe` system user that PureWRT runs OONI
-# measurements as (via cron, `su` to this user). PureWRT's nft OUTPUT chain
-# exempts this user's uid (resolved dynamically from /etc/passwd) so the
-# probe's measurement sockets stay direct instead of being TPROXY'd into
-# mihomo. Idempotent: only adds when missing.
+# measurements as (cron + LuCI drop to it via start-stop-daemon -c). PureWRT's
+# nft OUTPUT chain exempts this user's uid (resolved dynamically from
+# /etc/passwd) so measurement sockets stay direct instead of being TPROXY'd
+# into mihomo. Idempotent.
+OONI_UID=8377
+
 if ! grep -q '^ooniprobe:' /etc/passwd 2>/dev/null; then
-    if command -v addgroup >/dev/null 2>&1; then
+    if command -v adduser >/dev/null 2>&1 && command -v addgroup >/dev/null 2>&1; then
         addgroup -S ooniprobe 2>/dev/null || true
         adduser -S -D -H -G ooniprobe -h /tmp/ooni -s /bin/false ooniprobe 2>/dev/null || true
     fi
+    # Fallback for stripped busybox builds without adduser/addgroup applets:
+    # append the user/group directly, the classic OpenWrt approach. Only use a
+    # fixed uid if it's free, else let the resolver report "absent" (uid 0 ->
+    # nft exemption skipped) rather than collide.
+    if ! grep -q '^ooniprobe:' /etc/passwd 2>/dev/null; then
+        if ! grep -q ":${OONI_UID}:" /etc/passwd 2>/dev/null && ! grep -q ":${OONI_UID}:" /etc/group 2>/dev/null; then
+            grep -q '^ooniprobe:' /etc/group 2>/dev/null || printf 'ooniprobe:x:%s:\n' "$OONI_UID" >> /etc/group
+            printf 'ooniprobe:x:%s:%s:ooniprobe:/tmp/ooni:/bin/false\n' "$OONI_UID" "$OONI_UID" >> /etc/passwd
+        fi
+    fi
 fi
 
-# Best-effort: grant cap_net_raw so raw-socket nettests (e.g. dnscheck,
-# traceroute) work unprivileged. Core Web Connectivity runs fine without it,
-# so a missing setcap is non-fatal.
+# Best-effort: grant cap_net_raw so raw-socket nettests (dnscheck, traceroute)
+# work unprivileged. Core Web Connectivity runs fine without it.
 if command -v setcap >/dev/null 2>&1 && [ -x /usr/bin/ooniprobe ]; then
     setcap cap_net_raw+ep /usr/bin/ooniprobe 2>/dev/null || true
 fi

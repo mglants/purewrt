@@ -414,7 +414,7 @@ call)
       ooni_proxy=$(uci -q get purewrt.ooni.proxy); [ -n "$ooni_proxy" ] || ooni_proxy=socks5://127.0.0.1:7890
       start_bg_job /tmp/purewrt-ooni-run.log /tmp/purewrt-ooni-run.status \
         "" /tmp/purewrt-ooni-run.lock \
-        sh -c "/usr/bin/purewrt ooni-prepare && su -s /bin/sh ooniprobe -c 'OONI_HOME=$ooni_home /usr/bin/ooniprobe --log-handler=cli --proxy $ooni_proxy run unattended'" ;;
+        sh -c "/usr/bin/purewrt ooni-prepare && OONI_HOME=$ooni_home start-stop-daemon -S -c ooniprobe -x /usr/bin/ooniprobe -- --log-handler=cli --proxy $ooni_proxy run unattended" ;;
     ooni_run_status)
       poll_bg_job /tmp/purewrt-ooni-run.status /tmp/purewrt-ooni-run.log \
         /tmp/purewrt-ooni-run.lock ;;
