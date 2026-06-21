@@ -227,18 +227,23 @@ func runCanary(ctx context.Context, p CanaryProbe) CanaryResult {
 	// experience. We deliberately do NOT compare against a DoH control: CDNs
 	// and GeoDNS legitimately hand out different addresses per resolver and per
 	// country, so a system-vs-DoH disagreement is noise, not "poisoning".
-	sysAddrs, _ := net.DefaultResolver.LookupIPAddr(cctx, host)
-	for _, a := range sysAddrs {
-		if a.IP.To4() != nil {
-			r.SysIPs = append(r.SysIPs, a.IP.String())
-		}
-	}
-	sort.Strings(r.SysIPs)
+	//
+	// Retry transient failures: under a burst of ~20 concurrent probes the
+	// dnsmasq→mihomo resolver can stall or drop a UDP answer (mihomo resolves
+	// uncached names upstream, serially-ish), so a single missed lookup must
+	// not masquerade as a DNS block. Each attempt gets its own short budget;
+	// a definitive NXDOMAIN stops retrying immediately.
+	sysIPs, dnsTimedOut := resolveSystemIPv4(ctx, host)
+	r.SysIPs = sysIPs
 	r.ResolvedA = r.SysIPs // legacy alias
 
 	if len(r.SysIPs) == 0 {
 		r.Verdict, r.Confidence = "dns", "low"
-		r.Reason = "domain doesn't resolve via system DNS (NXDOMAIN, downed authoritative, or DNS-level block)"
+		if dnsTimedOut {
+			r.Reason = "system resolver (dnsmasq → mihomo) timed out after retries — overloaded or upstream stalled, not necessarily a block"
+		} else {
+			r.Reason = "domain doesn't resolve via system DNS (NXDOMAIN or downed authoritative)"
+		}
 		return r
 	}
 
@@ -330,6 +335,50 @@ func runCanary(ctx context.Context, p CanaryProbe) CanaryResult {
 		r.Confidence = ConfidenceHigh
 	}
 	return r
+}
+
+// resolveSystemIPv4 resolves host to sorted IPv4 strings via the system
+// resolver (dnsmasq → mihomo), retrying transient failures with a fresh short
+// budget each attempt. Returns whether the final failure was a timeout
+// (resolver overloaded — retry-worthy, not a verdict) vs a definitive NXDOMAIN.
+func resolveSystemIPv4(ctx context.Context, host string) (ips []string, timedOut bool) {
+	const attempts = 3
+	for i := 0; i < attempts; i++ {
+		lctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		addrs, err := net.DefaultResolver.LookupIPAddr(lctx, host)
+		cancel()
+		for _, a := range addrs {
+			if a.IP.To4() != nil {
+				ips = append(ips, a.IP.String())
+			}
+		}
+		if len(ips) > 0 {
+			sort.Strings(ips)
+			return ips, false
+		}
+		var de *net.DNSError
+		if errors.As(err, &de) && de.IsNotFound {
+			return nil, false // definitive negative — don't waste retries
+		}
+		timedOut = isTimeoutErr(err)
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	return nil, timedOut
+}
+
+// isTimeoutErr reports whether err is a network timeout / deadline (a slow or
+// overloaded resolver) rather than a definitive negative answer.
+func isTimeoutErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return true
+	}
+	return errors.Is(err, context.DeadlineExceeded)
 }
 
 func confidenceFor(v Verdict) Confidence {
