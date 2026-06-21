@@ -14,22 +14,17 @@ name: release
 #     attached to a GitHub Release with notes (the GitHub Release step below is
 #     gated to tag events).
 #
-# The paths filter keeps docs-only / CI-only pushes from spinning the 20-job
-# signed matrix. A v* tag is normally cut on a commit that bumps
-# openwrt/purewrt/Makefile, so it matches the filter; workflow_dispatch is the
-# manual escape hatch either way.
+# A `changes` gate (below) decides whether to spin the 20-job signed matrix:
+# on a v* tag or manual dispatch it always builds; on a push to main it builds
+# ONLY when a bundled-dependency package changed (mihomo-alpha / zapret /
+# ooniprobe). A push that only touches purewrt source or docs does NOT
+# republish — purewrt ships on its v* tag, the deps roll on merge. (paths can't
+# express this here: a `push.paths` filter applies to tag pushes too, and would
+# wrongly skip a release tag that only bumps openwrt/purewrt/Makefile.)
 on:
   push:
     branches: [main]
     tags: ['v*']
-    paths:
-      - 'openwrt/**'
-      - 'cmd/**'
-      - 'internal/**'
-      - 'go.mod'
-      - 'go.sum'
-      - '.github/workflows/release.yml'
-      - '.github/workflows/_build.yml'
   workflow_dispatch:
 
 concurrency:
@@ -40,7 +35,37 @@ permissions:
   contents: read
 
 jobs:
+  # Decide whether to (re)publish the feed. Always on a tag or manual dispatch;
+  # on a main push only when a bundled-dependency package changed. The build
+  # itself is always the FULL feed (all packages reindexed) — this gate only
+  # controls whether it runs, not what it contains.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.decide.outputs.build }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: decide
+        run: |
+          set -e
+          if [ "${{ github.ref_type }}" = "tag" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "build=true" >>"$GITHUB_OUTPUT"; echo "reason: tag/dispatch → full feed"; exit 0
+          fi
+          base="${{ github.event.before }}"
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ] || ! git rev-parse --verify -q "$base^{commit}" >/dev/null; then
+            echo "build=true" >>"$GITHUB_OUTPUT"; echo "reason: no usable diff base → build"; exit 0
+          fi
+          if git diff --name-only "$base" "${{ github.sha }}" | grep -qE '^openwrt/(mihomo-alpha|zapret|ooniprobe)/'; then
+            echo "build=true" >>"$GITHUB_OUTPUT"; echo "reason: bundled-dep package changed"
+          else
+            echo "build=false" >>"$GITHUB_OUTPUT"; echo "reason: no bundled-dep change on main → skip"
+          fi
+
   build:
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
     uses: ./.github/workflows/_build.yml
     with:
       sign: true
