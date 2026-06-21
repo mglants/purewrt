@@ -1,11 +1,35 @@
 name: release
 
-# Tag-triggered: builds the full matrix via the OpenWrt SDK action with signing
-# (INDEX + keys), publishes a GitHub Pages feed, and attaches tarballs to a
-# Release.
+# Builds the full matrix via the OpenWrt SDK action with signing (INDEX + keys)
+# and publishes the GitHub Pages package feed. Two cadences share this flow:
+#
+#   - push to main (rolling feed): republishes the feed whenever a
+#     package-affecting change lands — notably the auto-merged deps/* bumps for
+#     mihomo-alpha / zapret / ooniprobe — so a dependency goes live without
+#     waiting for a purewrt release. Each package carries its own PKG_VERSION/
+#     PKG_RELEASE, so `apk update` only offers an upgrade for what actually
+#     changed (an unchanged purewrt is re-shipped at the same version → no-op
+#     for users).
+#   - v* tag (purewrt release): same feed publish PLUS per-arch tarballs
+#     attached to a GitHub Release with notes (the GitHub Release step below is
+#     gated to tag events).
+#
+# The paths filter keeps docs-only / CI-only pushes from spinning the 20-job
+# signed matrix. A v* tag is normally cut on a commit that bumps
+# openwrt/purewrt/Makefile, so it matches the filter; workflow_dispatch is the
+# manual escape hatch either way.
 on:
   push:
+    branches: [main]
     tags: ['v*']
+    paths:
+      - 'openwrt/**'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/release.yml'
+      - '.github/workflows/_build.yml'
   workflow_dispatch:
 
 concurrency:
