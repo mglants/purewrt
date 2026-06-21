@@ -40,4 +40,14 @@ func TestNFTSetContainsWithRunner(t *testing.T) {
 	if ok || out != "not found" {
 		t.Fatalf("error ok=%v out=%q", ok, out)
 	}
+
+	// Interval/CIDR set: `nft get element` succeeds (exit 0) for an IP covered
+	// by a range but prints the RANGE, not the queried IP. Membership must
+	// come from the exit code, so this counts as in-set even though the IP
+	// string is absent from the output.
+	r = &fakeRunner{out: "elements = { 5.9.0.0/16 }"}
+	ok, _ = nftSetContainsWithRunner(r, "proxy_common4", "5.9.0.7")
+	if !ok {
+		t.Fatalf("CIDR-covered IP must count as in-set (interval lookup); ok=%v", ok)
+	}
 }
