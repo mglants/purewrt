@@ -60,6 +60,7 @@ func Serialize(c Config) []byte {
 		writeRuleProvider(&b, p)
 	}
 	writeBypass(&b, c.Bypass)
+	writeOONI(&b, c.OONI)
 	return b.Bytes()
 }
 
@@ -530,5 +531,16 @@ func writeBypass(b *bytes.Buffer, bp Bypass) {
 	listv(b, "proxy_server_cidr6", bp.ProxyServerCIDR6)
 	listv(b, "source_cidr4", bp.SourceCIDR4)
 	listv(b, "source_cidr6", bp.SourceCIDR6)
+	fmt.Fprintln(b)
+}
+
+func writeOONI(b *bytes.Buffer, o OONI) {
+	fmt.Fprintln(b, "config ooni 'ooni'")
+	optb(b, "enabled", o.Enabled)
+	optb(b, "upload", o.Upload)
+	opt(b, "schedule", o.Schedule)
+	opt(b, "proxy", o.Proxy)
+	opt(b, "home", o.Home)
+	opt(b, "user", o.User)
 	fmt.Fprintln(b)
 }

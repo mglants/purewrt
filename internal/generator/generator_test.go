@@ -166,6 +166,31 @@ func TestNFTRouterOutputProxyDefaultOn(t *testing.T) {
 	}
 }
 
+func TestNFTOONIExemption(t *testing.T) {
+	// Enabled + resolved uid ⇒ skuid exemption in the OUTPUT chain.
+	c := config.Default()
+	c.OONI.Enabled = true
+	c.OONI.UID = 8377
+	out := string(NFTables(c))
+	if !strings.Contains(out, "meta skuid 8377 return") {
+		t.Fatalf("expected OONI skuid exemption, got:\n%s", out)
+	}
+	// Disabled ⇒ no exemption.
+	c2 := config.Default()
+	c2.OONI.Enabled = false
+	c2.OONI.UID = 8377
+	if strings.Contains(string(NFTables(c2)), "meta skuid") {
+		t.Fatal("OONI exemption must not appear when disabled")
+	}
+	// Enabled but unresolved uid (0) ⇒ no exemption (don't break nft load).
+	c3 := config.Default()
+	c3.OONI.Enabled = true
+	c3.OONI.UID = 0
+	if strings.Contains(string(NFTables(c3)), "meta skuid") {
+		t.Fatal("OONI exemption must not appear when uid unresolved")
+	}
+}
+
 func TestNFTRouterOutputProxyEmitsChain(t *testing.T) {
 	c := config.Default()
 	c.Settings.RouterOutputProxy = true

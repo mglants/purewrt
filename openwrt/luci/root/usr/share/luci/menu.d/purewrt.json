@@ -65,6 +65,12 @@
     "action": { "type": "view", "path": "purewrt/zapret" },
     "depends": { "acl": [ "luci-app-purewrt" ] }
   },
+  "admin/services/purewrt/ooni": {
+    "title": "OONI Probe",
+    "order": 90,
+    "action": { "type": "view", "path": "purewrt/ooni" },
+    "depends": { "acl": [ "luci-app-purewrt" ] }
+  },
   "admin/services/purewrt/diagnostics": {
     "title": "Diagnostics",
     "order": 100,

@@ -323,6 +323,14 @@ func applySection(c *Config, x struct {
 		c.Bypass.ProxyServerCIDR6 = list(x.opts, "proxy_server_cidr6", nil)
 		c.Bypass.SourceCIDR4 = list(x.opts, "source_cidr4", nil)
 		c.Bypass.SourceCIDR6 = list(x.opts, "source_cidr6", nil)
+	case "ooni":
+		d := Default().OONI
+		c.OONI.Enabled = b(x.opts, "enabled", d.Enabled)
+		c.OONI.Upload = b(x.opts, "upload", d.Upload)
+		c.OONI.Schedule = one(x.opts, "schedule", d.Schedule)
+		c.OONI.Proxy = one(x.opts, "proxy", d.Proxy)
+		c.OONI.Home = one(x.opts, "home", d.Home)
+		c.OONI.User = one(x.opts, "user", d.User)
 	}
 }
 

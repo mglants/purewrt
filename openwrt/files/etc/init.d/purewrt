@@ -6,6 +6,8 @@ CRON_START="# PureWRT auto update start"
 CRON_END="# PureWRT auto update end"
 MIHOMO_CRON_START="# PureWRT mihomo auto update start"
 MIHOMO_CRON_END="# PureWRT mihomo auto update end"
+OONI_CRON_START="# PureWRT ooni run start"
+OONI_CRON_END="# PureWRT ooni run end"
 log_level_num() {
     case "$(uci -q get purewrt.settings.log_level)" in
         error|err) echo 0 ;;
@@ -320,6 +322,7 @@ install_cron() {
     touch /etc/crontabs/root
     remove_cron_entry quiet
     remove_mihomo_cron_entry quiet
+    remove_ooni_cron_entry quiet
     nicev="$(uci -q get purewrt.settings.update_nice)"; [ -n "$nicev" ] || nicev=19
     ioc="$(uci -q get purewrt.settings.update_ionice_class)"; [ -n "$ioc" ] || ioc=3
     ion="$(uci -q get purewrt.settings.update_ionice_level)"; [ -n "$ion" ] || ion=7
@@ -365,6 +368,32 @@ install_cron() {
         log_msg info "cron: mihomo binary auto updates disabled"
     fi
 
+    # OONI Probe run entry — runs as the unprivileged `ooniprobe` user so the
+    # nft `skuid` exemption keeps measurements direct. `ooni-prepare` (root)
+    # writes the home + config.json first, then we drop to the ooni user with
+    # OONI_HOME set and --proxy pointing at mihomo's mixed-port (backend only).
+    ooni_enabled="$(uci -q get purewrt.ooni.enabled)"
+    if [ "$ooni_enabled" = "1" ] && [ -x /usr/bin/ooniprobe ] && grep -q '^ooniprobe:' /etc/passwd 2>/dev/null; then
+        ooni_schedule="$(uci -q get purewrt.ooni.schedule)"
+        [ -n "$ooni_schedule" ] || ooni_schedule='0 */6 * * *'
+        ooni_home="$(uci -q get purewrt.ooni.home)"; [ -n "$ooni_home" ] || ooni_home='/tmp/ooni'
+        ooni_proxy="$(uci -q get purewrt.ooni.proxy)"; [ -n "$ooni_proxy" ] || ooni_proxy='socks5://127.0.0.1:7890'
+        # Drop to the ooniprobe user with start-stop-daemon (-c): busybox here
+        # may lack `su`/`runuser`, and s-s-d`s chuid works everywhere + its
+        # exe-match dedup skips a new run if the previous one is still going.
+        # OONI_HOME is inherited from the env; --proxy points at the mixed-port.
+        ooni_cmd="/usr/bin/purewrt ooni-prepare && OONI_HOME=$ooni_home start-stop-daemon -S -c ooniprobe -x /usr/bin/ooniprobe -- --log-handler=syslog --proxy $ooni_proxy run unattended 2>&1 | logger -t ooniprobe"
+        log_msg info "cron: installing ooni schedule='$ooni_schedule'"
+        log_msg debug "cron: ooni command=$ooni_cmd"
+        {
+            echo "$OONI_CRON_START"
+            echo "$ooni_schedule $ooni_cmd"
+            echo "$OONI_CRON_END"
+        } >> /etc/crontabs/root
+    else
+        log_msg info "cron: ooni runs disabled or ooniprobe not installed"
+    fi
+
     reload_cron
 }
 reload_cron() {
@@ -397,10 +426,22 @@ remove_mihomo_cron_entry() {
     [ "$mode" = "quiet" ] || log_msg info "disable: PureWRT mihomo cron entry already absent"
     return 1
 }
+remove_ooni_cron_entry() {
+    mode="$1"
+    [ -f /etc/crontabs/root ] || return 1
+    if grep -qF "$OONI_CRON_START" /etc/crontabs/root 2>/dev/null; then
+        [ "$mode" = "quiet" ] || log_msg warn "disable: removing PureWRT ooni cron entry"
+        sed -i "\|$OONI_CRON_START|,\|$OONI_CRON_END|d" /etc/crontabs/root 2>/dev/null || true
+        return 0
+    fi
+    [ "$mode" = "quiet" ] || log_msg info "disable: PureWRT ooni cron entry already absent"
+    return 1
+}
 disable() {
     removed=0
     remove_cron_entry        && removed=1
     remove_mihomo_cron_entry && removed=1
+    remove_ooni_cron_entry   && removed=1
     [ "$removed" = "1" ] && reload_cron
     name="$(basename "$initscript")"
     name="${name##[SK][0-9][0-9]}"

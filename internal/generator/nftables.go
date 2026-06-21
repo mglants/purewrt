@@ -42,6 +42,21 @@ func cgroupExemptionRule(c config.Config) string {
 	return "    socket cgroupv2 level " + itoa(level) + " \"" + path + "\" return\n"
 }
 
+// ooniExemptionRule keeps the OONI probe's traffic out of the proxy. The probe
+// runs as a dedicated non-root user; matching its socket owner uid and
+// returning early means its direct measurement sockets are never transparently
+// TPROXY'd into mihomo — even when a measurement target sits in a proxy nftset.
+// (OONI's backend/API still rides mihomo via the probe's `--proxy` flag, which
+// is an explicit app-level proxy connection, not transparent capture.) Emitted
+// only when OONI is enabled AND the uid resolved, so a stale enable flag with
+// no user present can't break ruleset load.
+func ooniExemptionRule(c config.Config) string {
+	if !c.OONI.Enabled || c.OONI.UID <= 0 {
+		return ""
+	}
+	return "    meta skuid " + itoa(c.OONI.UID) + " return\n"
+}
+
 func NFTables(c config.Config) []byte {
 	return NFTablesWithNative(c, nil)
 }
@@ -284,6 +299,7 @@ func NFTablesWithNative(c config.Config, native map[string][]string) []byte {
 func writeOutputChain(b *strings.Builder, c config.Config, includeIPv6 bool) {
 	b.WriteString("\n  chain output_mangle {\n    type route hook output priority mangle; policy accept;\n")
 	b.WriteString(cgroupExemptionRule(c))
+	b.WriteString(ooniExemptionRule(c))
 	b.WriteString("    meta mark & 0x40000000 != 0 return\n")
 	b.WriteString("    fib daddr type { local, broadcast, anycast, multicast } return\n")
 	b.WriteString("    ct direction reply return\n")
