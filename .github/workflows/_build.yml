@@ -21,6 +21,22 @@ on:
         description: Space-separated feed packages to build.
         type: string
         default: mihomo-alpha zapret purewrt luci-app-purewrt
+      base-ref:
+        description: >-
+          Git ref to build the feed from (e.g. the last v* release tag). When
+          set, the checkout is pinned to it and only `overlay-paths` are taken
+          from the triggering commit — so purewrt/luci build at their released
+          version while rolling deps build from main. Empty = build the
+          checked-out ref as-is.
+        type: string
+        default: ''
+      overlay-paths:
+        description: >-
+          Space-separated paths overlaid from the triggering commit onto
+          `base-ref` (the rolling dependency package dirs). Ignored when
+          base-ref is empty.
+        type: string
+        default: ''
       matrix:
         description: JSON strategy matrix. Default = popular >=128 MB arches x branch set.
         type: string
@@ -61,6 +77,21 @@ jobs:
       matrix: ${{ fromJSON(inputs.matrix) }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Pin base ref + overlay rolling deps
+        # Build purewrt/luci from base-ref (the last release) but the dep
+        # packages from the triggering commit, so a dep-bump publish never
+        # ships unreleased purewrt. No-op when base-ref is empty.
+        if: inputs.base-ref != ''
+        run: |
+          set -e
+          echo "Pinning build tree to '${{ inputs.base-ref }}', overlaying '${{ inputs.overlay-paths }}' from ${{ github.sha }}"
+          git checkout --force "${{ inputs.base-ref }}"
+          git checkout "${{ github.sha }}" -- ${{ inputs.overlay-paths }}
+          echo "--- overlaid tree (dep dirs from main, rest from base-ref) ---"
+          git status --porcelain | head -40
       - name: Compute package list
         # ooniprobe requires Go 1.24 and only builds on the 25.12 SDK (24.10
         # ships Go 1.23). Append it to the 25.12 leg only; 24.10 keeps the base set.

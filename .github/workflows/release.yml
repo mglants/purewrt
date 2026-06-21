@@ -43,22 +43,32 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       build: ${{ steps.decide.outputs.build }}
+      # base_ref: the release tag to pin purewrt/luci to on a dep-bump publish;
+      # empty means "build the triggering ref as-is" (tag/dispatch/bootstrap).
+      base_ref: ${{ steps.decide.outputs.base_ref }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          fetch-tags: true
       - id: decide
         run: |
           set -e
+          echo "base_ref=" >>"$GITHUB_OUTPUT"   # default; overridden below for dep bumps
           if [ "${{ github.ref_type }}" = "tag" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "build=true" >>"$GITHUB_OUTPUT"; echo "reason: tag/dispatch → full feed"; exit 0
+            echo "build=true" >>"$GITHUB_OUTPUT"; echo "reason: tag/dispatch → full feed from this ref"; exit 0
           fi
           base="${{ github.event.before }}"
           if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ] || ! git rev-parse --verify -q "$base^{commit}" >/dev/null; then
             echo "build=true" >>"$GITHUB_OUTPUT"; echo "reason: no usable diff base → build"; exit 0
           fi
           if git diff --name-only "$base" "${{ github.sha }}" | grep -qE '^openwrt/(mihomo-alpha|zapret|ooniprobe)/'; then
-            echo "build=true" >>"$GITHUB_OUTPUT"; echo "reason: bundled-dep package changed"
+            echo "build=true" >>"$GITHUB_OUTPUT"
+            # Pin purewrt/luci to the highest v* release tag so a dep bump can't
+            # ship unreleased purewrt. No tag yet → empty (bootstrap: build main).
+            tag=$(git tag -l 'v*' --sort=-v:refname | head -1)
+            echo "base_ref=$tag" >>"$GITHUB_OUTPUT"
+            echo "reason: bundled-dep change → publish feed, purewrt pinned to '${tag:-<none, bootstrap from main>}'"
           else
             echo "build=false" >>"$GITHUB_OUTPUT"; echo "reason: no bundled-dep change on main → skip"
           fi
@@ -70,6 +80,8 @@ jobs:
     with:
       sign: true
       artifact-prefix: feed
+      base-ref: ${{ needs.changes.outputs.base_ref }}
+      overlay-paths: 'openwrt/mihomo-alpha openwrt/zapret openwrt/ooniprobe'
     secrets: inherit
 
   publish:
