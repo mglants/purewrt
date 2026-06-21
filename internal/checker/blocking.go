@@ -241,7 +241,7 @@ func runCanary(ctx context.Context, p CanaryProbe, doh *provider.DoHResolver) Ca
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	host, _, err := net.SplitHostPort(p.Target)
+	host, port, err := net.SplitHostPort(p.Target)
 	if err != nil {
 		r.Verdict, r.Reason, r.Confidence = "config", err.Error(), "low"
 		return r
@@ -287,9 +287,21 @@ func runCanary(ctx context.Context, p CanaryProbe, doh *provider.DoHResolver) Ca
 		r.Notes = append(r.Notes, fmt.Sprintf("DNS mismatch: sys=%v vs doh=%v (disjoint address sets — may indicate transparent DNS rewriting)", r.SysIPs, r.DoHIPs))
 	}
 
-	// TCP phase.
+	// TCP phase. Dial the IP the SYSTEM resolver (dnsmasq → mihomo) already
+	// returned, rather than handing the hostname to the dialer — which would
+	// trigger a SECOND system-DNS lookup. The page measures the LAN-client
+	// experience, so we deliberately dial what dnsmasq gave us (NOT the DoH
+	// control answer). Eliminating the redundant lookup also stops the
+	// dnsmasq→mihomo resolver from being hammered by a burst of concurrent
+	// probes, which surfaced as bogus "tcp_timeout: lookup … i/o timeout" for
+	// sites that resolve fine. Fall back to the hostname only if the system
+	// resolver returned nothing (shouldn't reach here — handled above).
+	dialTarget := p.Target
+	if len(r.SysIPs) > 0 {
+		dialTarget = net.JoinHostPort(r.SysIPs[0], port)
+	}
 	d := &net.Dialer{Timeout: timeout}
-	conn, dialErr := d.DialContext(cctx, "tcp", p.Target)
+	conn, dialErr := d.DialContext(cctx, "tcp", dialTarget)
 	if dialErr != nil {
 		r.Verdict, r.Reason = classifyDialErr(dialErr), dialErr.Error()
 		r.Confidence = confidenceFor(r.Verdict)
