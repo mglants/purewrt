@@ -522,7 +522,7 @@ func Default() Config {
 		VPNs:             []VPN{},
 		Sections:         []Section{{Name: "media", Enabled: true, Action: "proxy", TPROXYPort: 7894, ProxyGroup: "Media", ProxyGroupType: "url-test", ProxyStrategy: "sticky-sessions", IPv4Enabled: true, IPv6Enabled: true, UDPMode: "proxy", Priority: 10}, {Name: "ai", Enabled: true, Action: "proxy", TPROXYPort: 7895, ProxyGroup: "AI", ProxyGroupType: "url-test", ProxyStrategy: "sticky-sessions", IPv4Enabled: true, IPv6Enabled: true, UDPMode: "proxy", Priority: 20}, {Name: "common", Enabled: true, Action: "proxy", TPROXYPort: 7893, ProxyGroup: "Common", ProxyGroupType: "url-test", ProxyStrategy: "sticky-sessions", IPv4Enabled: true, IPv6Enabled: true, UDPMode: "proxy", Priority: 60}},
 		Bypass:           Bypass{Name: "bypass"},
-		OONI:             OONI{Enabled: false, Upload: true, Schedule: "0 * * * *", Proxy: "socks5://127.0.0.1:7890", Home: "/tmp/ooni", User: "ooniprobe"},
+		OONI:             OONI{Enabled: false, Upload: true, Schedule: "0 */6 * * *", Proxy: "socks5://127.0.0.1:7890", Home: "/tmp/ooni", User: "ooniprobe"},
 	}
 }
 

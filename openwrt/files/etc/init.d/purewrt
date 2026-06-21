@@ -375,7 +375,7 @@ install_cron() {
     ooni_enabled="$(uci -q get purewrt.ooni.enabled)"
     if [ "$ooni_enabled" = "1" ] && [ -x /usr/bin/ooniprobe ] && grep -q '^ooniprobe:' /etc/passwd 2>/dev/null; then
         ooni_schedule="$(uci -q get purewrt.ooni.schedule)"
-        [ -n "$ooni_schedule" ] || ooni_schedule='0 * * * *'
+        [ -n "$ooni_schedule" ] || ooni_schedule='0 */6 * * *'
         ooni_home="$(uci -q get purewrt.ooni.home)"; [ -n "$ooni_home" ] || ooni_home='/tmp/ooni'
         ooni_proxy="$(uci -q get purewrt.ooni.proxy)"; [ -n "$ooni_proxy" ] || ooni_proxy='socks5://127.0.0.1:7890'
         # Drop to the ooniprobe user with start-stop-daemon (-c): busybox here

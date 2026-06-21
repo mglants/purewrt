@@ -62,8 +62,8 @@ return view.extend({
     o.rmempty = false;
 
     o = s.option(form.Value, 'schedule', _('Schedule (cron)'),
-      _('Cron expression for the run. Default hourly.'));
-    o.placeholder = '0 * * * *';
+      _('Cron expression for the run. Default every 6 hours.'));
+    o.placeholder = '0 */6 * * *';
     o.depends('enabled', '1');
 
     o = s.option(form.Value, 'proxy', _('Backend proxy'),
