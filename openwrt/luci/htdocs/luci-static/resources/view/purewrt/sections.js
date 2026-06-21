@@ -328,7 +328,7 @@ return view.extend({
       var addBtn = E('button', { 'class': 'btn cbi-button cbi-button-action', 'style': 'margin-left:.5em;white-space:nowrap' }, [ '+ ', _('Manage VPNs') ]);
       addBtn.addEventListener('click', function(ev) {
         ev.preventDefault();
-        vpnModal.openVPNModal({ onSave: function() { location.reload(); } });
+        vpnModal.openVPNManager({ onClose: function() { location.reload(); } });
       });
       return E('div', { 'style': 'display:flex;align-items:center;flex-wrap:wrap;gap:.25em' }, [ widget, addBtn ]);
     };

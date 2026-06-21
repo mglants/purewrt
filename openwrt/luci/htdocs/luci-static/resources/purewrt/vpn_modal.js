@@ -281,8 +281,99 @@ function openVPNModal(opts) {
   });
 }
 
+function removeVPNSection(sid) {
+  uci.remove('purewrt', sid);
+  return uci.save().then(function() { return uci.apply(); });
+}
+
+// openVPNManager lists the defined VPNs with Edit + Delete, plus an Add
+// action — the entry point both the Sections and DNS pages open from their
+// "Manage VPNs" button. (The single-VPN form only surfaced Delete while
+// editing an existing VPN, which was unreachable from the add-only button —
+// so VPNs could be added but never removed.) The manager body is plain DOM
+// (no LuCI form widgets), so opening the edit form over it via the existing
+// snapshotParent mechanism is safe: Cancel restores this list unchanged,
+// Save/Delete re-render it fresh.
+function openVPNManager(opts) {
+  opts = opts || {};
+  function reopen() { openVPNManager(opts); }
+
+  var rows = (uci.sections('purewrt', 'vpn') || []).map(function(v) {
+    var sid = v['.name'];
+    var label = (v.name || sid) +
+      (v.interface ? ' (' + v.interface + ')' : '') +
+      (v.enabled === '0' ? ' — ' + _('disabled') : '');
+
+    var editBtn = E('button', { 'class': 'btn cbi-button cbi-button-edit' }, _('Edit'));
+    editBtn.addEventListener('click', function(ev) {
+      ev.preventDefault();
+      openVPNModal({ name: v.name || sid, snapshotParent: true, onSave: reopen, onDelete: reopen });
+    });
+
+    // Two-click delete (no blocking window.confirm): first click arms, second
+    // within 3 s commits.
+    var delBtn = E('button', { 'class': 'btn cbi-button-remove' }, _('Delete'));
+    var pending = false, resetTimer = null;
+    delBtn.addEventListener('click', function(ev) {
+      ev.preventDefault();
+      if (!pending) {
+        pending = true;
+        delBtn.textContent = _('Click again to confirm');
+        delBtn.classList.add('cbi-button-negative');
+        resetTimer = window.setTimeout(function() {
+          pending = false;
+          delBtn.textContent = _('Delete');
+          delBtn.classList.remove('cbi-button-negative');
+        }, 3000);
+        return;
+      }
+      if (resetTimer) window.clearTimeout(resetTimer);
+      delBtn.disabled = true;
+      removeVPNSection(sid).then(function() {
+        ui.addNotification(null, E('p', _('VPN %s deleted.').format(v.name || sid)), 'info');
+        reopen();
+      }).catch(function(e) {
+        delBtn.disabled = false; pending = false;
+        delBtn.textContent = _('Delete');
+        ui.addNotification(null, E('p', _('VPN delete failed: %s').format(e && e.message || e)), 'danger');
+      });
+    });
+
+    return E('tr', {}, [
+      E('td', { 'style': 'font-family:monospace' }, label),
+      E('td', { 'style': 'text-align:right;white-space:nowrap' }, [ editBtn, ' ', delBtn ])
+    ]);
+  });
+
+  var body = rows.length
+    ? E('table', { 'class': 'table cbi-section-table' }, rows)
+    : E('p', { 'class': 'cbi-value-description' }, _('No VPNs defined yet.'));
+
+  var addBtn = E('button', { 'class': 'btn cbi-button cbi-button-add' }, [ '+ ', _('Add VPN') ]);
+  addBtn.addEventListener('click', function(ev) {
+    ev.preventDefault();
+    openVPNModal({ snapshotParent: true, onSave: reopen });
+  });
+  var closeBtn = E('button', { 'class': 'btn' }, _('Close'));
+  closeBtn.addEventListener('click', function(ev) {
+    ev.preventDefault();
+    ui.hideModal();
+    if (typeof opts.onClose === 'function') opts.onClose();
+  });
+
+  ui.showModal(_('Manage VPNs'), [
+    E('p', {}, _('VPN interfaces available to route sections and DNS upstream through. Add, edit, or remove definitions here.')),
+    body,
+    E('div', { 'style': 'margin-top:1em;display:flex;gap:.5em;justify-content:space-between;align-items:center' }, [
+      addBtn,
+      closeBtn
+    ])
+  ]);
+}
+
 return baseclass.extend({
   openVPNModal: openVPNModal,
+  openVPNManager: openVPNManager,
   vpnDeviceCandidates: vpnDeviceCandidates,
   findVPNByName: findVPNByName
 });

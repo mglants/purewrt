@@ -4,6 +4,7 @@
 'require rpc';
 'require ui';
 'require uci';
+'require purewrt.vpn_modal as vpnModal';
 
 var callResolversProbe = rpc.declare({ object: 'purewrt', method: 'resolvers_probe' });
 
@@ -38,6 +39,14 @@ function resolversProbeModal(res) {
 }
 
 return view.extend({
+  // Preload the config so uci.sections('purewrt','vpn') is populated when the
+  // "DNS upstream via VPN" option enumerates its picker values below —
+  // otherwise the list is empty at render time and the field degrades to a
+  // plain free-text input (you can't select an already-defined VPN).
+  load: function() {
+    return uci.load('purewrt');
+  },
+
   render: function() {
     var m = new form.Map('purewrt', _('PureWRT DNS'));
     var s = m.section(form.NamedSection, 'dns', 'dns', _('DNS'));
@@ -56,7 +65,21 @@ return view.extend({
       var n = v.name || v['.name'];
       if (n) dnsVpns.value(n, n + (v.interface ? ' (' + v.interface + ')' : ''));
     });
-    dnsVpns.description = _('VPN interfaces added to the DNSProxy pool, so DNS-upstream queries egress via VPN — reach censored DoH/DoT resolvers with no subscription. Empty = DNS via proxy/direct.');
+    dnsVpns.description = _('VPN interfaces added to the DNSProxy pool, so DNS-upstream queries egress via VPN — reach censored DoH/DoT resolvers with no subscription. Empty = DNS via proxy/direct. Define VPNs with "Manage VPNs".');
+    // Inline "Manage VPNs" button (same widget as the Sections page): a
+    // DynamicList for add/remove of members here, plus the manager modal to
+    // define/edit/delete the VPN interfaces themselves. Reloads on close so
+    // the option list repopulates.
+    var origDnsVpnsRender = dnsVpns.renderWidget.bind(dnsVpns);
+    dnsVpns.renderWidget = function(section_id, option_id, cfgvalue) {
+      var widget = origDnsVpnsRender.call(this, section_id, option_id, cfgvalue);
+      var manageBtn = E('button', { 'class': 'btn cbi-button cbi-button-action', 'style': 'margin-left:.5em;white-space:nowrap' }, [ '+ ', _('Manage VPNs') ]);
+      manageBtn.addEventListener('click', function(ev) {
+        ev.preventDefault();
+        vpnModal.openVPNManager({ onClose: function() { location.reload(); } });
+      });
+      return E('div', { 'style': 'display:flex;align-items:center;flex-wrap:wrap;gap:.25em' }, [ widget, manageBtn ]);
+    };
     var udp = s.option(form.DynamicList, 'udp_upstream', _('UDP DNS fallback upstreams'));
     udp.description = _('Plain DNS servers used before DoH so a fresh router can resolve/bootstrap even when DoH endpoints are blocked.');
     s.option(form.DynamicList, 'doh_upstream', _('DoH upstreams'));
