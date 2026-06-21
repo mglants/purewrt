@@ -88,7 +88,7 @@ function verdictPillClass(v) {
   if (!v) return 'purewrt-pill-muted';
   if (v === 'ok') return 'purewrt-pill-ok';
   // Red: hard, high-confidence censorship signals.
-  if (v === 'dns_poisoned' || v === 'http_stub' || v === 'http_451' ||
+  if (v === 'http_stub' || v === 'http_451' ||
       v === 'dns' || v.indexOf('rst') >= 0 || v.indexOf('refused') >= 0)
     return 'purewrt-pill-danger';
   // Orange: ambiguous timeouts / generic failures.
@@ -117,8 +117,7 @@ function confidenceBadge(c) {
 function verdictHint(verdict) {
   if (!verdict || verdict === 'ok') return '';
   switch (verdict) {
-    case 'dns_poisoned':     return _('System DNS returns nothing while DoH does — your resolver is being poisoned. Enable bootstrap DoH or switch the LAN DNS to a DoH-capable resolver.');
-    case 'dns':              return _('Domain doesn\'t resolve anywhere (NXDOMAIN or downed authoritative) — not necessarily censorship.');
+    case 'dns':              return _('Domain doesn\'t resolve via system DNS (dnsmasq → mihomo) — NXDOMAIN, a downed authoritative, or a DNS-level block.');
     case 'tcp_rst':          return _('TCP reset mid-connection — IP-level filter. Route this host through a proxy section.');
     case 'tcp_refused':      return _('Connection refused — destination not listening. Confirm host:port is correct.');
     case 'tcp_timeout':      return _('TCP timeout — IP block or upstream congestion. Try traceroute, then route via proxy.');

@@ -12,8 +12,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/purewrt/purewrt/internal/provider"
 )
 
 // CanaryProbe drives one classification attempt against a single target.
@@ -32,10 +30,9 @@ type CanaryProbe struct {
 //
 // Verdict vocabulary:
 //   - "ok"            : full DNS→TCP→TLS→HTTP path completed cleanly
-//   - "dns_poisoned"  : system resolver fails BUT DoH control succeeds — high
-//                        confidence DNS poisoning (rkn-block-checker semantics)
-//   - "dns"           : neither system nor DoH resolves — domain might be down,
-//                        NXDOMAIN, or both resolvers blocked
+//   - "dns"           : the system resolver (dnsmasq → mihomo, i.e. the same
+//                        path LAN clients use) returns no address — NXDOMAIN,
+//                        a downed authoritative, or a DNS-level block
 //   - "tcp_rst"       : TCP handshake answered with RST
 //   - "tcp_refused"   : RST or "connection refused" before handshake
 //   - "tcp_timeout"   : TCP layer timed out
@@ -55,8 +52,8 @@ type CanaryProbe struct {
 //   - "config"        : probe input was malformed (bad host:port)
 //
 // Confidence semantics (added 2026-05 to align with rkn-block-checker):
-//   - "high"   : two independent signals agree (e.g. DNS poison confirmed by
-//                DoH, explicit HTTP 451, stub marker in body)
+//   - "high"   : a clean path or an unambiguous censorship fingerprint
+//                (explicit HTTP 451, ISP stub-page marker in the body)
 //   - "medium" : pattern matches a censorship technique but one signal alone
 //                can't rule out server-side flakiness (TLS reset, TCP RST)
 //   - "low"    : ambiguous (timeouts, generic errors)
@@ -70,7 +67,6 @@ type Verdict string
 const (
 	VerdictOK             Verdict = "ok"
 	VerdictDNS            Verdict = "dns"
-	VerdictDNSPoisoned    Verdict = "dns_poisoned"
 	VerdictTCPRST         Verdict = "tcp_rst"
 	VerdictTCPRefused     Verdict = "tcp_refused"
 	VerdictTCPTimeout     Verdict = "tcp_timeout"
@@ -105,19 +101,9 @@ type CanaryResult struct {
 	Latency     time.Duration `json:"latency_ms"`
 	ResolvedA   []string      `json:"resolved_a,omitempty"` // legacy: == SysIPs (kept for old JS callers)
 	SysIPs      []string      `json:"sys_ips,omitempty"`
-	DoHIPs      []string      `json:"doh_ips,omitempty"`
-	DNSMismatch bool          `json:"dns_mismatch,omitempty"`
 	StatusCode  int           `json:"status_code,omitempty"`
 	StubMarker  string        `json:"stub_marker,omitempty"`
 }
-
-// ControlDoHEndpoint is the fixed DoH resolver used as the comparison side of
-// the system-vs-control DNS check. Cloudflare's pinned IPs are unlikely to be
-// MITM'd on most networks even when the canary domain itself is poisoned. A
-// sufficiently capable censor could intercept here too — for stronger
-// guarantees configure private DoH endpoints in BootstrapDoHResolvers and
-// pass them via NewBlockingHeuristicsWithDoH.
-const ControlDoHEndpoint = "https://cloudflare-dns.com/dns-query"
 
 // StubMarkers are substrings that appear on the polite "you're blocked"
 // pages ISPs sometimes serve back as HTTP 200. Matched against the first
@@ -189,26 +175,15 @@ func DefaultWhitelistCanaries() []CanaryProbe {
 }
 
 // BlockingHeuristics runs every probe and returns one result each. The DoH
-// control resolver is built fresh per call from ControlDoHEndpoint; for
-// custom resolvers / batch use, call BlockingHeuristicsWithDoH directly.
-func BlockingHeuristics(ctx context.Context, probes []CanaryProbe) []CanaryResult {
-	if len(probes) == 0 {
-		probes = DefaultBlockingCanaries()
-	}
-	doh := provider.NewDoHResolver([]string{ControlDoHEndpoint}, 4*time.Second)
-	return BlockingHeuristicsWithDoH(ctx, probes, doh)
-}
-
-// BlockingHeuristicsWithDoH lets the caller inject a pre-built DoH resolver,
-// so the BlockingReport path can share one resolver across whitelist +
-// blacklist runs instead of re-initializing the TLS/HTTP plumbing per call.
-//
 // Probes run concurrently with a small fan-out cap so a default 20-target
 // report finishes in ~5-10 s instead of the ~100 s a strictly-sequential
 // loop would take. The LuCI XHR call has a ~30 s ubus timeout — sequential
 // wouldn't fit. Order of the output slice matches the input slice so
 // callers can keep their indexed labels intact.
-func BlockingHeuristicsWithDoH(ctx context.Context, probes []CanaryProbe, doh *provider.DoHResolver) []CanaryResult {
+func BlockingHeuristics(ctx context.Context, probes []CanaryProbe) []CanaryResult {
+	if len(probes) == 0 {
+		probes = DefaultBlockingCanaries()
+	}
 	if len(probes) == 0 {
 		return nil
 	}
@@ -222,14 +197,14 @@ func BlockingHeuristicsWithDoH(ctx context.Context, probes []CanaryProbe, doh *p
 		go func(i int, p CanaryProbe) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			out[i] = runCanary(ctx, p, doh)
+			out[i] = runCanary(ctx, p)
 		}(i, probes[i])
 	}
 	wg.Wait()
 	return out
 }
 
-func runCanary(ctx context.Context, p CanaryProbe, doh *provider.DoHResolver) CanaryResult {
+func runCanary(ctx context.Context, p CanaryProbe) CanaryResult {
 	r := CanaryResult{Target: p.Target}
 	t0 := time.Now()
 	defer func() { r.Latency = time.Since(t0) }()
@@ -247,10 +222,11 @@ func runCanary(ctx context.Context, p CanaryProbe, doh *provider.DoHResolver) Ca
 		return r
 	}
 
-	// DNS phase. System resolver answers first, then DoH as control. If the
-	// system says nothing but DoH does, that's high-confidence poisoning.
-	// If sets disjoint but both non-empty, we flag mismatch but keep probing
-	// (transparent rewriting still lets the request through some pipelines).
+	// DNS phase. Resolve via the system resolver only — dnsmasq → mihomo, the
+	// exact path LAN clients use — so the verdict reflects the real client
+	// experience. We deliberately do NOT compare against a DoH control: CDNs
+	// and GeoDNS legitimately hand out different addresses per resolver and per
+	// country, so a system-vs-DoH disagreement is noise, not "poisoning".
 	sysAddrs, _ := net.DefaultResolver.LookupIPAddr(cctx, host)
 	for _, a := range sysAddrs {
 		if a.IP.To4() != nil {
@@ -260,48 +236,19 @@ func runCanary(ctx context.Context, p CanaryProbe, doh *provider.DoHResolver) Ca
 	sort.Strings(r.SysIPs)
 	r.ResolvedA = r.SysIPs // legacy alias
 
-	if doh != nil {
-		ips, _ := doh.LookupHost(cctx, host)
-		for _, ip := range ips {
-			if ip.To4() != nil {
-				r.DoHIPs = append(r.DoHIPs, ip.String())
-			}
-		}
-		sort.Strings(r.DoHIPs)
-	}
-
-	switch {
-	case len(r.SysIPs) == 0 && len(r.DoHIPs) > 0:
-		r.Verdict, r.Confidence = "dns_poisoned", "high"
-		r.Reason = "system resolver failed, DoH succeeded"
-		r.Notes = append(r.Notes, "system DNS doesn't resolve, DoH does — consistent with DNS poisoning")
-		return r
-	case len(r.SysIPs) == 0 && len(r.DoHIPs) == 0:
+	if len(r.SysIPs) == 0 {
 		r.Verdict, r.Confidence = "dns", "low"
-		r.Reason = "domain doesn't resolve via system DNS or DoH (NXDOMAIN, downed authoritative, or DNS-level block)"
+		r.Reason = "domain doesn't resolve via system DNS (NXDOMAIN, downed authoritative, or DNS-level block)"
 		return r
 	}
 
-	if len(r.SysIPs) > 0 && len(r.DoHIPs) > 0 && disjoint(r.SysIPs, r.DoHIPs) {
-		r.DNSMismatch = true
-		r.Notes = append(r.Notes, fmt.Sprintf("DNS mismatch: sys=%v vs doh=%v (disjoint address sets — may indicate transparent DNS rewriting)", r.SysIPs, r.DoHIPs))
-	}
-
-	// TCP phase. Dial the IP the SYSTEM resolver (dnsmasq → mihomo) already
-	// returned, rather than handing the hostname to the dialer — which would
-	// trigger a SECOND system-DNS lookup. The page measures the LAN-client
-	// experience, so we deliberately dial what dnsmasq gave us (NOT the DoH
-	// control answer). Eliminating the redundant lookup also stops the
-	// dnsmasq→mihomo resolver from being hammered by a burst of concurrent
-	// probes, which surfaced as bogus "tcp_timeout: lookup … i/o timeout" for
-	// sites that resolve fine. Fall back to the hostname only if the system
-	// resolver returned nothing (shouldn't reach here — handled above).
-	dialTarget := p.Target
-	if len(r.SysIPs) > 0 {
-		dialTarget = net.JoinHostPort(r.SysIPs[0], port)
-	}
+	// TCP phase. Dial the IP the system resolver already returned, rather than
+	// handing the hostname to the dialer — which would trigger a SECOND
+	// system-DNS lookup. That redundant lookup doubled DNS load and, under a
+	// burst of concurrent probes, timed out against dnsmasq → mihomo, surfacing
+	// as bogus "tcp_timeout: lookup … i/o timeout" for sites that resolve fine.
 	d := &net.Dialer{Timeout: timeout}
-	conn, dialErr := d.DialContext(cctx, "tcp", dialTarget)
+	conn, dialErr := d.DialContext(cctx, "tcp", net.JoinHostPort(r.SysIPs[0], port))
 	if dialErr != nil {
 		r.Verdict, r.Reason = classifyDialErr(dialErr), dialErr.Error()
 		r.Confidence = confidenceFor(r.Verdict)
@@ -314,7 +261,7 @@ func runCanary(ctx context.Context, p CanaryProbe, doh *provider.DoHResolver) Ca
 
 	if !p.UseTLS {
 		r.Verdict = "ok"
-		r.Confidence = okConfidence(r.DNSMismatch)
+		r.Confidence = ConfidenceHigh
 		return r
 	}
 
@@ -380,33 +327,16 @@ func runCanary(ctx context.Context, p CanaryProbe, doh *provider.DoHResolver) Ca
 		r.Confidence = "low"
 	default:
 		r.Verdict = "ok"
-		r.Confidence = okConfidence(r.DNSMismatch)
+		r.Confidence = ConfidenceHigh
 	}
 	return r
-}
-
-// disjoint returns true if a and b share no element. Both are assumed sorted
-// and deduped (caller's responsibility). Linear in len(a)+len(b).
-func disjoint(a, b []string) bool {
-	i, j := 0, 0
-	for i < len(a) && j < len(b) {
-		switch {
-		case a[i] == b[j]:
-			return false
-		case a[i] < b[j]:
-			i++
-		default:
-			j++
-		}
-	}
-	return true
 }
 
 func confidenceFor(v Verdict) Confidence {
 	switch v {
 	case VerdictOK, "":
 		return ConfidenceHigh
-	case VerdictDNSPoisoned, VerdictHTTPStub, VerdictHTTP451:
+	case VerdictHTTPStub, VerdictHTTP451:
 		return ConfidenceHigh
 	case VerdictTCPRST, VerdictTCPRefused, VerdictTLSRST, VerdictTLSRemoteError:
 		return ConfidenceMedium
@@ -419,13 +349,6 @@ func confidenceFor(v Verdict) Confidence {
 		return ConfidenceLow
 	}
 	return ConfidenceLow
-}
-
-func okConfidence(mismatch bool) Confidence {
-	if mismatch {
-		return ConfidenceMedium
-	}
-	return ConfidenceHigh
 }
 
 func tcpNote(v Verdict) string {
@@ -511,10 +434,9 @@ func BlockingReportRun(ctx context.Context, whitelist, blacklist []CanaryProbe) 
 	if len(blacklist) == 0 {
 		blacklist = DefaultBlacklistCanaries()
 	}
-	doh := provider.NewDoHResolver([]string{ControlDoHEndpoint}, 4*time.Second)
 	rep := BlockingReport{
-		Whitelist: BlockingHeuristicsWithDoH(ctx, whitelist, doh),
-		Blacklist: BlockingHeuristicsWithDoH(ctx, blacklist, doh),
+		Whitelist: BlockingHeuristics(ctx, whitelist),
+		Blacklist: BlockingHeuristics(ctx, blacklist),
 	}
 	rep.Verdict, rep.Reason = computeOverallVerdict(rep.Whitelist, rep.Blacklist)
 	return rep
@@ -564,10 +486,10 @@ func computeOverallVerdict(whitelist, blacklist []CanaryResult) (verdict, reason
 	}
 	bBlocked := bTotal - bOK
 	// HIGH if at least half of the blocks carry HIGH-confidence signals
-	// (DNS poison, HTTP 451, stub markers) — those are the unambiguous
-	// censorship fingerprints.
+	// (HTTP 451, stub markers) — those are the unambiguous censorship
+	// fingerprints.
 	if high*2 >= bBlocked {
-		return "blocked_zone_high", fmt.Sprintf("%d of %d blacklist targets blocked — %d high-confidence (DNS poison/451/stub), %d medium (DPI/RST)", bBlocked, bTotal, high, medium)
+		return "blocked_zone_high", fmt.Sprintf("%d of %d blacklist targets blocked — %d high-confidence (451/stub), %d medium (DPI/RST)", bBlocked, bTotal, high, medium)
 	}
 	return "blocked_zone_medium", fmt.Sprintf("%d of %d blacklist targets blocked — mostly medium-confidence signals (DPI/RST). Server-side flakiness can't be fully ruled out", bBlocked, bTotal)
 }
@@ -626,7 +548,7 @@ func blockingSummary(rs []CanaryResult) string {
 	switch {
 	case counts[VerdictOK] == n:
 		return "no blocking signal — all canaries reached origin cleanly"
-	case (counts[VerdictDNSPoisoned]+counts[VerdictDNS])*2 >= n:
+	case counts[VerdictDNS]*2 >= n:
 		return "ISP DNS hijack or upstream filtering"
 	case (counts[VerdictTLSRST]+counts[VerdictTLSRemoteError])*2 >= n:
 		return "SNI-based DPI"
