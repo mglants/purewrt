@@ -129,3 +129,58 @@ jobs:
             - PKG_MIRROR_HASH recomputed via SDK (or `skip` if that step failed — see the Makefile).
 
             Merge once the package build CI is green.
+
+  ooniprobe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Resolve latest probe-cli release tag
+        id: up
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(gh api repos/ooni/probe-cli/releases/latest --jq .tag_name 2>/dev/null || true)
+          if [ -z "$tag" ] || [ "$tag" = "null" ]; then
+            tag=$(gh api repos/ooni/probe-cli/tags --jq '.[0].name')
+          fi
+          [ -n "$tag" ] || { echo "could not resolve upstream tag"; exit 1; }
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+          echo "ver=${tag#v}" >>"$GITHUB_OUTPUT"
+      - name: Bump Makefile
+        id: bump
+        run: |
+          # ooniprobe pins PKG_SOURCE_VERSION:=v$(PKG_VERSION), so only
+          # PKG_VERSION moves (the tag follows it).
+          mk=openwrt/ooniprobe/Makefile
+          cur=$(sed -nE 's/^PKG_VERSION:=//p' "$mk")
+          if [ "$cur" = "${{ steps.up.outputs.ver }}" ]; then
+            echo "changed=false" >>"$GITHUB_OUTPUT"; echo "already up to date ($cur)"; exit 0
+          fi
+          sed -i -E \
+            -e "s|^PKG_VERSION:=.*|PKG_VERSION:=${{ steps.up.outputs.ver }}|" \
+            -e "s|^PKG_MIRROR_HASH:=.*|PKG_MIRROR_HASH:=skip|" \
+            "$mk"
+          echo "changed=true" >>"$GITHUB_OUTPUT"
+          echo "old=$cur" >>"$GITHUB_OUTPUT"
+      - name: Recompute PKG_MIRROR_HASH (best-effort)
+        if: steps.bump.outputs.changed == 'true'
+        continue-on-error: true
+        run: ./.github/scripts/pin-mirror-hash.sh ooniprobe
+      - name: Open PR
+        if: steps.bump.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v8
+        with:
+          branch: deps/ooniprobe
+          commit-message: "deps(ooniprobe): bump to ${{ steps.up.outputs.tag }}"
+          title: "deps(ooniprobe): bump to ${{ steps.up.outputs.tag }}"
+          labels: dependencies
+          body: |
+            Auto-bump ooniprobe (ooni/probe-cli) to upstream `${{ steps.up.outputs.tag }}`.
+
+            - PKG_VERSION: `${{ steps.bump.outputs.old }}` → `${{ steps.up.outputs.ver }}` (PKG_SOURCE_VERSION follows as `v$(PKG_VERSION)`)
+            - PKG_MIRROR_HASH recomputed via SDK (or `skip` if that step failed — see the Makefile).
+
+            Note: ooniprobe needs Go 1.24, so it only builds on the **openwrt-25.12** matrix leg.
+            If a future probe-cli raises its Go floor past what 25.12 ships, the build CI for this PR will fail — that's the signal to hold the bump.
+
+            Merge once the package build CI is green.
