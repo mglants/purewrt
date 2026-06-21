@@ -93,11 +93,19 @@ jobs:
           echo "--- overlaid tree (dep dirs from main, rest from base-ref) ---"
           git status --porcelain | head -40
       - name: Compute package list
-        # ooniprobe requires Go 1.24 and only builds on the 25.12 SDK (24.10
-        # ships Go 1.23). Append it to the 25.12 leg only; 24.10 keeps the base set.
+        # ooniprobe is gated two ways:
+        #   - Go 1.24: builds only on the 25.12 SDK (24.10 ships Go 1.23).
+        #   - CGO on 32-bit MIPS: ooniprobe needs CGO (its syslog log-handler is
+        #     //go:build cgo), which pulls runtime/cgo, whose gcc_mipsx.S won't
+        #     assemble under the mips_24kc/mipsel_24kc toolchain ("invalid
+        #     operands `sw $18,...'"). A heavy measurement binary doesn't fit
+        #     those low-RAM 32-bit targets anyway. Skipping it also lets the
+        #     rest of the feed still build+publish on MIPS (a failed ooniprobe
+        #     would abort the whole arch job).
         run: |
           pkgs="${{ inputs.packages }}"
-          if [ "${{ matrix.branch }}" = "openwrt-25.12" ]; then
+          case "${{ matrix.arch }}" in mips*) is_mips=1 ;; *) is_mips=0 ;; esac
+          if [ "${{ matrix.branch }}" = "openwrt-25.12" ] && [ "$is_mips" = 0 ]; then
             pkgs="$pkgs ooniprobe"
           fi
           echo "PACKAGES=$pkgs" >> "$GITHUB_ENV"
