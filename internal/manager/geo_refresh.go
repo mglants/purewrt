@@ -117,7 +117,7 @@ func (m Manager) GeoRefresh() (GeoRefreshResult, error) {
 	// PUT /configs?force=true with the existing path is the canonical way
 	// to reload without a restart.
 	cli := mihomoapi.Client{Base: c.Settings.ExternalController, Secret: c.Settings.Secret}
-	if err := cli.Put("/configs?force=true", map[string]string{"path": c.Settings.MihomoConfig}, nil); err != nil {
+	if err := cli.ReloadConfig(c.Settings.MihomoConfig); err != nil {
 		res.ReloadErr = err.Error()
 	} else {
 		res.ReloadOK = true

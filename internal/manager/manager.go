@@ -20,6 +20,7 @@ import (
 	"github.com/purewrt/purewrt/internal/generator"
 	"github.com/purewrt/purewrt/internal/logging"
 	"github.com/purewrt/purewrt/internal/metrics"
+	"github.com/purewrt/purewrt/internal/mihomoapi"
 	"github.com/purewrt/purewrt/internal/provider"
 	"github.com/purewrt/purewrt/internal/rules"
 	"github.com/purewrt/purewrt/internal/system"
@@ -41,6 +42,12 @@ const (
 type Manager struct {
 	ConfigPath string
 	DryRun     bool
+
+	// mihomoReachable / mihomoReload are seams for tests; nil means use the
+	// real external-controller calls (defaultMihomoReachable / defaultMihomoReload).
+	// They drive the hot-reload-instead-of-restart path in reloadOrRestartMihomo.
+	mihomoReachable func(config.Config) bool
+	mihomoReload    func(config.Config) error
 }
 
 type commandRunner interface {
@@ -1844,12 +1851,11 @@ func (m Manager) applyServiceRestarts(c config.Config, groups generator.Generati
 		log.Debug("apply: dnsmasq restart skipped openwrt_bundle unchanged")
 	}
 	if groups.Mihomo {
-		if err := m.runServiceRestart(c, r, initMihomo, "restart"); err != nil {
+		if err := m.reloadOrRestartMihomo(c, r); err != nil {
 			return err
 		}
-		log.Info("apply: mihomo restart complete")
 	} else {
-		log.Debug("apply: mihomo restart skipped mihomo group unchanged")
+		log.Debug("apply: mihomo reload skipped mihomo group unchanged")
 	}
 	if groups.Mwan3 && c.Mwan3.Mode == "integrated" && c.Mwan3.IntegratedRules {
 		if err := m.runServiceRestart(c, r, initMwan3, "reload"); err != nil {
@@ -1911,6 +1917,55 @@ func isTimeoutErr(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "timed out after")
 }
 
+func defaultMihomoReachable(c config.Config) bool {
+	return mihomoapi.Client{Base: c.Settings.ExternalController, Secret: c.Settings.Secret}.Reachable()
+}
+
+func defaultMihomoReload(c config.Config) error {
+	return mihomoapi.Client{Base: c.Settings.ExternalController, Secret: c.Settings.Secret}.ReloadConfig(c.Settings.MihomoConfig)
+}
+
+// reloadOrRestartMihomo applies a changed mihomo config without dropping live
+// proxy connections when possible. A full `/etc/init.d/mihomo restart` resets
+// every proxied flow; mihomo's external-controller hot reload (PUT
+// /configs?force=true) swaps the rule/proxy/dns tree in place and keeps
+// established connections alive. We prefer the hot reload and fall back to a
+// cold restart only when it can't work:
+//   - controller unreachable  → mihomo is down: cold start.
+//   - controller moved / secret changed → the probe at the *configured*
+//     address+secret fails (old daemon answers the old address/secret), so we
+//     correctly restart to pick up the new control channel.
+//   - reload returns an error → restart.
+//
+// Apply never changes the mihomo *binary* (that's the separate install path),
+// so a config apply is always safe to hot-reload when the controller answers.
+func (m Manager) reloadOrRestartMihomo(c config.Config, r commandRunner) error {
+	log := newLog(c)
+	reachable := m.mihomoReachable
+	if reachable == nil {
+		reachable = defaultMihomoReachable
+	}
+	reload := m.mihomoReload
+	if reload == nil {
+		reload = defaultMihomoReload
+	}
+	if reachable(c) {
+		if err := reload(c); err == nil {
+			log.Info("apply: mihomo hot-reloaded (PUT /configs); live connections preserved")
+			return nil
+		} else {
+			log.Warn("apply: mihomo hot-reload failed (%v); falling back to restart", err)
+		}
+	} else {
+		log.Debug("apply: mihomo controller unreachable; cold restart")
+	}
+	if err := m.runServiceRestart(c, r, initMihomo, "restart"); err != nil {
+		return err
+	}
+	log.Info("apply: mihomo restart complete")
+	return nil
+}
+
 // runServiceRestart runs a daemon restart/reload with a generous timeout. A
 // timeout is tolerated (logged, treated as success) because the config is
 // already validated, promoted, and loaded into the kernel before we reach the
@@ -1966,7 +2021,11 @@ func (m Manager) restoreAndReload(c config.Config, backup system.BackupSet, r co
 	// nftset fragments. Use restart so the rollback genuinely restores
 	// dnsmasq state.
 	runService(initDnsmasq, "restart")
-	runService(initMihomo, "restart")
+	// Prefer hot-reload of the restored config (keeps connections) and fall
+	// back to a cold restart — same logic as the forward apply path.
+	if err := m.reloadOrRestartMihomo(c, r); err != nil {
+		errs = append(errs, err.Error())
+	}
 	if c.Mwan3.Mode == "integrated" && c.Mwan3.IntegratedRules {
 		runService(initMwan3, "reload")
 	}

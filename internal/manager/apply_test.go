@@ -162,23 +162,72 @@ func TestApplyUsesValidUCIImportSyntax(t *testing.T) {
 	}
 }
 
-func TestApplyMihomoOnlyChangeRestartsOnlyMihomo(t *testing.T) {
+// Mihomo-only change with a reachable controller: hot-reload (PUT /configs),
+// never a process restart — established proxy connections must survive.
+func TestApplyMihomoOnlyChangeHotReloadsNotRestart(t *testing.T) {
 	dir := t.TempDir()
 	c, staged, backup := applyTestConfig(t, dir)
 	live := applyTestLivePaths(dir)
 	r := &fakeRunner{}
+	reloaded := false
+	m := Manager{
+		mihomoReachable: func(config.Config) bool { return true },
+		mihomoReload:    func(config.Config) error { reloaded = true; return nil },
+	}
 	gen := generator.GenerationResult{DirtyGroups: generator.GenerationGroups{Mihomo: true}, Reason: "test mihomo only"}
-	if err := (Manager{}).applyWithRunnerPaths(c, backup, staged, live, gen, r); err != nil {
+	if err := m.applyWithRunnerPaths(c, backup, staged, live, gen, r); err != nil {
 		t.Fatalf("apply failed: %v", err)
 	}
 	joined := strings.Join(r.calls, "\n")
-	if !strings.Contains(joined, "mihomo -t") || !strings.Contains(joined, "/etc/init.d/mihomo restart") {
-		t.Fatalf("expected mihomo validation and restart, got calls:\n%s", joined)
+	if !strings.Contains(joined, "mihomo -t") {
+		t.Fatalf("expected mihomo validation, got calls:\n%s", joined)
 	}
-	for _, unexpected := range []string{"nft -c", "nft -f", "/etc/init.d/dnsmasq restart", "/etc/init.d/mwan3 reload", "uci -m -f"} {
+	if !reloaded {
+		t.Fatalf("expected mihomo hot-reload to be invoked, got calls:\n%s", joined)
+	}
+	for _, unexpected := range []string{"/etc/init.d/mihomo restart", "nft -c", "nft -f", "/etc/init.d/dnsmasq restart", "/etc/init.d/mwan3 reload", "uci -m -f"} {
 		if strings.Contains(joined, unexpected) {
-			t.Fatalf("did not expect %q for mihomo-only apply, got calls:\n%s", unexpected, joined)
+			t.Fatalf("did not expect %q for mihomo hot-reload apply, got calls:\n%s", unexpected, joined)
 		}
+	}
+}
+
+// Controller unreachable (mihomo down, or external-controller/secret changed):
+// fall back to a cold restart.
+func TestApplyMihomoFallsBackToRestartWhenControllerDown(t *testing.T) {
+	dir := t.TempDir()
+	c, staged, backup := applyTestConfig(t, dir)
+	live := applyTestLivePaths(dir)
+	r := &fakeRunner{}
+	m := Manager{
+		mihomoReachable: func(config.Config) bool { return false },
+		mihomoReload:    func(config.Config) error { t.Fatal("reload must not run when controller unreachable"); return nil },
+	}
+	gen := generator.GenerationResult{DirtyGroups: generator.GenerationGroups{Mihomo: true}, Reason: "test mihomo down"}
+	if err := m.applyWithRunnerPaths(c, backup, staged, live, gen, r); err != nil {
+		t.Fatalf("apply failed: %v", err)
+	}
+	if joined := strings.Join(r.calls, "\n"); !strings.Contains(joined, "/etc/init.d/mihomo restart") {
+		t.Fatalf("expected cold restart when controller unreachable, got calls:\n%s", joined)
+	}
+}
+
+// Reachable but the hot reload errors: fall back to a cold restart.
+func TestApplyMihomoFallsBackToRestartWhenReloadErrors(t *testing.T) {
+	dir := t.TempDir()
+	c, staged, backup := applyTestConfig(t, dir)
+	live := applyTestLivePaths(dir)
+	r := &fakeRunner{}
+	m := Manager{
+		mihomoReachable: func(config.Config) bool { return true },
+		mihomoReload:    func(config.Config) error { return errors.New("reload boom") },
+	}
+	gen := generator.GenerationResult{DirtyGroups: generator.GenerationGroups{Mihomo: true}, Reason: "test reload err"}
+	if err := m.applyWithRunnerPaths(c, backup, staged, live, gen, r); err != nil {
+		t.Fatalf("apply failed: %v", err)
+	}
+	if joined := strings.Join(r.calls, "\n"); !strings.Contains(joined, "/etc/init.d/mihomo restart") {
+		t.Fatalf("expected restart fallback on reload error, got calls:\n%s", joined)
 	}
 }
 

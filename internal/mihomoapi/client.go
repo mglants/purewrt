@@ -155,6 +155,27 @@ func (c Client) RuleProviderRefresh(name string) error {
 	return c.Put("/providers/rules/"+name, struct{}{}, nil)
 }
 
+// ReloadConfig asks mihomo to re-read its config file in place — no process
+// restart, so established proxy connections are NOT dropped (clash/mihomo
+// swaps the rule/proxy/dns tree while keeping in-flight flows on their
+// existing outbound). PUT /configs?force=true with the path is the canonical
+// hot-reload; force=true reloads even when the path is unchanged.
+func (c Client) ReloadConfig(path string) error {
+	return c.Put("/configs?force=true", map[string]string{"path": path}, nil)
+}
+
+// Reachable reports whether the external controller answers (and accepts our
+// secret) right now. Used to decide between a hot reload and a cold restart:
+// if the controller moved (external-controller change), is gone (mihomo down),
+// or rejects our secret (secret change), this returns false and the caller
+// falls back to a full restart. A GET /version is the cheapest authenticated
+// probe.
+func (c Client) Reachable() bool {
+	return c.Get("/version", &struct {
+		Version string `json:"version"`
+	}{}) == nil
+}
+
 // DeleteConnection terminates one active proxy connection by id. Used by
 // the drain logic when switching nodes — keeps in-flight requests from
 // being silently RST'd by the kernel when the group flips.
