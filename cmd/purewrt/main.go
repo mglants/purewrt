@@ -743,6 +743,20 @@ func main() {
 		if err != nil {
 			os.Exit(1)
 		}
+	case "flush-dns-sets":
+		// Diagnostics: empty the dynamic dns_* nftables sets. They repopulate
+		// from dnsmasq on the next client query. Used by the LuCI diagnostics button.
+		_, asJSON := stripJSONFlag(os.Args[2:])
+		flushed, err := m.FlushDynamicDNSSets()
+		if asJSON {
+			printJSON(map[string]any{"ok": err == nil, "flushed": flushed, "count": len(flushed), "error": errString(err)})
+			return
+		}
+		if err != nil {
+			fmt.Println("flush-dns-sets failed:", err)
+			os.Exit(1)
+		}
+		fmt.Printf("flushed %d dynamic dns sets\n", len(flushed))
 	case "geo-list":
 		// Enumerate categories/countries from the local geosite.dat /
 		// geoip.dat that geo-refresh populates. Used by the LuCI Rule

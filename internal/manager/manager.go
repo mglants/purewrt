@@ -1473,7 +1473,7 @@ func (m Manager) applyWithRunnerPaths(c config.Config, backup system.BackupSet, 
 	if err := m.applyPromote(staged, live, gen.DirtyGroups); err != nil {
 		return m.applyRollback(c, backup, r, err)
 	}
-	if err := m.applyNFT(live, gen.DirtyGroups, r); err != nil {
+	if err := m.applyNFT(c, live, gen.DirtyGroups, r); err != nil {
 		return m.applyRollback(c, backup, r, err)
 	}
 	if err := m.applyUCIDNSFirewall(c, live, gen.DirtyGroups, r); err != nil {
@@ -1662,7 +1662,7 @@ func (m Manager) runApplyCommand(r commandRunner, name string, args ...string) e
 	return nil
 }
 
-func (m Manager) applyNFT(live generator.GeneratedPaths, groups generator.GenerationGroups, r commandRunner) error {
+func (m Manager) applyNFT(c config.Config, live generator.GeneratedPaths, groups generator.GenerationGroups, r commandRunner) error {
 	log := logging.New(m.logLevel())
 	if !groups.OpenWrtBundle {
 		// Drift check: the fingerprint says nothing changed and we'd
@@ -1680,12 +1680,104 @@ func (m Manager) applyNFT(live generator.GeneratedPaths, groups generator.Genera
 		}
 		log.Warn("apply: live nft table missing despite cache-hit; forcing reload")
 	}
+	// The atomic table replace below wipes the dynamic dns_* sets (the IPs
+	// dnsmasq resolved from domains). dnsmasq only re-adds an IP on a *fresh*
+	// client query, so cached-client domains would silently fall direct until
+	// their DNS TTL expires. Snapshot the live members first and re-inject them
+	// after the reload. Best-effort: a snapshot/restore failure must never abort
+	// the apply (worst case is the pre-existing behaviour — empty sets).
+	snap := m.snapshotDynamicDNSSets(c, r)
 	log.Info("apply: loading nft main path=%s", live.NFTFile)
 	if err := m.runApplyCommand(r, "nft", "-f", live.NFTFile); err != nil {
 		return err
 	}
 	log.Info("apply: loading nft sets path=%s", live.NFTSetsFile)
-	return m.runApplyCommand(r, "nft", "-f", live.NFTSetsFile)
+	if err := m.runApplyCommand(r, "nft", "-f", live.NFTSetsFile); err != nil {
+		return err
+	}
+	if n := m.restoreDynamicDNSSets(snap, r); n > 0 {
+		log.Info("apply: restored %d dynamic dns-set members across reload", n)
+	}
+	return nil
+}
+
+// snapshotDynamicDNSSets reads the current members of each dynamic dns_* set for
+// the (new) config. Keyed by set name; a removed section's set is not in the
+// list so it is never read. Absent/empty sets (newly added section, first boot,
+// missing table) yield nothing. Best-effort — any read error is skipped.
+func (m Manager) snapshotDynamicDNSSets(c config.Config, r commandRunner) map[string][]string {
+	snap := map[string][]string{}
+	for _, set := range generator.DynamicDNSSetNames(c) {
+		out, err := r.Run("nft", "list", "set", "inet", "purewrt", set)
+		if err != nil {
+			continue
+		}
+		if ips := parseNFTSetElements(out); len(ips) > 0 {
+			snap[set] = ips
+		}
+	}
+	return snap
+}
+
+// restoreDynamicDNSSets re-adds snapshotted members into their original sets
+// (which the just-loaded NFTFile recreated, so they exist). Chunked to keep the
+// element argument well under ARG_MAX on large sets. Best-effort: a failed add
+// is logged and skipped, never aborting the apply. Returns the count attempted.
+func (m Manager) restoreDynamicDNSSets(snap map[string][]string, r commandRunner) int {
+	log := logging.New(m.logLevel())
+	const chunk = 500
+	total := 0
+	for set, ips := range snap {
+		for i := 0; i < len(ips); i += chunk {
+			batch := ips[i:min(i+chunk, len(ips))]
+			if _, err := r.Run("nft", "add", "element", "inet", "purewrt", set, "{ "+strings.Join(batch, ", ")+" }"); err != nil {
+				log.Warn("apply: restore dns-set %s batch failed (best-effort): %v", set, err)
+				continue
+			}
+			total += len(batch)
+		}
+	}
+	return total
+}
+
+// parseNFTSetElements extracts the plain addresses from `nft list set` output.
+// Dynamic dns_* sets are ipv4_addr/ipv6_addr (single addresses, no intervals);
+// elements look like `elements = { 1.2.3.4 expires 2h29m, 5.6.7.8 }` — take the
+// first field of each comma-separated entry and drop expires/timeout tokens.
+func parseNFTSetElements(out string) []string {
+	_, rest, found := strings.Cut(out, "elements = {")
+	if !found {
+		return nil
+	}
+	if before, _, ok := strings.Cut(rest, "}"); ok {
+		rest = before
+	}
+	var ips []string
+	for _, part := range strings.Split(rest, ",") {
+		if f := strings.Fields(part); len(f) > 0 {
+			ips = append(ips, f[0])
+		}
+	}
+	return ips
+}
+
+// FlushDynamicDNSSets empties every dynamic dns_* set (diagnostics action — the
+// sets repopulate from dnsmasq on the next client query). Tolerates a missing
+// set/table (returns the set names it cleared). Used by the `flush-dns-sets`
+// CLI subcommand / LuCI diagnostics button.
+func (m Manager) FlushDynamicDNSSets() ([]string, error) {
+	c, err := m.Load()
+	if err != nil {
+		return nil, err
+	}
+	r := system.Runner{DryRun: m.DryRun}
+	var flushed []string
+	for _, set := range generator.DynamicDNSSetNames(c) {
+		if _, err := r.Run("nft", "flush", "set", "inet", "purewrt", set); err == nil {
+			flushed = append(flushed, set)
+		}
+	}
+	return flushed, nil
 }
 
 // purewrtFirewallSectionNames extracts the named firewall sections PureWRT owns

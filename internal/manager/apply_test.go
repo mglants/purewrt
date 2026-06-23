@@ -17,6 +17,7 @@ type fakeRunner struct {
 	failContains    string
 	timeoutContains string // commands matching this return a deadline-exceeded error
 	calls           []string
+	respond         func(call string) (string, bool) // canned stdout for specific calls (e.g. nft list set)
 }
 
 func (f *fakeRunner) Run(name string, args ...string) (string, error) {
@@ -31,6 +32,11 @@ func (f *fakeRunner) RunWithTimeout(_ time.Duration, name string, args ...string
 	}
 	if f.failContains != "" && strings.Contains(call, f.failContains) {
 		return "forced failure", errors.New("forced failure")
+	}
+	if f.respond != nil {
+		if out, ok := f.respond(call); ok {
+			return out, nil
+		}
 	}
 	return "ok", nil
 }
@@ -228,6 +234,60 @@ func TestApplyMihomoFallsBackToRestartWhenReloadErrors(t *testing.T) {
 	}
 	if joined := strings.Join(r.calls, "\n"); !strings.Contains(joined, "/etc/init.d/mihomo restart") {
 		t.Fatalf("expected restart fallback on reload error, got calls:\n%s", joined)
+	}
+}
+
+// On an nft reload the atomic table replace wipes the dynamic dns_* sets;
+// apply must snapshot their members first and re-inject them after, so
+// cached-client domains keep routing. A set whose section doesn't exist in the
+// new config is never queried or restored.
+func TestApplyPreservesDynamicDNSSetMembers(t *testing.T) {
+	dir := t.TempDir()
+	c, staged, backup := applyTestConfig(t, dir)
+	live := applyTestLivePaths(dir)
+	r := &fakeRunner{respond: func(call string) (string, bool) {
+		if strings.Contains(call, "list set inet purewrt dns_bypass4") {
+			return "set dns_bypass4 {\n  type ipv4_addr\n  elements = { 1.2.3.4 expires 2h29m, 5.6.7.8 }\n}", true
+		}
+		// a set for a section that does not exist in the new config — must never
+		// be queried (so this canned output is unreachable) nor restored.
+		if strings.Contains(call, "dns_proxy_ghost4") {
+			return "set x {\n  elements = { 9.9.9.9 }\n}", true
+		}
+		return "", false
+	}}
+	gen := generator.GenerationResult{DirtyGroups: generator.GenerationGroups{OpenWrtBundle: true}, Reason: "test dns-set preserve"}
+	if err := (Manager{}).applyWithRunnerPaths(c, backup, staged, live, gen, r); err != nil {
+		t.Fatalf("apply failed: %v", err)
+	}
+	joined := strings.Join(r.calls, "\n")
+	if !strings.Contains(joined, "nft add element inet purewrt dns_bypass4 { 1.2.3.4, 5.6.7.8 }") {
+		t.Fatalf("expected dns_bypass4 members restored, got:\n%s", joined)
+	}
+	if strings.Contains(joined, "dns_proxy_ghost4") {
+		t.Fatalf("must not query/restore a non-existent section's set, got:\n%s", joined)
+	}
+	// Sets that returned no elements (default "ok") must not produce add-element calls.
+	if strings.Contains(joined, "nft add element inet purewrt dns_direct4") {
+		t.Fatalf("empty set must not be restored, got:\n%s", joined)
+	}
+}
+
+func TestParseNFTSetElements(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []string
+	}{
+		{"set s {\n type ipv4_addr\n elements = { 1.2.3.4 expires 2h29m, 5.6.7.8 }\n}", []string{"1.2.3.4", "5.6.7.8"}},
+		{"set s {\n type ipv6_addr\n elements = { 2001:db8::1 }\n}", []string{"2001:db8::1"}},
+		{"set s {\n type ipv4_addr\n}", nil}, // empty set, no elements block
+		{"ok", nil},
+	}
+	for i, tc := range cases {
+		got := parseNFTSetElements(tc.in)
+		if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+			t.Fatalf("case %d: got %v want %v", i, got, tc.want)
+		}
 	}
 }
 

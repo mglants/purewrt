@@ -695,6 +695,20 @@ func nftSetDefinition(set string, dynamicDNS bool) string {
 
 func dnsSetName(set string) string { return "dns_" + set }
 
+// DynamicDNSSetNames returns the runtime-populated dns_* set names for the
+// config — the sets dnsmasq fills from resolved domains (wiped by the atomic
+// table replace on apply and not re-seeded from the static sets file). Keyed on
+// the *current* config so callers (apply snapshot/restore, the flush-dns-sets
+// diagnostic) never touch a removed section's set.
+func DynamicDNSSetNames(c config.Config) []string {
+	base := nftPayloadSets(c)
+	out := make([]string, 0, len(base))
+	for _, s := range base {
+		out = append(out, dnsSetName(s))
+	}
+	return out
+}
+
 func nftSetRefs(set string) []string { return []string{set, dnsSetName(set)} }
 
 // nftCounterDecl emits a named counter declaration for `set`. Counters are

@@ -85,7 +85,8 @@
           "proxy_select",
           "proxy_delay_test",
           "native_list_add",
-          "wizard_reset"
+          "wizard_reset",
+          "flush_dns_sets"
         ]
       },
       "uci": ["purewrt"],

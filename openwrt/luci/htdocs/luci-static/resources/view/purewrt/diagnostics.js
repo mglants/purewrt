@@ -13,6 +13,7 @@ var callCheck = rpc.declare({ object: 'purewrt', method: 'check', params: [ 'dom
 // Wave-2 diagnostic rpcd methods. Each returns parsed JSON; no wrapping.
 var callDoctorWarnings = rpc.declare({ object: 'purewrt', method: 'doctor_warnings' });
 var callInspectIPv6 = rpc.declare({ object: 'purewrt', method: 'inspect_ipv6' });
+var callFlushDnsSets = rpc.declare({ object: 'purewrt', method: 'flush_dns_sets' });
 // Blocking heuristics moved to its dedicated "What's Blocked Now" page.
 // DNS leak check removed: the Site check tool below resolves a single
 // domain and reports "first A in nftset: true/false" using the same
@@ -103,6 +104,27 @@ return view.extend({
               }
             });
           } }, _('Generate & Apply')),
+          E('button', { 'class': 'btn cbi-button cbi-button-action', 'click': function(){
+            // Empties the dynamic dns_* nftables sets (the resolved-IP routing
+            // membership). They repopulate from dnsmasq on the next client
+            // query — but cached clients won't re-query until their DNS TTL
+            // lapses, so traffic to already-cached domains falls direct in the
+            // meantime. Confirm before clearing.
+            ui.showModal(_('Flush DNS routing lists?'), [
+              E('p', _('Clears the dynamically-resolved IP sets used for per-section routing. They refill as clients make fresh DNS queries; domains still in a client DNS cache route direct until that cache expires.')),
+              E('div', { 'class': 'right' }, [
+                E('button', { 'class': 'btn', 'click': ui.hideModal }, _('Cancel')),
+                ' ',
+                E('button', { 'class': 'btn cbi-button cbi-button-negative', 'click': function() {
+                  ui.hideModal();
+                  return callFlushDnsSets().then(function(r){
+                    out.textContent = JSON.stringify(r, null, 2);
+                    ui.addNotification(null, E('p', _('Flushed %s dynamic DNS list(s).').format((r && typeof r.count !== 'undefined') ? r.count : '?')), 'info');
+                  });
+                } }, _('Flush'))
+              ])
+            ]);
+          } }, _('Flush DNS lists')),
           E('button', { 'class': 'btn cbi-button cbi-button-remove', 'click': function(){
             // Disable rips out PureWRT-managed routing/DNS. Easy to misclick,
             // hard to undo without re-applying — confirm modal is cheap
