@@ -575,6 +575,44 @@ func main() {
 		} else {
 			fmt.Print(checker.FormatTCP1620(rep))
 		}
+	case "net-check":
+		// Layered, topology-aware connectivity diagnostic: drives real bytes
+		// through the proxy mixed-port + isolates mihomo/routing/WAN, records
+		// throughput/verdict metrics. Usage:
+		//   purewrt net-check [--bytes=N] [--timeout=SEC] [--domain=D] [--per-node] [--json]
+		args, asJSON := stripJSONFlag(os.Args[2:])
+		opts := manager.NetCheckOpts{}
+		for _, a := range args {
+			switch {
+			case a == "--per-node":
+				opts.PerNode = true
+			case strings.HasPrefix(a, "--bytes="):
+				if n, err := strconv.ParseInt(strings.TrimPrefix(a, "--bytes="), 10, 64); err == nil && n > 0 {
+					opts.Bytes = n
+				}
+			case strings.HasPrefix(a, "--timeout="):
+				if n, err := strconv.Atoi(strings.TrimPrefix(a, "--timeout=")); err == nil && n > 0 {
+					opts.Timeout = time.Duration(n) * time.Second
+				}
+			case strings.HasPrefix(a, "--domain="):
+				opts.Domain = strings.TrimPrefix(a, "--domain=")
+			}
+		}
+		overall := 90
+		if opts.PerNode {
+			overall = 300
+		}
+		ctx, cancel := contextWithTimeout(overall)
+		defer cancel()
+		rep := m.NetCheck(ctx, opts)
+		if asJSON {
+			printJSON(rep)
+		} else {
+			fmt.Print(manager.FormatNetCheck(rep))
+		}
+		if rep.Verdict != "ok" {
+			os.Exit(1)
+		}
 	case "client-traffic":
 		// Diagnose blocked flows for one LAN client. Two modes:
 		//   purewrt client-traffic <IP> [--seconds=N] [--json]      → snapshot

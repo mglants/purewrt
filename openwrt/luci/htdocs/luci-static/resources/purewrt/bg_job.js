@@ -45,7 +45,19 @@ return baseclass.extend({
       run: function() {
         var args = Array.prototype.slice.call(arguments);
         var deadline = Date.now() + totalMs;
-        return callStart.apply(null, args).then(function() {
+        return callStart.apply(null, args).then(function(r) {
+          // Guard the start outcome. A successful launch returns
+          // {result:"started"|"busy"}; anything else — a {result:"failed"}
+          // arm, or an empty/`null` body from an ubus access-denied (which
+          // LuCI resolves rather than rejects, e.g. when the session's ACL
+          // predates a new method) — must surface as an error instead of
+          // polling a job that never started.
+          var startResult = r && r.result;
+          if (startResult !== 'started' && startResult !== 'busy') {
+            return Promise.reject(new Error(
+              spec.startMethod + (startResult ? ' failed: ' + startResult
+                : ' returned no result — likely access denied (log out and back in to refresh ACLs)')));
+          }
           return new Promise(function(resolve, reject) {
             function tick() {
               if (Date.now() > deadline) {

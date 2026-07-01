@@ -114,6 +114,7 @@ func renderMihomoBase(c config.Config) []byte {
 	for _, u := range c.DNS.DoQUpstreams {
 		b.WriteString("    - " + u + "\n")
 	}
+	hasProxySection := anyEnabledProxySection(c)
 	b.WriteString("\nlisteners:\n")
 	for _, sec := range c.Sections {
 		if sec.Enabled && sec.Action == "proxy" {
@@ -121,6 +122,14 @@ func renderMihomoBase(c config.Config) []byte {
 			b.WriteString(itoa(sec.TPROXYPort))
 			b.WriteString("\n    listen: 0.0.0.0\n")
 		}
+	}
+	// net-check probe listener: a loopback `mixed` proxy whose traffic is
+	// routed via the NetCheckProbe select group (rule below). Lets
+	// `purewrt net-check --per-node` pin one node/group/VPN and measure real
+	// throughput in isolation from live routing. Loopback-only — no LAN
+	// exposure, carries no traffic unless net-check drives it.
+	if hasProxySection {
+		b.WriteString("  - name: netcheck-probe\n    type: mixed\n    port: " + itoa(config.DefaultNetCheckProbePort) + "\n    listen: 127.0.0.1\n")
 	}
 	// VPN interfaces as `direct` outbounds (interface-name binds the socket to
 	// the tunnel). Emitted for every VPN referenced by a section or DNS, so
@@ -166,13 +175,23 @@ func renderMihomoBase(c config.Config) []byte {
 			writeProxyGroup(&b, sec.ProxyGroup, sec.ProxyGroupType, sec.ProxyFilter, sec.ProxyExcludeFilter, sec.ProxyStrategy, sec.ProxyHealthCheckURL, sec.ProxyHealthCheckInterval, enabledProviders, resolveVPNMembers(c, sec.VPNs))
 		}
 	}
+	if hasProxySection {
+		writeNetCheckProbeGroup(&b, c, enabledProviders)
+	}
 	b.WriteString("\nrules:\n  - DOMAIN-SUFFIX,dns.google,DNSProxy\n  - DOMAIN-SUFFIX,cloudflare-dns.com,DNSProxy\n  - DOMAIN-SUFFIX,dns.quad9.net,DNSProxy\n  - IP-CIDR,1.1.1.1/32,DNSProxy,no-resolve\n  - IP-CIDR,8.8.8.8/32,DNSProxy,no-resolve\n  - IP-CIDR,9.9.9.9/32,DNSProxy,no-resolve\n")
 	for _, sec := range c.Sections {
 		if sec.Enabled && sec.Action == "proxy" {
 			b.WriteString("  - IN-NAME," + sec.ListenerName() + "," + sec.ProxyGroup + "\n")
 		}
 	}
-	b.WriteString("  - MATCH,Common\n")
+	if hasProxySection {
+		b.WriteString("  - IN-NAME,netcheck-probe,NetCheckProbe\n")
+	}
+	catchAll := "DIRECT"
+	if hasCommonGroup(c) {
+		catchAll = "Common"
+	}
+	b.WriteString("  - MATCH," + catchAll + "\n")
 	return []byte(b.String())
 }
 
@@ -194,6 +213,54 @@ func mihomoLogLevel(level string) string {
 }
 
 func vpnProxyName(n string) string { return "vpn_" + n }
+
+// anyEnabledProxySection reports whether at least one enabled section egresses
+// via a proxy group — the gate for emitting the net-check probe path.
+func anyEnabledProxySection(c config.Config) bool {
+	for _, s := range c.Sections {
+		if s.Enabled && s.Action == "proxy" {
+			return true
+		}
+	}
+	return false
+}
+
+// hasCommonGroup reports whether an enabled proxy section emits the "Common"
+// group that the catch-all MATCH targets. When absent (common section deleted/
+// disabled), the catch-all falls to DIRECT so unmatched traffic degrades to
+// direct internet instead of dangling on a non-existent group.
+func hasCommonGroup(c config.Config) bool {
+	for _, s := range c.Sections {
+		if s.Enabled && s.Action == "proxy" && s.ProxyGroup == "Common" {
+			return true
+		}
+	}
+	return false
+}
+
+// writeNetCheckProbeGroup emits the NetCheckProbe `select` group whose members
+// are every section proxy group + each vpn_* outbound + DIRECT, plus the
+// provider nodes via `use:` (a select group can hold both groups and nodes).
+// net-check --per-node SelectProxy's each member to probe it in isolation.
+func writeNetCheckProbeGroup(b *strings.Builder, c config.Config, providers []config.ProxyProvider) {
+	b.WriteString("  - name: NetCheckProbe\n    type: select\n    proxies:\n      - DIRECT\n")
+	seen := map[string]bool{}
+	for _, sec := range c.Sections {
+		if sec.Enabled && sec.Action == "proxy" && sec.ProxyGroup != "" && !seen[sec.ProxyGroup] {
+			seen[sec.ProxyGroup] = true
+			b.WriteString("      - " + sec.ProxyGroup + "\n")
+		}
+	}
+	for _, v := range referencedVPNs(c) {
+		b.WriteString("      - " + vpnProxyName(v.Name) + "\n")
+	}
+	if len(providers) > 0 {
+		b.WriteString("    use:\n")
+		for _, p := range providers {
+			b.WriteString("      - " + p.Name + "\n")
+		}
+	}
+}
 
 // resolveVPNMembers maps a section/DNS VPN-name list to mihomo proxy names,
 // keeping only enabled VPNs that have an interface.

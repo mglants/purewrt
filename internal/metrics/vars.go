@@ -52,4 +52,35 @@ var (
 	// ZapretStrategiesActive — count of enabled zapret_strategy sections.
 	// One-shot gauge; set on apply.
 	ZapretStrategiesActive = NewGauge("purewrt_zapret_strategies_active", "Number of enabled zapret strategies in the compiled NFQWS2_OPT")
+
+	// --- net-check (set by Manager.NetCheck on each interactive/cron run) ---
+
+	// NetCheckDownloadKbps / NetCheckUploadKbps — last measured real
+	// throughput through the proxy mixed-port (kilobits/sec). A node passing
+	// url-test but reading ~0 here is throttled/broken — the signal url-test
+	// can't surface. 0 = the probe failed/timed out.
+	NetCheckDownloadKbps = NewGauge("purewrt_netcheck_download_kbps", "Last net-check download throughput via proxy (kbps)")
+	NetCheckUploadKbps   = NewGauge("purewrt_netcheck_upload_kbps", "Last net-check upload throughput via proxy (kbps)")
+
+	// NetCheckDirectDomesticKbps — direct (no proxy) throughput to a domestic
+	// endpoint; gates WAN liveness independent of foreign censorship.
+	NetCheckDirectDomesticKbps = NewGauge("purewrt_netcheck_direct_domestic_kbps", "Last net-check direct domestic throughput (kbps)")
+
+	// NetCheckVerdict — 1 if the last run's overall verdict was "ok", else 0.
+	NetCheckVerdict = NewGauge("purewrt_netcheck_verdict", "Last net-check overall verdict (1=ok, 0=fail)")
+
+	// NetCheckLastRun — unix seconds of the last net-check run; lets a scraper
+	// alert on staleness (cron stopped firing).
+	NetCheckLastRun = NewGauge("purewrt_netcheck_last_run_timestamp", "Unix timestamp of the last net-check run")
+
+	// NetCheckLayerTotal — per-layer pass/fail counts over time
+	// (layer="mihomo|download|upload|dns|routing|zapret|direct",
+	// result="ok|fail|na"). Mirrors ResolversProbeTotal's shape.
+	NetCheckLayerTotal = NewCounter("purewrt_netcheck_layer_total", "Net-check layer outcomes by layer", "layer", "result")
+
+	// NetCheckNodeTotal — per-node per-run throughput verdict from --per-node
+	// runs (node=slugified node name, result="ok|throttled|fail"). High
+	// cardinality is bounded by the node count; label is slugified (emoji/
+	// spaces stripped) to stay scrape-safe.
+	NetCheckNodeTotal = NewCounter("purewrt_netcheck_node_total", "Per-node net-check throughput verdicts", "node", "result")
 )

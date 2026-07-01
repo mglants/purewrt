@@ -150,6 +150,19 @@ return view.extend({
       placeholder: '0.0.0.0:8787',
       description: _('host:port addresses the API daemon binds. Empty = 0.0.0.0:8787 (all interfaces; the firewall still blocks WAN input). Add 127.0.0.1:8787 for loopback-only, or a specific interface IP to pick interfaces. Restart purewrt-api after changing.') });
 
+    // ---- Connectivity monitoring (net-check) ----
+    var netcheck = m.section(form.NamedSection, 'settings', 'main', _('Connectivity monitoring'),
+      _('Schedule `purewrt net-check` to periodically probe real proxy throughput and record metrics. Run it on demand from the Diagnostics page.'));
+    netcheck.anonymous = true;
+    addRow(netcheck, form.Flag, 'net_check_enabled', _('Scheduled net-check'), { default: '0',
+      description: _('Run net-check on a cron schedule. It transfers real bytes through the proxy, so it consumes subscription quota — off by default.') });
+    var ncCron = addRow(netcheck, form.Value, 'net_check_cron', _('Schedule (cron)'), { placeholder: '*/30 * * * *',
+      description: _('Cron expression. Empty = manual only (run from Diagnostics).') });
+    ncCron.depends('net_check_enabled', '1');
+    var ncBytes = addRow(netcheck, form.Value, 'net_check_bytes', _('Probe size (bytes)'), { datatype: 'uinteger', default: '2097152',
+      description: _('Per-run download/upload size for the scheduled probe. Smaller bounds quota; ~2 MiB default. Each tick moves ~this down + half up.') });
+    ncBytes.depends('net_check_enabled', '1');
+
     // ---- Mihomo runtime ----
     var mihomo = m.section(form.NamedSection, 'settings', 'main', _('Mihomo runtime'),
       _('Where PureWRT pulls mihomo from + which release channel to track.'));

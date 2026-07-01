@@ -200,7 +200,9 @@ enabled+interface. The `mihomo` fingerprint group now includes `vpns` so an inte
 `TestVPNAsMihomoProxies` (generator_test.go). Don't reintroduce kernel VPN marking.
 
 Rationale + an executable recipe to add an **opt-in kernel fast-path** later (if a measured gigabit+ need
-appears) live in `docs/vpn-routing.md`.
+appears) live in `docs/vpn-routing.md`. A **multi-WAN proxy egress** attempt (mihomo `dialer-proxy` through
+per-WAN outbounds) was tried and **dropped** — it doesn't route reliably on an mwan3 box; the post-mortem +
+reimplementation notes are in `docs/multi-wan-proxy-egress.md`.
 
 ## Prerouting precedence: client-identity first, then sections by priority
 

@@ -124,7 +124,7 @@ poll_bg_job() {
 }
 
 case "$1" in
-  list) echo '{"status":{},"statistics":{},"rule_provider_status":{},"analyze":{"url":"String"},"preview":{"url":"String"},"classify":{"name":"String","url":"String","behavior":"String","format":"String"},"override":{"name":"String","section":"String","action":"String","enabled":"String","reset":"String"},"import":{"url":"String","mode":"String"},"update":{},"update_rule_provider":{"name":"String"},"update_rule_provider_no_restart":{"name":"String"},"update_proxy_provider":{"name":"String"},"reload":{},"disable":{},"check":{"domain":"String"},"zapret_check":{"domain":"String","interface":"String","scan":"String","repeats":"String","http":"String","tls12":"String","tls13":"String","http3":"String","https_get":"String"},"zapret_check_start":{"domain":"String","interface":"String","scan":"String","repeats":"String","http":"String","tls12":"String","tls13":"String","http3":"String","https_get":"String"},"zapret_check_status":{},"logs":{"source":"String"},"mihomo_config":{},"mihomo_check_update":{},"mihomo_download":{},"doctor_warnings":{},"inspect_ipv6":{},"resolvers_probe":{"canary":"String"},"blocking_heuristics":{"blacklist":"Array","whitelist":"Array","targets":"Array"},"zapret_restart":{},"zapret_compiled_opt":{},"geo_refresh":{},"zapret_autotune":{"hosts":"Array"},"zapret_autotune_start":{"hosts":"Array"},"zapret_autotune_status":{},"subscription_expiry":{},"mihomo_traffic_sample":{},"config_state":{},"update_start":{},"update_status":{},"dpi_check_start":{"host":"String","ip":"String","timeout":"String"},"dpi_check_status":{},"client_traffic_start":{"ip":"String","max_seconds":"String","live":"String"},"client_traffic_status":{"offset":"String"},"client_traffic_stop":{},"ipdb_status":{},"ipdb_update_start":{},"ipdb_update_status":{},"ipdb_asn":{"asn":"String"},"zapret_installed":{},"ooni_installed":{},"ooni_status":{},"ooni_run_start":{},"ooni_run_status":{},"tcpdump_installed":{},"mihomo_status":{},"mihomo_check_update_channel":{"channel":"String"},"mihomo_install_release_start":{"channel":"String"},"mihomo_install_release_status":{},"mihomo_revert_package":{},"mihomo_auto_update":{},"mihomo_mixin_get":{},"mihomo_mixin_set":{"body":"String"},"mihomo_mixin_preview":{"body":"String"},"apk_updates_available":{"force":"String"},"geo_list":{"kind":"String"},"geo_default_sources":{},"config_export":{},"config_import":{"body":"String"},"proxy_groups":{},"proxy_select":{"group":"String","node":"String"},"proxy_delay_test":{"group":"String"},"native_list_add":{"url":"String","section":"String","priority":"String"},"default_lists_catalog":{},"wizard_reset":{},"flush_dns_sets":{}}' ;;
+  list) echo '{"status":{},"statistics":{},"rule_provider_status":{},"analyze":{"url":"String"},"preview":{"url":"String"},"classify":{"name":"String","url":"String","behavior":"String","format":"String"},"override":{"name":"String","section":"String","action":"String","enabled":"String","reset":"String"},"import":{"url":"String","mode":"String"},"update":{},"update_rule_provider":{"name":"String"},"update_rule_provider_no_restart":{"name":"String"},"update_proxy_provider":{"name":"String"},"reload":{},"disable":{},"check":{"domain":"String"},"zapret_check":{"domain":"String","interface":"String","scan":"String","repeats":"String","http":"String","tls12":"String","tls13":"String","http3":"String","https_get":"String"},"zapret_check_start":{"domain":"String","interface":"String","scan":"String","repeats":"String","http":"String","tls12":"String","tls13":"String","http3":"String","https_get":"String"},"zapret_check_status":{},"logs":{"source":"String"},"mihomo_config":{},"mihomo_check_update":{},"mihomo_download":{},"doctor_warnings":{},"inspect_ipv6":{},"resolvers_probe":{"canary":"String"},"blocking_heuristics":{"blacklist":"Array","whitelist":"Array","targets":"Array"},"zapret_restart":{},"zapret_compiled_opt":{},"geo_refresh":{},"zapret_autotune":{"hosts":"Array"},"zapret_autotune_start":{"hosts":"Array"},"zapret_autotune_status":{},"subscription_expiry":{},"mihomo_traffic_sample":{},"config_state":{},"update_start":{},"update_status":{},"dpi_check_start":{"host":"String","ip":"String","timeout":"String"},"dpi_check_status":{},"net_check_start":{"bytes":"String","per_node":"String"},"net_check_status":{},"client_traffic_start":{"ip":"String","max_seconds":"String","live":"String"},"client_traffic_status":{"offset":"String"},"client_traffic_stop":{},"ipdb_status":{},"ipdb_update_start":{},"ipdb_update_status":{},"ipdb_asn":{"asn":"String"},"zapret_installed":{},"ooni_installed":{},"ooni_status":{},"ooni_run_start":{},"ooni_run_status":{},"tcpdump_installed":{},"mihomo_status":{},"mihomo_check_update_channel":{"channel":"String"},"mihomo_install_release_start":{"channel":"String"},"mihomo_install_release_status":{},"mihomo_revert_package":{},"mihomo_auto_update":{},"mihomo_mixin_get":{},"mihomo_mixin_set":{"body":"String"},"mihomo_mixin_preview":{"body":"String"},"apk_updates_available":{"force":"String"},"geo_list":{"kind":"String"},"geo_default_sources":{},"config_export":{},"config_import":{"body":"String"},"proxy_groups":{},"proxy_select":{"group":"String","node":"String"},"proxy_delay_test":{"group":"String"},"native_list_add":{"url":"String","section":"String","priority":"String"},"default_lists_catalog":{},"wizard_reset":{},"flush_dns_sets":{}}' ;;
 call)
   # -r preserves backslashes in the JSON body. Without it, `\n` (real
   # backslash + n bytes) gets unescaped to a bare `n` by the shell's
@@ -234,6 +234,35 @@ call)
       if [ "$rc" = "0" ] && [ -s "$log" ]; then
         # Skip any debug-command lines before the JSON payload.
         report=$(grep -v "^debug command:" "$log" 2>/dev/null | tr -d '\n' | sed 's/^[^{]*//;s/[^}]*$//')
+        [ -z "$report" ] && report='null'
+      fi
+      printf '{"running":%s,"rc":"%s","report":%s}' "$running" "$rc" "$report" ;;
+    net_check_start)
+      bytes=$(echo "$input" | jsonfilter -e '@.bytes' 2>/dev/null)
+      pernode=$(echo "$input" | jsonfilter -e '@.per_node' 2>/dev/null)
+      set -- --json
+      [ -n "$bytes" ] && set -- "$@" "--bytes=$bytes"
+      [ "$pernode" = "1" ] && set -- "$@" "--per-node"
+      start_bg_job /tmp/purewrt-net-check.log /tmp/purewrt-net-check.status \
+        "" /tmp/purewrt-net-check.lock \
+        /usr/bin/purewrt net-check "$@" ;;
+    net_check_status)
+      # Same shape as dpi_check_status: read running/rc, extract the JSON
+      # report the net-check CLI emits at the end of stdout.
+      log=/tmp/purewrt-net-check.log
+      statusfile=/tmp/purewrt-net-check.status
+      lockfile=/tmp/purewrt-net-check.lock
+      rc=""
+      [ -s "$statusfile" ] && rc=$(cat "$statusfile")
+      running=0
+      if [ -z "$rc" ] && [ -f "$lockfile" ]; then
+        if ( exec 9>"$lockfile"; flock -nx 9 ) 2>/dev/null; then :; else running=1; fi
+      fi
+      report='null'
+      # net-check exits 1 on a non-ok verdict, so accept any finished rc here
+      # (the report itself carries the verdict); only require a JSON payload.
+      if [ -n "$rc" ] && [ -s "$log" ]; then
+        report=$(tr -d '\n' < "$log" 2>/dev/null | sed 's/^[^{]*//;s/[^}]*$//')
         [ -z "$report" ] && report='null'
       fi
       printf '{"running":%s,"rc":"%s","report":%s}' "$running" "$rc" "$report" ;;

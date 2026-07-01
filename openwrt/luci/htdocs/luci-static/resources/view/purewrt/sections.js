@@ -211,6 +211,31 @@ return view.extend({
     s.anonymous = false;
     s.sectiontitle = sectionTitle;
 
+    // Soft warning before removing the catch-all section. The `common` section
+    // provides the `Common` proxy group that the generated `MATCH,Common`
+    // catch-all targets; without it the catch-all degrades to DIRECT (unmatched
+    // traffic goes unproxied). Non-blocking — inform, don't trap (the generator
+    // handles the fallback safely either way).
+    var origRemove = s.handleRemove;
+    s.handleRemove = function(section_id, ev) {
+      var pg = uci.get('purewrt', section_id, 'proxy_group');
+      if (section_id !== 'common' && pg !== 'Common')
+        return origRemove.call(s, section_id, ev);
+      return new Promise(function(resolve) {
+        ui.showModal(_('Delete the catch-all section?'), [
+          E('p', _('“%s” provides the Common proxy group that the catch-all (MATCH) routes to. With it removed, all unmatched traffic falls back to DIRECT (unproxied) — the router stays online but those flows bypass the proxy.').format(section_id)),
+          E('div', { 'class': 'right' }, [
+            E('button', { 'class': 'btn', 'click': ui.hideModal }, _('Cancel')),
+            ' ',
+            E('button', { 'class': 'btn cbi-button cbi-button-negative', 'click': function(ev2) {
+              ui.hideModal();
+              resolve(origRemove.call(s, section_id, ev2));
+            } }, _('Delete anyway'))
+          ])
+        ]);
+      });
+    };
+
     var enabled = s.option(form.Flag, 'enabled', _('Enabled'));
     enabled.rmempty = false;
     var action = s.option(form.ListValue, 'action', _('Action'));

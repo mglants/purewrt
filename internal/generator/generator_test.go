@@ -311,6 +311,59 @@ func TestMihomoAllowLANBinding(t *testing.T) {
 	}
 }
 
+func TestMihomoCatchAllFallsToDirectWithoutCommon(t *testing.T) {
+	// Default has a common/Common section → catch-all targets Common.
+	if out := string(Mihomo(config.Default())); !strings.Contains(out, "  - MATCH,Common\n") {
+		t.Fatalf("default catch-all must be MATCH,Common:\n%s", out)
+	}
+	// Remove the Common group (delete the common section) → catch-all must
+	// degrade to DIRECT, never dangle on a non-existent Common group.
+	c := config.Default()
+	kept := c.Sections[:0]
+	for _, s := range c.Sections {
+		if s.ProxyGroup != "Common" {
+			kept = append(kept, s)
+		}
+	}
+	c.Sections = kept
+	out := string(Mihomo(c))
+	if !strings.Contains(out, "  - MATCH,DIRECT\n") {
+		t.Fatalf("catch-all must fall to MATCH,DIRECT when no Common group:\n%s", out)
+	}
+	if strings.Contains(out, "MATCH,Common") {
+		t.Fatalf("must not emit MATCH,Common when the Common group is absent:\n%s", out)
+	}
+	if strings.Contains(out, "name: Common\n") {
+		t.Fatalf("no Common proxy group should be emitted:\n%s", out)
+	}
+}
+
+func TestMihomoNetCheckProbePath(t *testing.T) {
+	// Default config has proxy sections → the net-check probe path is emitted:
+	// a loopback `mixed` listener, the NetCheckProbe select group, and the
+	// IN-NAME rule routing the listener to that group.
+	out := string(Mihomo(config.Default()))
+	for _, want := range []string{
+		"- name: netcheck-probe\n    type: mixed\n    port: 7899\n    listen: 127.0.0.1\n",
+		"- name: NetCheckProbe\n    type: select\n",
+		"  - IN-NAME,netcheck-probe,NetCheckProbe\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing net-check probe element %q in:\n%s", want, out)
+		}
+	}
+
+	// No proxy section → no probe path (zapret-only / direct box).
+	c := config.Default()
+	for i := range c.Sections {
+		c.Sections[i].Action = "direct"
+	}
+	out = string(Mihomo(c))
+	if strings.Contains(out, "netcheck-probe") || strings.Contains(out, "NetCheckProbe") {
+		t.Fatalf("probe path must be absent when no proxy section is enabled:\n%s", out)
+	}
+}
+
 func TestMihomoDashboardEnabledByDefault(t *testing.T) {
 	out := string(Mihomo(config.Default()))
 	for _, want := range []string{

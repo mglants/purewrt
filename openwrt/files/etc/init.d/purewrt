@@ -8,6 +8,8 @@ MIHOMO_CRON_START="# PureWRT mihomo auto update start"
 MIHOMO_CRON_END="# PureWRT mihomo auto update end"
 OONI_CRON_START="# PureWRT ooni run start"
 OONI_CRON_END="# PureWRT ooni run end"
+NETCHECK_CRON_START="# PureWRT net-check start"
+NETCHECK_CRON_END="# PureWRT net-check end"
 log_level_num() {
     case "$(uci -q get purewrt.settings.log_level)" in
         error|err) echo 0 ;;
@@ -323,6 +325,7 @@ install_cron() {
     remove_cron_entry quiet
     remove_mihomo_cron_entry quiet
     remove_ooni_cron_entry quiet
+    remove_netcheck_cron_entry quiet
     nicev="$(uci -q get purewrt.settings.update_nice)"; [ -n "$nicev" ] || nicev=19
     ioc="$(uci -q get purewrt.settings.update_ionice_class)"; [ -n "$ioc" ] || ioc=3
     ion="$(uci -q get purewrt.settings.update_ionice_level)"; [ -n "$ion" ] || ion=7
@@ -394,6 +397,27 @@ install_cron() {
         log_msg info "cron: ooni runs disabled or ooniprobe not installed"
     fi
 
+    # net-check connectivity probe entry — periodically drives a real
+    # download/upload through the proxy and records throughput/verdict
+    # metrics. Off by default (transfers real bytes → subscription quota);
+    # uses a smaller --bytes than an interactive run to bound that cost.
+    netcheck_enabled="$(uci -q get purewrt.settings.net_check_enabled)"
+    if [ "$netcheck_enabled" = "1" ]; then
+        netcheck_schedule="$(uci -q get purewrt.settings.net_check_cron)"
+        [ -n "$netcheck_schedule" ] || netcheck_schedule='*/30 * * * *'
+        netcheck_bytes="$(uci -q get purewrt.settings.net_check_bytes)"; [ -n "$netcheck_bytes" ] || netcheck_bytes=2097152
+        netcheck_cmd="$prefix /usr/bin/purewrt net-check --bytes=$netcheck_bytes 2>&1 | logger -t purewrt-cron"
+        log_msg info "cron: installing net-check schedule='$netcheck_schedule' bytes=$netcheck_bytes"
+        log_msg debug "cron: net-check command=$netcheck_cmd"
+        {
+            echo "$NETCHECK_CRON_START"
+            echo "$netcheck_schedule $netcheck_cmd"
+            echo "$NETCHECK_CRON_END"
+        } >> /etc/crontabs/root
+    else
+        log_msg info "cron: net-check disabled"
+    fi
+
     reload_cron
 }
 reload_cron() {
@@ -437,11 +461,23 @@ remove_ooni_cron_entry() {
     [ "$mode" = "quiet" ] || log_msg info "disable: PureWRT ooni cron entry already absent"
     return 1
 }
+remove_netcheck_cron_entry() {
+    mode="$1"
+    [ -f /etc/crontabs/root ] || return 1
+    if grep -qF "$NETCHECK_CRON_START" /etc/crontabs/root 2>/dev/null; then
+        [ "$mode" = "quiet" ] || log_msg warn "disable: removing PureWRT net-check cron entry"
+        sed -i "\|$NETCHECK_CRON_START|,\|$NETCHECK_CRON_END|d" /etc/crontabs/root 2>/dev/null || true
+        return 0
+    fi
+    [ "$mode" = "quiet" ] || log_msg info "disable: PureWRT net-check cron entry already absent"
+    return 1
+}
 disable() {
     removed=0
-    remove_cron_entry        && removed=1
-    remove_mihomo_cron_entry && removed=1
-    remove_ooni_cron_entry   && removed=1
+    remove_cron_entry          && removed=1
+    remove_mihomo_cron_entry   && removed=1
+    remove_ooni_cron_entry     && removed=1
+    remove_netcheck_cron_entry && removed=1
     [ "$removed" = "1" ] && reload_cron
     name="$(basename "$initscript")"
     name="${name##[SK][0-9][0-9]}"

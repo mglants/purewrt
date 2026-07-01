@@ -3,6 +3,7 @@
 'require rpc';
 'require ui';
 'require purewrt.update_async as updateAsync';
+'require purewrt.net_check_async as netCheckAsync';
 'require purewrt.manual_rule_modal as manualModal';
 
 var callStatus = rpc.declare({ object: 'purewrt', method: 'status' });
@@ -56,12 +57,38 @@ function renderIPv6(p) {
   return E('div', {}, [ tbl, warns ]);
 }
 
+function netCheckMark(s) { return ({ ok: '✓', fail: '✗', warn: '!', na: '·' })[s] || s; }
+
+function renderNetCheck(r) {
+  if (!r) return E('p', {}, _('No result.'));
+  var color = r.verdict === 'ok' ? '#5cb85c' : (r.verdict === 'degraded' ? '#f0ad4e' : '#d9534f');
+  var children = [
+    E('p', { 'style': 'font-weight:bold;color:' + color }, _('Mode %s — verdict: %s').format(r.mode || '?', (r.verdict || '?').toUpperCase()))
+  ];
+  if (r.diagnosis) children.push(E('p', {}, '→ ' + r.diagnosis));
+  var layerRows = (r.layers || []).map(function(l) { return [ netCheckMark(l.status) + ' ' + l.name, l.detail || '' ]; });
+  children.push(renderTable([ _('Layer'), _('Detail') ], layerRows));
+  if (r.nodes && r.nodes.length) {
+    var nodeRows = r.nodes.map(function(n) {
+      return [ n.verdict, Math.round(n.down_kbps) + ' / ' + Math.round(n.up_kbps) + ' kbps', (n.delay_ms || 0) + ' ms', n.node ];
+    });
+    children.push(E('h4', {}, _('Per-node throughput (worst first)')));
+    children.push(renderTable([ _('Verdict'), _('Down / Up'), _('Delay'), _('Node') ], nodeRows));
+  }
+  if (r.warnings && r.warnings.length) {
+    children.push(E('h4', {}, _('Config warnings')));
+    children.push(E('ul', {}, r.warnings.map(function(w) { return E('li', { 'style': 'color:#d9534f' }, w); })));
+  }
+  return E('div', {}, children);
+}
+
 return view.extend({
   render: function() {
     var domain = E('input', { 'class': 'cbi-input-text', 'placeholder': 'chatgpt.com' });
     var out = E('pre', {});
     var warningsOut = E('div', {});
     var ipv6Out = E('div', {});
+    var netCheckOut = E('div', {});
 
     return callStatus().then(function(res) {
       out.textContent = JSON.stringify(res, null, 2);
@@ -144,6 +171,33 @@ return view.extend({
               ])
             ]);
           } }, _('Disable'))
+        ]),
+
+        E('div', { 'class': 'cbi-section' }, [
+          E('h3', _('Connectivity test')),
+          E('p', {}, _('Drives a real download/upload through the proxy and isolates the failing layer (mihomo / node / routing / WAN). Unlike url-test it catches nodes that answer probes but can\'t carry data. Per-node sweeps every node individually — slower, uses more bandwidth.')),
+          E('button', { 'class': 'btn cbi-button cbi-button-action', 'click': function(ev) {
+            var btn = ev.target; btn.disabled = true;
+            netCheckOut.innerHTML = ''; netCheckOut.appendChild(E('em', {}, _('Running connectivity test…')));
+            return netCheckAsync.run({}).then(function(r) {
+              btn.disabled = false; netCheckOut.innerHTML = ''; netCheckOut.appendChild(renderNetCheck(r.report));
+            }, function(e) {
+              btn.disabled = false; netCheckOut.innerHTML = '';
+              ui.addNotification(null, E('p', e.message), 'danger');
+            });
+          } }, _('Run test')),
+          ' ',
+          E('button', { 'class': 'btn cbi-button cbi-button-action', 'click': function(ev) {
+            var btn = ev.target; btn.disabled = true;
+            netCheckOut.innerHTML = ''; netCheckOut.appendChild(E('em', {}, _('Probing every node — this takes a while…')));
+            return netCheckAsync.run({ perNode: true }).then(function(r) {
+              btn.disabled = false; netCheckOut.innerHTML = ''; netCheckOut.appendChild(renderNetCheck(r.report));
+            }, function(e) {
+              btn.disabled = false; netCheckOut.innerHTML = '';
+              ui.addNotification(null, E('p', e.message), 'danger');
+            });
+          } }, _('Per-node test')),
+          netCheckOut
         ]),
 
         E('div', { 'class': 'cbi-section' }, [
