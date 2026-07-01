@@ -30,10 +30,29 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/purewrt/purewrt/internal/ipdb"
 )
+
+// asnHolder lets the ASN database load in the background, off the capture's
+// critical path. ipdb.Load on the ~700k-row combined dataset is CPU/alloc
+// heavy; run concurrently with the nftset refresh at session start it has
+// intermittently stalled long enough to delay the very first emit, so the
+// LuCI Client Traffic page showed nothing ("not capturing sometimes"). We now
+// start conntrack + pcap immediately and swap the DB in once it finishes;
+// early flows simply lack ASN/country enrichment. Lookup is nil-safe until
+// the DB is ready.
+type asnHolder struct{ p atomic.Pointer[ipdb.DB] }
+
+func (h *asnHolder) set(db *ipdb.DB) { h.p.Store(db) }
+func (h *asnHolder) Lookup(a netip.Addr) ipdb.Lookup {
+	if db := h.p.Load(); db != nil {
+		return db.Lookup(a)
+	}
+	return ipdb.Lookup{}
+}
 
 // Event is one piece of the report stream. Type identifies the payload;
 // Data is the JSON encoding of one of the *Data structs below.
@@ -229,7 +248,7 @@ func (m Manager) ClientTrafficStream(ctx context.Context, clientIP string, opts 
 
 	iface := opts.LANInterface
 	if iface == "" {
-		iface = detectLANInterface()
+		iface = detectLANInterface(clientIP)
 	}
 	if iface == "" {
 		return fmt.Errorf("could not determine LAN interface; pass StreamOpts.LANInterface")
@@ -252,14 +271,19 @@ func (m Manager) ClientTrafficStream(ctx context.Context, clientIP string, opts 
 	// configured Workdir so non-default installs use their own slot.
 	c, _ := m.Load()
 	ipdbPath := ipdb.GZPath(c.Settings.Workdir)
-	var asndb *ipdb.DB
-	if db, err := ipdb.Load(ipdbPath); err == nil {
-		asndb = db
-	} else if !os.IsNotExist(err) {
-		emit(makeEvent("warning", WarningData{Message: "ipdb load failed: " + err.Error()}))
-	} else {
-		emit(makeEvent("warning", WarningData{Message: "IP database not installed — run `purewrt ipdb-update` for ASN/country/org enrichment"}))
-	}
+	// Load the ASN DB in the background so a slow/contended ipdb.Load never
+	// delays the first conntrack snapshot. Capture starts immediately;
+	// enrichment kicks in once the DB is ready (asnHolder is nil-safe).
+	asndb := &asnHolder{}
+	go func() {
+		if db, err := ipdb.Load(ipdbPath); err == nil {
+			asndb.set(db)
+		} else if !os.IsNotExist(err) {
+			emit(makeEvent("warning", WarningData{Message: "ipdb load failed: " + err.Error()}))
+		} else {
+			emit(makeEvent("warning", WarningData{Message: "IP database not installed — run `purewrt ipdb-update` for ASN/country/org enrichment"}))
+		}
+	}()
 
 	// QUIC retry detector — sliding window of UDP/443 outbound packets per dst.
 	quicRetries := &quicRetryTracker{
@@ -328,7 +352,21 @@ func (m Manager) ClientTrafficStream(ctx context.Context, clientIP string, opts 
 		asndb:     asndb,
 		quic:      quicRetries,
 	}
+	// Stop promptly on deadline/cancel: killing tcpdump alone sometimes leaves
+	// runPcapReader blocked in io.ReadFull (idle client → no EOF delivered
+	// quickly), so the session overran its --max-seconds by a wide margin.
+	// Closing stdout here forces the blocked read to return at once.
+	stopped := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = cmd.Process.Kill()
+			_ = stdout.Close()
+		case <-stopped:
+		}
+	}()
 	pcapErr := runPcapReader(stdout, clientIP, enr, emit)
+	close(stopped)
 
 	// On reader exit, ensure subprocess is dead and conntrack ticker stops.
 	_ = cmd.Process.Kill()
@@ -353,7 +391,19 @@ func makeEvent(typ string, data any) Event {
 	return ev
 }
 
-func detectLANInterface() string {
+func detectLANInterface(clientIP string) string {
+	// Best: the interface the client is actually reachable on. Handles VLANs
+	// and bridges — e.g. a client on br-lan.2 while network.lan.device is a
+	// bridge port like lan1, in which case tcpdump on lan1 would miss its
+	// packet-level events (DNS/SNI/RST).
+	if clientIP != "" {
+		if out, err := exec.Command("ip", "-o", "route", "get", clientIP).Output(); err == nil {
+			if dev := routeDev(string(out)); dev != "" {
+				return dev
+			}
+		}
+	}
+	// Next: the configured LAN device.
 	out, err := exec.Command("uci", "-q", "get", "network.lan.device").Output()
 	if err == nil {
 		s := strings.TrimSpace(string(out))
@@ -366,6 +416,18 @@ func detectLANInterface() string {
 	for _, e := range entries {
 		if strings.HasPrefix(e.Name(), "br-") {
 			return e.Name()
+		}
+	}
+	return ""
+}
+
+// routeDev extracts the "dev X" token from `ip route get` output, e.g.
+// "192.168.214.212 dev br-lan.2 src 192.168.214.1 uid 0" → "br-lan.2".
+func routeDev(s string) string {
+	fields := strings.Fields(s)
+	for i, f := range fields {
+		if f == "dev" && i+1 < len(fields) {
+			return fields[i+1]
 		}
 	}
 	return ""
@@ -834,7 +896,7 @@ func (e *ctEntry) key() string {
 	return fmt.Sprintf("%s|%s:%d->%s:%d", e.Proto, e.SrcIP, e.SrcPort, e.DstIP, e.DstPort)
 }
 
-func emitConntrack(clientIP string, prev map[string]*ctEntry, hostnames *hostnameMap, nftsets *nftsetEnricher, asndb *ipdb.DB, verbose bool, emit func(Event)) map[string]*ctEntry {
+func emitConntrack(clientIP string, prev map[string]*ctEntry, hostnames *hostnameMap, nftsets *nftsetEnricher, asndb *asnHolder, verbose bool, emit func(Event)) map[string]*ctEntry {
 	data, err := os.ReadFile("/proc/net/nf_conntrack")
 	if err != nil {
 		emit(makeEvent("warning", WarningData{Message: "cannot read /proc/net/nf_conntrack: " + err.Error()}))
@@ -1152,7 +1214,7 @@ const (
 type packetEnrichers struct {
 	hostnames *hostnameMap
 	nftsets   *nftsetEnricher
-	asndb     *ipdb.DB
+	asndb     *asnHolder
 	quic      *quicRetryTracker
 }
 

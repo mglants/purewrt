@@ -143,6 +143,21 @@ func parseTSV(r io.Reader) (*DB, error) {
 	scanner.Buffer(make([]byte, 0, 4096), 1024*1024)
 	out := make([]entry, 0, 500_000)
 	var out6 []entry6
+	// Intern cc/org: the combined dataset has ~700k rows but only ~83k unique
+	// orgs and a few hundred country codes, and each field would otherwise pin
+	// its whole scanner line-copy alive. Interning collapses them to one shared
+	// string each, cutting retained memory + GC churn during Load — the churn
+	// that, run concurrently with other work, was stalling the load on the
+	// router. istr also lets the per-line backing array be freed after parse.
+	intern := make(map[string]string, 100_000)
+	istr := func(s string) string {
+		if v, ok := intern[s]; ok {
+			return v
+		}
+		s = strings.Clone(s)
+		intern[s] = s
+		return s
+	}
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" || line[0] == '#' {
@@ -156,8 +171,8 @@ func parseTSV(r io.Reader) (*DB, error) {
 		if err != nil {
 			continue
 		}
-		cc := strings.TrimSpace(fields[3])
-		org := strings.TrimSpace(fields[4])
+		cc := istr(strings.TrimSpace(fields[3]))
+		org := istr(strings.TrimSpace(fields[4]))
 		if start, ok := parseIPv4(fields[0]); ok {
 			end, ok := parseIPv4(fields[1])
 			if !ok {
