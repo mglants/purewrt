@@ -229,10 +229,7 @@ func perNodeProbe(ctx context.Context, cli mihomoapi.Client, opts NetCheckOpts) 
 		return nil
 	}
 	prior := grp.Now
-	probeClient, err := provider.NewClient(provider.ClientOptions{ProxyURL: fmt.Sprintf("http://127.0.0.1:%d", config.DefaultNetCheckProbePort), Timeout: opts.Timeout})
-	if err != nil {
-		return nil
-	}
+	probeURL := fmt.Sprintf("http://127.0.0.1:%d", config.DefaultNetCheckProbePort)
 	// small per-node payload to bound the total run.
 	nbytes := int64(2 << 20)
 	out := []NodeResult{}
@@ -241,9 +238,21 @@ func perNodeProbe(ctx context.Context, cli mihomoapi.Client, opts NetCheckOpts) 
 			out = append(out, NodeResult{Node: node, Verdict: "fail"})
 			continue
 		}
-		time.Sleep(150 * time.Millisecond) // let the selection take effect
+		time.Sleep(250 * time.Millisecond) // let the selection take effect
+		// Fresh client per node: a reused client keeps HTTPS CONNECT tunnels
+		// alive, and a tunnel is pinned to whichever node was selected when it
+		// opened — so a stale tunnel would route THIS node's probe through the
+		// PREVIOUS node, falsely reporting a dead node as OK. A new client (and
+		// closing its idle conns after) forces a fresh CONNECT through the
+		// node selected right now.
+		probeClient, cerr := provider.NewClient(provider.ClientOptions{ProxyURL: probeURL, Timeout: opts.Timeout})
+		if cerr != nil {
+			out = append(out, NodeResult{Node: node, Verdict: "fail"})
+			continue
+		}
 		down := timedProbe(ctx, opts.Timeout, probeClient, fmt.Sprintf(speedDownURL, nbytes), false, 0)
 		up := timedProbe(ctx, opts.Timeout, probeClient, speedUpURL, true, nbytes/4)
+		probeClient.CloseIdleConnections()
 		nr := NodeResult{Node: node, DownKbps: down.Kbps, UpKbps: up.Kbps, DelayMS: proxyDelayFor(proxies, node)}
 		switch {
 		case !down.OK && !up.OK:
