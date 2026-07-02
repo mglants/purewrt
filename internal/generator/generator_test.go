@@ -1373,3 +1373,46 @@ func TestSourceCIDRRoutingRules(t *testing.T) {
 		t.Fatalf("source bypass must be emitted before source routing:\n%s", out)
 	}
 }
+
+func TestExcludedDeviceBypass(t *testing.T) {
+	c := config.Default()
+	c.Sections = []config.Section{{Name: "common", Enabled: true, Action: "proxy", TPROXYPort: 7893, IPv4Enabled: true}}
+	c.Devices = []config.Device{
+		{MAC: "aa:bb:cc:dd:ee:ff", Enabled: true, Exclude: true},
+		{MAC: "11:22:33:44:55:66", Enabled: true, Section: "common"},
+	}
+	out := string(NFTables(c))
+	if !strings.Contains(out, "ether saddr { aa:bb:cc:dd:ee:ff } return") {
+		t.Fatalf("excluded device must emit a MAC bypass return:\n%s", out)
+	}
+	// Exclude return must precede the section device rule (bypass outranks routing).
+	if strings.Index(out, "ether saddr { aa:bb:cc:dd:ee:ff } return") > strings.Index(out, "ether saddr { 11:22:33:44:55:66 }") {
+		t.Fatalf("excluded-device return must come before section device rules:\n%s", out)
+	}
+	// A disabled excluded device emits nothing.
+	c.Devices = []config.Device{{MAC: "aa:bb:cc:dd:ee:ff", Enabled: false, Exclude: true}}
+	if strings.Contains(string(NFTables(c)), "aa:bb:cc:dd:ee:ff") {
+		t.Fatalf("disabled excluded device must not emit a rule")
+	}
+}
+
+func TestMACBeatsCIDRDeterministic(t *testing.T) {
+	// A MAC assignment (low-priority section) and a source CIDR (high-priority
+	// section): the MAC rule must be emitted before the CIDR rule regardless of
+	// section priority, so MAC always wins.
+	c := config.Default()
+	c.Sections = []config.Section{
+		{Name: "hi", Enabled: true, Action: "proxy", TPROXYPort: 7801, IPv4Enabled: true, Priority: 10, SourceCIDR4: []string{"10.0.0.5/32"}},
+		{Name: "lo", Enabled: true, Action: "proxy", TPROXYPort: 7802, IPv4Enabled: true, Priority: 90},
+	}
+	c.Devices = []config.Device{{MAC: "aa:bb:cc:dd:ee:ff", Enabled: true, Section: "lo"}}
+	out := string(NFTables(c))
+	macIdx := strings.Index(out, "aa:bb:cc:dd:ee:ff")
+	cidrIdx := strings.Index(out, "10.0.0.5")
+	if macIdx < 0 || cidrIdx < 0 {
+		t.Fatalf("expected both MAC and CIDR rules:\n%s", out)
+	}
+	if macIdx > cidrIdx {
+		t.Fatalf("MAC rule (idx %d) must precede CIDR rule (idx %d) — MAC beats CIDR:\n%s", macIdx, cidrIdx, out)
+	}
+}

@@ -304,9 +304,24 @@ func applySection(c *Config, x struct {
 			MAC:     strings.ToLower(strings.TrimSpace(one(x.opts, "mac", ""))),
 			Section: one(x.opts, "section", ""),
 			Enabled: b(x.opts, "enabled", true),
+			Exclude: b(x.opts, "exclude", false),
 		}
 		if d.MAC != "" {
-			c.Devices = append(c.Devices, d)
+			// Dedupe by MAC. Historically device sections were written both
+			// anonymously (Go serializer) and named `dev_<mac>` (LuCI), so a
+			// single device could accumulate several sections — keeping the
+			// last-seen collapses them to one.
+			replaced := false
+			for i := range c.Devices {
+				if c.Devices[i].MAC == d.MAC {
+					c.Devices[i] = d
+					replaced = true
+					break
+				}
+			}
+			if !replaced {
+				c.Devices = append(c.Devices, d)
+			}
 		}
 	case "section":
 		c.Sections = append(c.Sections, Section{Name: x.name, Enabled: b(x.opts, "enabled", true), Action: one(x.opts, "action", "proxy"), TPROXYPort: i(x.opts, "tproxy_port", 7893), ProxyGroup: one(x.opts, "proxy_group", TitleASCII(x.name)), ProxyGroupType: one(x.opts, "proxy_group_type", "url-test"), ProxyFilter: one(x.opts, "proxy_filter", ""), ProxyExcludeFilter: one(x.opts, "proxy_exclude_filter", ""), ProxyStrategy: one(x.opts, "proxy_strategy", "sticky-sessions"), ProxyHealthCheckURL: one(x.opts, "proxy_health_check_url", ""), ProxyHealthCheckInterval: i(x.opts, "proxy_health_check_interval", 0), UserOverriddenProxyGroup: b(x.opts, "user_overridden_proxy_group", false), IPv4Enabled: b(x.opts, "ipv4_enabled", true), IPv6Enabled: b(x.opts, "ipv6_enabled", true), UDPMode: one(x.opts, "udp_mode", "proxy"), Priority: i(x.opts, "priority", 100), Mwan3Policy: one(x.opts, "mwan3_policy", ""), VPNs: list(x.opts, "vpns", nil), ZapretStrategies: list(x.opts, "zapret_strategy", nil), SourceCIDR4: list(x.opts, "source_cidr4", nil), SourceCIDR6: list(x.opts, "source_cidr6", nil)})

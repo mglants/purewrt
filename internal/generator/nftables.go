@@ -122,16 +122,26 @@ func NFTablesWithNative(c config.Config, native map[string][]string) []byte {
 		b.WriteString("    ip6 daddr @proxy_server_bypass6" + counterTag("proxy_server_bypass6") + " return\n")
 	}
 	writeSourceBypassRules(&b, c, includeIPv6)
+	// Devices excluded from purewrt: an early MAC `return` so the device routes
+	// direct as if purewrt weren't there — outranks every section assignment
+	// and the catch-all. Placed alongside the source-CIDR bypass returns.
+	writeExcludedDeviceRules(&b, c)
 	ordered := sectionsByPriority(c.Sections)
 	// Client-identity pass: device (MAC) + source (CIDR) assignments take
 	// precedence over destination-based routing, so a client explicitly
 	// assigned to a section routes ALL its traffic there — a VPN client
-	// tunnels everything even with no domain rules. Emitted in priority order,
-	// after the loop-breakers/LAN/bypass returns (so proxy clients can't loop
-	// back into TPROXY for the proxy-server IP) but before the destination
-	// reject/direct/proxy/vpn sets, which it outranks.
+	// tunnels everything even with no domain rules. Emitted after the
+	// loop-breakers/LAN/bypass returns (so proxy clients can't loop back into
+	// TPROXY for the proxy-server IP) but before the destination sets.
+	//
+	// Two passes so precedence is DETERMINISTIC and independent of section
+	// priority: ALL MAC (device) rules first, then ALL source-CIDR rules — so a
+	// client matched by MAC always wins over one matched by IP/CIDR, whichever
+	// sections they belong to. Section priority only orders rules within a pass.
 	for _, s := range ordered {
 		writeSectionDeviceRules(&b, c, s, includeIPv6)
+	}
+	for _, s := range ordered {
 		writeSectionSourceRules(&b, c, s, includeIPv6)
 	}
 	for _, set := range nftSetRefs("reject4") {
@@ -372,6 +382,24 @@ func writeSourceBypassRules(b *strings.Builder, c config.Config, includeIPv6 boo
 			b.WriteString("    ip6 saddr " + expr + " return\n")
 		}
 	}
+}
+
+// writeExcludedDeviceRules emits a single early `ether saddr { <macs> } return`
+// for every enabled device flagged Exclude — dropping that device's traffic
+// out of purewrt before any section or catch-all rule. `ether saddr` covers
+// both IP families in one match; same directly-attached-L2 limitation as the
+// other device rules.
+func writeExcludedDeviceRules(b *strings.Builder, c config.Config) {
+	var macs []string
+	for _, d := range c.Devices {
+		if d.Enabled && d.Exclude && d.MAC != "" {
+			macs = append(macs, d.MAC)
+		}
+	}
+	if len(macs) == 0 {
+		return
+	}
+	b.WriteString("    ether saddr { " + strings.Join(macs, ", ") + " } return\n")
 }
 
 // writeSectionDeviceRules emits per-device (MAC-based) routing for the

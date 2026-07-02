@@ -44,7 +44,7 @@ func TestConfigRoundTripPreservesKeyFields(t *testing.T) {
 	c.Subscriptions = []Subscription{{Name: "sub", Enabled: true, URL: "https://example.com/sub.yaml", Mode: "auto", PresetIfNoRules: "minimal", ImportRulesOnLowResource: true, AutoApply: true, Interval: 123, HWID: "sub-hwid", DeviceName: "router", UserAgent: "sub-agent", Headers: []string{"X-Sub: yes"}}}
 	c.ProxyProviders = []ProxyProvider{{Name: "pp", Enabled: true, Type: "http", URL: "https://example.com/pp.yaml", Interval: 456, Path: "/tmp/pp.yaml", HealthCheck: true, HealthCheckURL: "https://example.com/204", HealthCheckInterval: 30, Mwan3Policy: "wan", HWID: "pp-hwid", DeviceName: "pp-device", UserAgent: "pp-agent", Headers: []string{"X-PP: yes"}}}
 	c.RuleProviders = []RuleProvider{{Name: "rp", Enabled: true, Behavior: "domain", Format: "text", ParseMode: "native_import", URL: "https://example.com/rp.txt", Interval: 789, Path: "/tmp/rp.txt", Section: "common", HWID: "rp-hwid", DeviceName: "rp-device", UserAgent: "rp-agent", Headers: []string{"X-RP: yes"}}}
-	c.Devices = []Device{{Name: "pixel-7", MAC: "aa:bb:cc:dd:ee:ff", Section: "media", Enabled: true}, {Name: "tv", MAC: "11:22:33:44:55:66", Section: "", Enabled: false}}
+	c.Devices = []Device{{Name: "pixel-7", MAC: "aa:bb:cc:dd:ee:ff", Section: "media", Enabled: true}, {Name: "tv", MAC: "11:22:33:44:55:66", Section: "", Enabled: false}, {Name: "printer", MAC: "de:ad:be:ef:00:01", Exclude: true, Enabled: true}}
 	c.Sections[0].SourceCIDR4 = []string{"10.13.14.0/24"}
 	c.Sections[0].SourceCIDR6 = []string{"fd00::1/128"}
 	c.Sections[0].ProxyGroupType = "load-balance"

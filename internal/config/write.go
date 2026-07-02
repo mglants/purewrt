@@ -421,12 +421,26 @@ func writeVPN(b *bytes.Buffer, v VPN) {
 	opt(b, "interface", v.Interface)
 	fmt.Fprintln(b)
 }
+// deviceSectionName mirrors the LuCI Devices page's id convention
+// (`dev_<mac-without-colons>`) so the Go serializer and LuCI write the SAME
+// named section per device instead of Go emitting an anonymous one that
+// duplicates LuCI's — the mismatch left stale sections that couldn't be
+// unassigned. Named + dedupe-on-parse gives exactly one section per MAC.
+func deviceSectionName(mac string) string {
+	return "dev_" + strings.ReplaceAll(strings.ToLower(mac), ":", "")
+}
+
 func writeDevice(b *bytes.Buffer, d Device) {
-	fmt.Fprintln(b, "config device")
+	fmt.Fprintf(b, "config device %s\n", q(deviceSectionName(d.MAC)))
 	opt(b, "name", d.Name)
 	optb(b, "enabled", d.Enabled)
 	opt(b, "mac", d.MAC)
-	optNonEmpty(b, "section", d.Section)
+	// Section and Exclude are mutually exclusive; Exclude wins if both are set.
+	if d.Exclude {
+		optb(b, "exclude", true)
+	} else {
+		optNonEmpty(b, "section", d.Section)
+	}
 	fmt.Fprintln(b)
 }
 func writeSection(b *bytes.Buffer, s Section) {

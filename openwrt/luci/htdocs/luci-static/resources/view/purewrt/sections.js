@@ -28,131 +28,285 @@ function proxyMemberLabel(mem) {
 function devNormMac(mac) { return String(mac || '').toLowerCase(); }
 function deviceSectionID(mac) { return 'dev_' + devNormMac(mac).replace(/:/g, ''); }
 
-function collectDeviceRows(leases) {
-  var rows = {};
-  (leases || []).forEach(function(l) {
-    var mac = devNormMac(l.macaddr);
-    if (!mac) return;
-    rows[mac] = { mac: mac, hostname: l.hostname || '', ip: l.ipaddr || '', online: true, isStatic: false, section: '', enabled: true };
-  });
-  uci.sections('dhcp', 'host').forEach(function(h) {
-    var mac = devNormMac(h.mac);
-    if (!mac) return;
-    if (!rows[mac]) rows[mac] = { mac: mac, hostname: h.name || '', ip: h.ip || '', online: false, isStatic: true, section: '', enabled: true };
-    else rows[mac].isStatic = true;
-  });
-  uci.sections('purewrt', 'device').forEach(function(d) {
-    var mac = devNormMac(d.mac);
-    if (!mac) return;
-    if (!rows[mac]) rows[mac] = { mac: mac, hostname: d.name || '', ip: '', online: false, isStatic: false, section: '', enabled: true };
-    rows[mac].section = d.section || '';
-    rows[mac].enabled = (d.enabled || '1') === '1';
-    if (!rows[mac].hostname && d.name) rows[mac].hostname = d.name;
-  });
-  return Object.keys(rows).sort().map(function(k) { return rows[k]; });
-}
+// EXCLUDE is the synthetic target meaning "bypass purewrt entirely". For a
+// device it maps to a `device` section with exclude=1; for a CIDR it maps to
+// the `bypass` section's source_cidr lists.
+var EXCLUDE = '__exclude__';
 
-function deviceSectionChoices() {
-  var out = [ [ '', _('(unassigned — default routing)') ] ];
+// targetChoices — every enabled section + the Exclude option. Used by both the
+// device and IP/CIDR add-modals.
+function targetChoices() {
+  var out = [];
   uci.sections('purewrt', 'section').forEach(function(s) {
     if ((s.enabled || '1') !== '1') return;
     out.push([ s['.name'], s['.name'] + (s.action ? ' (' + s.action + ')' : '') ]);
   });
+  out.push([ EXCLUDE, _('Exclude from purewrt (bypass)') ]);
   return out;
 }
+function targetLabel(t) { return t === EXCLUDE ? _('excluded (bypass)') : t; }
 
-// buildDevicesSection renders the devices table + its own Save & Apply
-// (devices are dynamic lease-derived rows, not form.Map sections, so they
-// carry a self-contained save like the old Devices tab).
-function buildDevicesSection(leases) {
-  var rows = collectDeviceRows(leases);
-  var choices = deviceSectionChoices();
-
-  var table = E('table', { 'class': 'table cbi-section-table' }, [
-    E('tr', { 'class': 'tr table-titles' }, [
-      E('th', { 'class': 'th' }, _('Device')),
-      E('th', { 'class': 'th' }, _('MAC')),
-      E('th', { 'class': 'th' }, _('IPv4')),
-      E('th', { 'class': 'th' }, _('Lease')),
-      E('th', { 'class': 'th' }, _('Routing section')),
-      E('th', { 'class': 'th' }, _('Enabled'))
-    ])
-  ]);
-  if (!rows.length) {
-    table.appendChild(E('tr', { 'class': 'tr' }, E('td', { 'class': 'td', 'colspan': 6 }, E('em', {}, _('No known LAN devices — no DHCP leases and no saved assignments.')))));
-  }
-  rows.forEach(function(row) {
-    var badge = !row.online ? fmt.pill(_('offline'), 'muted') : (row.isStatic ? fmt.pill(_('static'), 'info') : fmt.pill(_('dynamic'), 'ok'));
-    var sel = E('select', { 'class': 'cbi-input-select' }, choices.map(function(ch) {
-      var o = E('option', { 'value': ch[0] }, ch[1]);
-      if (ch[0] === row.section) o.selected = true;
-      return o;
-    }));
-    var en = E('input', { 'type': 'checkbox' });
-    en.checked = row.enabled;
-    row._sel = sel;
-    row._en = en;
-    table.appendChild(E('tr', { 'class': 'tr' }, [
-      E('td', { 'class': 'td' }, row.hostname || E('em', {}, _('(unknown)'))),
-      E('td', { 'class': 'td', 'style': 'font-family:monospace' }, row.mac),
-      E('td', { 'class': 'td', 'style': 'font-family:monospace' }, row.ip || '—'),
-      E('td', { 'class': 'td' }, badge),
-      E('td', { 'class': 'td' }, sel),
-      E('td', { 'class': 'td' }, en)
-    ]));
+// targetSelect — an inline dropdown for editing a row's routing target
+// (sections + Exclude). Preserves a stale target (deleted/disabled section) as
+// a labelled option so it isn't silently changed on render.
+function targetSelect(current, onChange) {
+  var choices = targetChoices();
+  var known = choices.some(function(c) { return c[0] === current; });
+  var opts = choices.map(function(c) {
+    var o = E('option', { 'value': c[0] }, c[1]);
+    if (c[0] === current) o.selected = true;
+    return o;
   });
+  if (!known && current) {
+    var o = E('option', { 'value': current }, current + ' ' + _('(unavailable)'));
+    o.selected = true;
+    opts.unshift(o);
+  }
+  var sel = E('select', { 'class': 'cbi-input-select' }, opts);
+  sel.addEventListener('change', function() { onChange(sel.value); });
+  return sel;
+}
 
-  var saveBtn = E('button', { 'class': 'btn cbi-button cbi-button-apply', 'click': function(ev) {
-    ev.preventDefault();
-    // Only write (and apply) when something actually differs from the saved
-    // UCI — a no-op uci.apply() fails with ubus "No data received" (code 5).
-    var changed = false;
+// bypassSID resolves the `config bypass` section id (named 'bypass' by default).
+function bypassSID() {
+  var id = '';
+  uci.sections('purewrt', 'bypass').forEach(function(b) { if (!id) id = b['.name']; });
+  return id || 'bypass';
+}
+
+// managedDeviceRows — ONLY devices deliberately added (saved purewrt `device`
+// sections), deduped by MAC. Opt-in list; not the full LAN dump.
+function managedDeviceRows() {
+  var byMac = {};
+  uci.sections('purewrt', 'device').forEach(function(d) {
+    var mac = devNormMac(d.mac);
+    if (!mac) return;
+    byMac[mac] = {
+      mac: mac,
+      name: d.name || '',
+      target: (String(d.exclude) === '1' || d.exclude === true) ? EXCLUDE : (d.section || ''),
+      enabled: (d.enabled || '1') === '1'
+    };
+  });
+  return Object.keys(byMac).sort().map(function(k) { return byMac[k]; });
+}
+
+// knownDevices — MAC → {hostname, ip} from DHCP leases + static hosts, for the
+// add-device picker.
+function knownDevices(leases) {
+  var m = {};
+  (leases || []).forEach(function(l) { var mac = devNormMac(l.macaddr); if (mac) m[mac] = { hostname: l.hostname || '', ip: l.ipaddr || '' }; });
+  uci.sections('dhcp', 'host').forEach(function(h) { var mac = devNormMac(h.mac); if (mac && !m[mac]) m[mac] = { hostname: h.name || '', ip: h.ip || '' }; });
+  return m;
+}
+
+var MAC_RE = /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/;
+function precedenceNote() {
+  return _('Precedence: excluded devices/CIDRs bypass purewrt entirely (checked first); then device (MAC) assignments; then IP/CIDR assignments; then destination rules. A device matched by MAC always wins over one matched by IP/CIDR, regardless of section priority.');
+}
+
+// deviceSectionsForMac returns the ids of every purewrt `device` section whose
+// mac matches — used to purge duplicates/legacy sections on (re)assign/remove.
+function deviceSectionsForMac(mac) {
+  var ids = [];
+  uci.sections('purewrt', 'device').forEach(function(d) { if (devNormMac(d.mac) === mac) ids.push(d['.name']); });
+  return ids;
+}
+
+// buildDevicesSection — opt-in managed-device list. Every edit STAGES a UCI
+// change (add/remove/reassign device sections); the page's standard Save &
+// Apply commits it with LuCI's normal change diff, and purewrt reloads via its
+// procd config trigger (fingerprint-gated). No bespoke save button.
+function buildDevicesSection(leases) {
+  var known = knownDevices(leases);
+  var body = E('div');
+  // Resolve a display name from live leases/DHCP first (a hand-typed MAC still
+  // shows its current hostname), then the stored snapshot, then the MAC.
+  function displayName(mac, stored) { var k = known[mac]; return (k && k.hostname) || stored || mac; }
+
+  function renderRows() {
+    body.innerHTML = '';
+    var rows = managedDeviceRows();
+    var table = E('table', { 'class': 'table cbi-section-table' }, [
+      E('tr', { 'class': 'tr table-titles' }, [
+        E('th', { 'class': 'th' }, _('Device')), E('th', { 'class': 'th' }, _('MAC')),
+        E('th', { 'class': 'th' }, _('Routing target')), E('th', { 'class': 'th' }, _('Enabled')), E('th', { 'class': 'th' }, '')
+      ])
+    ]);
+    if (!rows.length)
+      table.appendChild(E('tr', { 'class': 'tr' }, E('td', { 'class': 'td', 'colspan': 5 }, E('em', {}, _('No managed devices — click “Add device”.')))));
     rows.forEach(function(row) {
-      var section = row._sel.value;
-      var enabled = row._en.checked ? '1' : '0';
       var sid = deviceSectionID(row.mac);
-      var exists = uci.get('purewrt', sid);
-      if (!section) {
-        if (exists) { uci.remove('purewrt', sid); changed = true; }
-        return;
-      }
-      if (!exists) {
-        uci.add('purewrt', 'device', sid);
-        changed = true;
-      } else if (uci.get('purewrt', sid, 'section') !== section ||
-                 (uci.get('purewrt', sid, 'enabled') || '1') !== enabled) {
-        changed = true;
-      }
-      uci.set('purewrt', sid, 'name', row.hostname || row.mac);
-      uci.set('purewrt', sid, 'mac', row.mac);
-      uci.set('purewrt', sid, 'section', section);
-      uci.set('purewrt', sid, 'enabled', enabled);
-    });
-    if (!changed) {
-      ui.addNotification(null, E('p', _('No device assignment changes to apply.')), 'info');
-      return;
-    }
-    ev.target.disabled = true;
-    uci.save()
-      .then(function() { return uci.apply(); })
-      .then(function() { return callReload(); })
-      .then(function() {
-        ui.addNotification(null, E('p', _('Device assignments saved and PureWRT applied')), 'info');
-        ev.target.disabled = false;
-      })
-      .catch(function(err) {
-        ui.addNotification(null, E('p', _('Save failed: ') + err), 'error');
-        ev.target.disabled = false;
+      var en = E('input', { 'type': 'checkbox' }); en.checked = row.enabled;
+      en.addEventListener('change', function() { uci.set('purewrt', sid, 'enabled', en.checked ? '1' : '0'); });
+      var sel = targetSelect(row.target, function(v) {
+        if (v === EXCLUDE) { uci.set('purewrt', sid, 'exclude', '1'); uci.unset('purewrt', sid, 'section'); }
+        else { uci.set('purewrt', sid, 'section', v); uci.unset('purewrt', sid, 'exclude'); }
+        renderRows();
       });
-  } }, _('Save & Apply devices'));
+      var rm = E('button', { 'class': 'btn cbi-button cbi-button-remove' }, _('Remove'));
+      rm.addEventListener('click', function(ev) { ev.preventDefault(); deviceSectionsForMac(row.mac).forEach(function(id) { uci.remove('purewrt', id); }); renderRows(); });
+      var dn = displayName(row.mac, row.name);
+      table.appendChild(E('tr', { 'class': 'tr' }, [
+        E('td', { 'class': 'td' }, dn || E('em', {}, _('(unknown)'))),
+        E('td', { 'class': 'td', 'style': 'font-family:monospace' }, row.mac),
+        E('td', { 'class': 'td' }, sel),
+        E('td', { 'class': 'td' }, en),
+        E('td', { 'class': 'td' }, rm)
+      ]));
+    });
+    body.appendChild(table);
+  }
+  renderRows();
+
+  var addBtn = E('button', { 'class': 'btn cbi-button cbi-button-action' }, [ '+ ', _('Add device') ]);
+  addBtn.addEventListener('click', function(ev) {
+    ev.preventDefault();
+    var have = {}; managedDeviceRows().forEach(function(r) { have[r.mac] = true; });
+    var picker = E('select', { 'class': 'cbi-input-select' });
+    picker.appendChild(E('option', { 'value': '' }, _('— pick a known device —')));
+    Object.keys(known).sort().forEach(function(mac) {
+      if (have[mac]) return;
+      var d = known[mac];
+      picker.appendChild(E('option', { 'value': mac }, (d.hostname || _('(unknown)')) + ' — ' + mac + (d.ip ? ' (' + d.ip + ')' : '')));
+    });
+    var macInput = E('input', { 'class': 'cbi-input-text', 'placeholder': 'aa:bb:cc:dd:ee:ff' });
+    picker.addEventListener('change', function() { if (picker.value) macInput.value = picker.value; });
+    var tgt = E('select', { 'class': 'cbi-input-select' }, targetChoices().map(function(c) { return E('option', { 'value': c[0] }, c[1]); }));
+    ui.showModal(_('Add device'), [
+      E('div', { 'class': 'cbi-value' }, [ E('label', { 'class': 'cbi-value-title' }, _('Known device')), E('div', { 'class': 'cbi-value-field' }, picker) ]),
+      E('div', { 'class': 'cbi-value' }, [ E('label', { 'class': 'cbi-value-title' }, _('MAC address')), E('div', { 'class': 'cbi-value-field' }, macInput) ]),
+      E('div', { 'class': 'cbi-value' }, [ E('label', { 'class': 'cbi-value-title' }, _('Route to')), E('div', { 'class': 'cbi-value-field' }, tgt) ]),
+      E('div', { 'class': 'right' }, [
+        E('button', { 'class': 'btn', 'click': ui.hideModal }, _('Cancel')), ' ',
+        E('button', { 'class': 'btn cbi-button cbi-button-action', 'click': function() {
+          var mac = devNormMac((macInput.value || '').trim());
+          if (!MAC_RE.test(mac)) { ui.addNotification(null, E('p', _('Enter a valid MAC address (aa:bb:cc:dd:ee:ff).')), 'warning'); return; }
+          if (have[mac]) { ui.addNotification(null, E('p', _('That device is already managed.')), 'warning'); return; }
+          ui.hideModal();
+          var sid = deviceSectionID(mac);
+          deviceSectionsForMac(mac).forEach(function(id) { uci.remove('purewrt', id); }); // drop any legacy/dupes
+          uci.add('purewrt', 'device', sid);
+          uci.set('purewrt', sid, 'mac', mac);
+          uci.set('purewrt', sid, 'name', displayName(mac, ''));
+          uci.set('purewrt', sid, 'enabled', '1');
+          if (tgt.value === EXCLUDE) uci.set('purewrt', sid, 'exclude', '1');
+          else uci.set('purewrt', sid, 'section', tgt.value);
+          renderRows();
+        } }, _('Add'))
+      ])
+    ]);
+  });
 
   return E('div', { 'class': 'cbi-section' }, [
     E('h3', {}, _('Devices')),
-    E('div', { 'class': 'cbi-section-descr' }, _(
-      'Route individual LAN devices through a section without writing CIDRs. Matching is MAC-based (survives DHCP renewals, covers IPv6) and only works for devices directly attached to this router’s LAN — clients behind a downstream router share its MAC.'
-    )),
-    table,
-    E('div', { 'style': 'margin-top:.5em' }, [ saveBtn ])
+    E('div', { 'class': 'cbi-section-descr' }, _('Opt-in per-device routing (MAC-based; directly-attached LAN only — clients behind a downstream router share its MAC). Add a device to route it through a section or exclude it from purewrt. Unlisted devices use default routing. Changes are staged — review + commit with Save & Apply.')),
+    body,
+    E('div', { 'style': 'margin-top:.5em' }, [ addBtn ])
+  ]);
+}
+
+// cidrKey / cidrTargetSID map a mapping row to the UCI list it lives in.
+function cidrKey(family) { return family === 6 ? 'source_cidr6' : 'source_cidr4'; }
+function cidrTargetSID(target) {
+  if (target !== EXCLUDE) return target;
+  var id = bypassSID();
+  if (!uci.get('purewrt', id)) uci.add('purewrt', 'bypass', id); // ensure the bypass section exists
+  return id;
+}
+function cidrListRemove(cidr, family, target) {
+  var sid = cidrTargetSID(target), key = cidrKey(family);
+  var list = (uci.get('purewrt', sid, key) || []).filter(function(c) { return c !== cidr; });
+  if (list.length) uci.set('purewrt', sid, key, list); else uci.unset('purewrt', sid, key);
+}
+function cidrListAdd(cidr, family, target) {
+  var sid = cidrTargetSID(target), key = cidrKey(family);
+  var list = (uci.get('purewrt', sid, key) || []).slice();
+  if (list.indexOf(cidr) < 0) list.push(cidr);
+  uci.set('purewrt', sid, key, list);
+}
+
+// buildCIDRSection — dedicated "IP/CIDR → section (or exclude)" mapping. Rows
+// come from every section's source_cidr4/6 + the bypass section's. Edits STAGE
+// UCI list changes (committed via the page's standard Save & Apply). One target
+// per CIDR (re-adding reassigns).
+function buildCIDRSection() {
+  var body = E('div');
+
+  function cidrRows() {
+    var rows = [];
+    uci.sections('purewrt', 'section').forEach(function(s) {
+      if ((s.enabled || '1') !== '1') return;
+      (s.source_cidr4 || []).forEach(function(c) { rows.push({ cidr: c, family: 4, target: s['.name'] }); });
+      (s.source_cidr6 || []).forEach(function(c) { rows.push({ cidr: c, family: 6, target: s['.name'] }); });
+    });
+    var bsid = bypassSID();
+    (uci.get('purewrt', bsid, 'source_cidr4') || []).forEach(function(c) { rows.push({ cidr: c, family: 4, target: EXCLUDE }); });
+    (uci.get('purewrt', bsid, 'source_cidr6') || []).forEach(function(c) { rows.push({ cidr: c, family: 6, target: EXCLUDE }); });
+    return rows;
+  }
+
+  function renderRows() {
+    body.innerHTML = '';
+    var rows = cidrRows();
+    var table = E('table', { 'class': 'table cbi-section-table' }, [
+      E('tr', { 'class': 'tr table-titles' }, [
+        E('th', { 'class': 'th' }, _('IP / CIDR')), E('th', { 'class': 'th' }, _('Family')),
+        E('th', { 'class': 'th' }, _('Routing target')), E('th', { 'class': 'th' }, '')
+      ])
+    ]);
+    if (!rows.length)
+      table.appendChild(E('tr', { 'class': 'tr' }, E('td', { 'class': 'td', 'colspan': 4 }, E('em', {}, _('No IP/CIDR mappings — click “Add IP/CIDR”.')))));
+    rows.forEach(function(row) {
+      var rm = E('button', { 'class': 'btn cbi-button cbi-button-remove' }, _('Remove'));
+      rm.addEventListener('click', function(ev) { ev.preventDefault(); cidrListRemove(row.cidr, row.family, row.target); renderRows(); });
+      var sel = targetSelect(row.target, function(v) {
+        if (v === row.target) return;
+        cidrListRemove(row.cidr, row.family, row.target);
+        cidrListAdd(row.cidr, row.family, v);
+        renderRows();
+      });
+      table.appendChild(E('tr', { 'class': 'tr' }, [
+        E('td', { 'class': 'td', 'style': 'font-family:monospace' }, row.cidr),
+        E('td', { 'class': 'td' }, 'IPv' + row.family),
+        E('td', { 'class': 'td' }, sel),
+        E('td', { 'class': 'td' }, rm)
+      ]));
+    });
+    body.appendChild(table);
+  }
+  renderRows();
+
+  var addBtn = E('button', { 'class': 'btn cbi-button cbi-button-action' }, [ '+ ', _('Add IP/CIDR') ]);
+  addBtn.addEventListener('click', function(ev) {
+    ev.preventDefault();
+    var cidrInput = E('input', { 'class': 'cbi-input-text', 'placeholder': '10.0.0.0/24 or 2001:db8::/48' });
+    var tgt = E('select', { 'class': 'cbi-input-select' }, targetChoices().map(function(c) { return E('option', { 'value': c[0] }, c[1]); }));
+    ui.showModal(_('Add IP/CIDR mapping'), [
+      E('div', { 'class': 'cbi-value' }, [ E('label', { 'class': 'cbi-value-title' }, _('IP or CIDR')), E('div', { 'class': 'cbi-value-field' }, cidrInput) ]),
+      E('div', { 'class': 'cbi-value' }, [ E('label', { 'class': 'cbi-value-title' }, _('Route to')), E('div', { 'class': 'cbi-value-field' }, tgt) ]),
+      E('div', { 'class': 'right' }, [
+        E('button', { 'class': 'btn', 'click': ui.hideModal }, _('Cancel')), ' ',
+        E('button', { 'class': 'btn cbi-button cbi-button-action', 'click': function() {
+          var cidr = (cidrInput.value || '').trim().toLowerCase();
+          if (!cidr) { ui.addNotification(null, E('p', _('Enter an IP or CIDR.')), 'warning'); return; }
+          var family = cidr.indexOf(':') >= 0 ? 6 : 4;
+          ui.hideModal();
+          // One target per CIDR — re-adding reassigns (purge any existing entry
+          // for this CIDR across every target first).
+          cidrRows().forEach(function(r) { if (r.cidr === cidr) cidrListRemove(r.cidr, r.family, r.target); });
+          cidrListAdd(cidr, family, tgt.value);
+          renderRows();
+        } }, _('Add'))
+      ])
+    ]);
+  });
+
+  return E('div', { 'class': 'cbi-section' }, [
+    E('h3', {}, _('IP / CIDR routing')),
+    E('div', { 'class': 'cbi-section-descr' }, _('Route source IPs/CIDRs through a section or exclude them from purewrt entirely. Each IP/CIDR maps to exactly one target. Changes are staged — review + commit with Save & Apply.')),
+    body,
+    E('div', { 'style': 'margin-top:.5em' }, [ addBtn ])
   ]);
 }
 
@@ -321,10 +475,8 @@ return view.extend({
     var priority = s.option(form.Value, 'priority', _('Routing order'));
     priority.datatype = 'integer';
     priority.description = _('Lower value has higher precedence and is emitted earlier in nftables routing rules.');
-    var source4 = s.option(form.DynamicList, 'source_cidr4', _('Source IPv4/CIDR routed by this section'));
-    source4.description = _('LAN/client source IPv4 addresses or CIDRs. Traffic from these sources uses this section action even without destination rule providers.');
-    var source6 = s.option(form.DynamicList, 'source_cidr6', _('Source IPv6/CIDR routed by this section'));
-    source6.description = _('LAN/client source IPv6 addresses or CIDRs. Ignored when IPv6 is disabled or low-resource mode is active.');
+    // Source CIDRs are edited in the dedicated "IP / CIDR routing" table below,
+    // not per-section here, so `source_cidr4/6` intentionally have no options.
     var udp = s.option(form.ListValue, 'udp_mode', _('UDP mode'));
     udp.value('proxy');
     udp.value('block_quic');
@@ -381,6 +533,10 @@ return view.extend({
           { label: _('Delete'), kind: 'delete', style: 'remove' }
         ]
       });
+      // Page order: Routing sections → IP/CIDR routing → Devices, with a
+      // shared precedence note.
+      root.appendChild(E('div', { 'class': 'cbi-section-descr', 'style': 'margin-top:1em' }, precedenceNote()));
+      root.appendChild(buildCIDRSection());
       root.appendChild(buildDevicesSection(leases));
       return root;
     });

@@ -387,6 +387,10 @@ type Device struct {
 	MAC     string // lowercase aa:bb:cc:dd:ee:ff
 	Section string // routing section name; empty = unassigned
 	Enabled bool
+	// Exclude bypasses purewrt entirely for this MAC (emits an early
+	// `ether saddr <mac> return` in prerouting) — the device routes direct as
+	// if purewrt weren't there. Mutually exclusive with Section.
+	Exclude bool
 }
 
 type Section struct {
