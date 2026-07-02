@@ -4,6 +4,62 @@ All notable changes to PureWRT are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are the `purewrt`
 package version.
 
+## [0.2.0] - 2026-07-02
+
+### Added
+- **`net-check` connectivity diagnostic.** Layered, topology-aware probe that
+  drives *real* download/upload through the proxy mixed-port and isolates the
+  failing stage — mihomo vs node vs routing vs WAN — so it catches nodes that
+  pass mihomo's url-test but can't actually carry data.
+  - Per-node throughput sweep (worst-first), domestic-direct WAN baseline,
+    DNS + nftset routing checks, and a config/service preamble.
+  - Adapts to topology: proxy / VPN-only probe the data path; zapret-only /
+    direct boxes surface DPI-bypass efficacy instead; unconfigured paths are
+    marked N/A rather than failed.
+  - Surfaced on the **Diagnostics** page (Run test / Per-node test), schedulable
+    via cron (`net_check_enabled` / `net_check_cron` / `net_check_bytes`), and
+    exported as Prometheus metrics (throughput, verdict, per-layer, per-node).
+- **Opt-in per-device and IP/CIDR routing** on the Sections page.
+  - Devices is now a managed opt-in list: **add** a device (from DHCP leases /
+    static hosts or a typed MAC) to assign it to a section **or exclude it from
+    purewrt entirely** — no more dumping every LAN device. Live hostname
+    resolution + inline editable target.
+  - Source CIDRs moved into a dedicated **IP/CIDR routing** table (assign to a
+    section or exclude), one target per CIDR, inline editable.
+  - Device **exclusion** is a new MAC bypass; CIDR exclusion reuses the existing
+    source-CIDR bypass. Edits stage into LuCI's normal change diff and commit via
+    the standard Save & Apply (purewrt reloads via its procd trigger).
+- **Zero-disruption apply.** mihomo hot-reloads in place on apply/update instead
+  of restarting, so established proxy connections survive; full restart only when
+  the controller moved or is gone.
+- **DNS routing-set preservation.** Apply snapshots + restores the dynamically
+  resolved `dns_*` nftset members so routing isn't blanked until clients
+  re-query; adds a **Flush DNS lists** diagnostics action + `flush-dns-sets` CLI.
+- **Background ASN database load** for the Client Traffic page (a slow/large DB
+  no longer stalls live capture), VLAN/bridge-aware LAN-interface detection, and
+  tighter live-capture `--max-seconds` teardown.
+- Design/investigation docs: `docs/resilient-dns.md`, `docs/multi-wan-proxy-egress.md`.
+
+### Changed
+- **Deterministic client-routing precedence:** excluded devices/CIDRs (bypass) →
+  device MAC assignments → source-CIDR assignments → destination rules. A client
+  matched by MAC now always wins over one matched by IP/CIDR, independent of
+  section priority.
+- Log panels filter out crond's crontab-line echoes (busybox crond logs every
+  loaded line at err level, which spammed the purewrt/update/OONI panels).
+
+### Fixed
+- **Catch-all resilience:** deleting or disabling the `common` section no longer
+  dangles the `MATCH,Common` rule — the catch-all falls back to **DIRECT** so
+  unmatched traffic degrades to direct internet instead of being black-holed
+  (with a soft warning in LuCI before you delete it).
+- **Per-node probe accuracy:** a fresh HTTP client per node prevents a reused
+  HTTPS CONNECT tunnel from routing one node's probe through the previously
+  selected node — dead nodes now correctly report `fail` instead of a false `ok`.
+- **Device-section dedup:** device assignments are written as named `dev_<mac>`
+  sections and deduped by MAC, fixing stale/anonymous sections that couldn't be
+  unassigned.
+
 ## [0.1.0] - 2026-06-22
 
 ### Added
