@@ -17,7 +17,12 @@ read_file() {
 read_logread() {
   pattern="$1"
   printf '{"path":"logread:%s","output":"' "$pattern"
-  logread 2>/dev/null | grep -Ei "$pattern" | tail -n 300 | json_string
+  # Drop crond's crontab-line echoes (`crond[PID]: line <cmd>`) — busybox crond
+  # logs every loaded line at err level, and since those lines contain the job
+  # command they match our purewrt/update/ooni patterns and spam the panels.
+  # Actual run markers (`crond[PID]: USER root ... cmd ...`) and the jobs' own
+  # `logger -t purewrt-cron|ooniprobe` output are kept.
+  logread 2>/dev/null | grep -Ei "$pattern" | grep -vE 'crond\[[0-9]+\]:[[:space:]]+line[[:space:]]' | tail -n 300 | json_string
   printf '"}'
 }
 
