@@ -239,12 +239,13 @@ func (m Manager) ZapretStrategyTest(opt ZapretStrategyTestOptions) (ZapretStrate
 }
 
 // ZapretStrategySweepStream tests each candidate in the shared list (optionally
-// filtered to one ISP) and invokes emit with each result AS it completes, so a
-// backgrounded caller can surface incremental progress instead of waiting for
-// the whole sweep. Results are unsorted (completion order); rank at display.
-func (m Manager) ZapretStrategySweepStream(iface string, sites []string, isp string, download bool, emit func(ZapretStrategyTestResult)) {
+// filtered by ISP and/or service) and invokes emit with each result AS it
+// completes, so a backgrounded caller can surface incremental progress instead
+// of waiting for the whole sweep. Results are unsorted (completion order); rank
+// at display.
+func (m Manager) ZapretStrategySweepStream(iface string, sites []string, isp, service string, download bool, emit func(ZapretStrategyTestResult)) {
 	list := config.LoadZapretCandidates()
-	for _, c := range zapretSelectCandidates(list.Candidates, isp) {
+	for _, c := range zapretSelectCandidates(list.Candidates, isp, service) {
 		res, _ := m.ZapretStrategyTest(ZapretStrategyTestOptions{
 			CmdOpts: c.Params, Interface: iface, Sites: sites, Blobs: c.Blobs, Download: download,
 		})
@@ -254,31 +255,45 @@ func (m Manager) ZapretStrategySweepStream(iface string, sites []string, isp str
 }
 
 // ZapretStrategySweep tests every candidate in the shared list against the
-// sites and returns results ranked by sites-fixed (then sites-passed). When
-// isp is non-empty, only candidates with that ISP are tested (empty = all).
+// sites and returns results ranked by sites-fixed (then sites-passed). isp and
+// service filter the candidate set (empty = no filter on that axis); service
+// uses wildcard semantics (generic candidates always included).
 // Long-running (each candidate is a full probe) — callers background it.
-func (m Manager) ZapretStrategySweep(iface string, sites []string, isp string, download bool) []ZapretStrategyTestResult {
+func (m Manager) ZapretStrategySweep(iface string, sites []string, isp, service string, download bool) []ZapretStrategyTestResult {
 	var out []ZapretStrategyTestResult
-	m.ZapretStrategySweepStream(iface, sites, isp, download, func(res ZapretStrategyTestResult) {
+	m.ZapretStrategySweepStream(iface, sites, isp, service, download, func(res ZapretStrategyTestResult) {
 		out = append(out, res)
 	})
 	rankStrategyResults(out)
 	return out
 }
 
-// zapretSelectCandidates returns the candidates to sweep: all when isp is
-// empty, else only those tagged with that ISP.
-func zapretSelectCandidates(cands []config.ZapretCandidate, isp string) []config.ZapretCandidate {
-	if isp == "" {
-		return cands
-	}
+// zapretSelectCandidates returns the candidates to sweep, filtered on two
+// orthogonal axes combined with AND: ISP (exact match; empty = any) and service
+// (empty = any). Service uses wildcard semantics via serviceMatches so a
+// generic/untagged strategy still surfaces in a service-scoped sweep.
+func zapretSelectCandidates(cands []config.ZapretCandidate, isp, service string) []config.ZapretCandidate {
 	var out []config.ZapretCandidate
 	for _, c := range cands {
-		if c.ISP == isp {
-			out = append(out, c)
+		if isp != "" && c.ISP != isp {
+			continue
 		}
+		if service != "" && !serviceMatches(c.Service, service) {
+			continue
+		}
+		out = append(out, c)
 	}
 	return out
+}
+
+// serviceMatches reports whether a candidate tagged candService should be
+// included when the sweep is scoped to want. Generic/untagged candidates are
+// wildcards (included in every service-scoped sweep); otherwise exact match.
+func serviceMatches(candService, want string) bool {
+	if candService == "" || candService == "generic" {
+		return true
+	}
+	return candService == want
 }
 
 // rankStrategyResults sorts sweep results in place, best first: most sites

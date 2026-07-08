@@ -62,16 +62,93 @@ func TestZapretSelectCandidates(t *testing.T) {
 		{Name: "c", ISP: "common"},
 		{Name: "d", ISP: "MТС (RU)"},
 	}
-	if got := zapretSelectCandidates(cands, ""); len(got) != 4 {
-		t.Fatalf("empty isp: got %d, want all 4", len(got))
+	if got := zapretSelectCandidates(cands, "", ""); len(got) != 4 {
+		t.Fatalf("empty filters: got %d, want all 4", len(got))
 	}
-	got := zapretSelectCandidates(cands, "common")
+	got := zapretSelectCandidates(cands, "common", "")
 	if len(got) != 2 || got[0].Name != "a" || got[1].Name != "c" {
 		t.Fatalf("isp=common: got %+v, want a,c", got)
 	}
-	if got := zapretSelectCandidates(cands, "nonexistent"); len(got) != 0 {
+	if got := zapretSelectCandidates(cands, "nonexistent", ""); len(got) != 0 {
 		t.Fatalf("unknown isp: got %d, want 0", len(got))
 	}
+}
+
+func TestZapretSelectCandidatesService(t *testing.T) {
+	t.Parallel()
+	cands := []config.ZapretCandidate{
+		{Name: "yt", ISP: "common", Service: "youtube"},
+		{Name: "dc", ISP: "common", Service: "discord"},
+		{Name: "gen", ISP: "common", Service: "generic"},
+		{Name: "untagged", ISP: "common"}, // empty Service = wildcard
+		{Name: "yt_rt", ISP: "Rostelecom (RU)", Service: "youtube"},
+	}
+	// service=youtube: youtube + generic + untagged (wildcards), not discord.
+	got := zapretSelectCandidates(cands, "", "youtube")
+	names := candidateNames(got)
+	if !sameSet(names, []string{"yt", "gen", "untagged", "yt_rt"}) {
+		t.Fatalf("service=youtube: got %v, want yt,gen,untagged,yt_rt", names)
+	}
+	// isp AND service combine.
+	got = zapretSelectCandidates(cands, "common", "youtube")
+	if !sameSet(candidateNames(got), []string{"yt", "gen", "untagged"}) {
+		t.Fatalf("isp=common+service=youtube: got %v, want yt,gen,untagged", candidateNames(got))
+	}
+	// service=discord excludes youtube but keeps generic/untagged wildcards.
+	got = zapretSelectCandidates(cands, "", "discord")
+	if !sameSet(candidateNames(got), []string{"dc", "gen", "untagged"}) {
+		t.Fatalf("service=discord: got %v, want dc,gen,untagged", candidateNames(got))
+	}
+	// empty service = no service filter (all 5).
+	if got := zapretSelectCandidates(cands, "", ""); len(got) != 5 {
+		t.Fatalf("empty service: got %d, want 5", len(got))
+	}
+}
+
+func TestServiceMatches(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		cand, want string
+		match      bool
+	}{
+		{"", "youtube", true},        // untagged is wildcard
+		{"generic", "youtube", true}, // generic is wildcard
+		{"youtube", "youtube", true}, // exact
+		{"discord", "youtube", false},
+		{"youtube", "discord", false},
+	}
+	for _, c := range cases {
+		if got := serviceMatches(c.cand, c.want); got != c.match {
+			t.Errorf("serviceMatches(%q,%q) = %v, want %v", c.cand, c.want, got, c.match)
+		}
+	}
+}
+
+func candidateNames(cs []config.ZapretCandidate) []string {
+	out := make([]string, len(cs))
+	for i, c := range cs {
+		out[i] = c.Name
+	}
+	return out
+}
+
+func sameSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	m := map[string]int{}
+	for _, s := range a {
+		m[s]++
+	}
+	for _, s := range b {
+		m[s]--
+	}
+	for _, v := range m {
+		if v != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func TestRankStrategyResults(t *testing.T) {

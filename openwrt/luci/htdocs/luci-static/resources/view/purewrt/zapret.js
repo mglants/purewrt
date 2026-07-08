@@ -36,7 +36,7 @@ var callZapretRestart = rpc.declare({ object: 'purewrt', method: 'zapret_restart
 // strategy tester; replaces the old hardcoded ZAPRET_PRESETS.
 var callZapretCandidates = rpc.declare({ object: 'purewrt', method: 'zapret_candidates', expect: { candidates: [] } });
 var callZapretStrategyTest = rpc.declare({ object: 'purewrt', method: 'zapret_strategy_test', params: [ 'name', 'interface', 'sites', 'download', 'suite' ] });
-var callZapretSweepStart = rpc.declare({ object: 'purewrt', method: 'zapret_strategy_sweep_start', params: [ 'interface', 'sites', 'isp', 'download', 'suite' ] });
+var callZapretSweepStart = rpc.declare({ object: 'purewrt', method: 'zapret_strategy_sweep_start', params: [ 'interface', 'sites', 'isp', 'service', 'download', 'suite' ] });
 var callZapretSweepStatus = rpc.declare({ object: 'purewrt', method: 'zapret_strategy_sweep_status', params: [ ] });
 
 // zapretPresets maps candidate name → its object (protocols/ports/pkt/params/
@@ -642,14 +642,34 @@ function renderStrategyTesterCard(networks, wanNets, wan6Nets, candidates) {
   isps.sort(function(a, b) { return a === 'common' ? -1 : b === 'common' ? 1 : a.localeCompare(b); });
   var ispSel = E('select', { 'class': 'cbi-input-select' });
   isps.forEach(function(v) { ispSel.appendChild(E('option', { 'value': v }, v)); });
+  // Service filter: distinct service values ("generic" first) + a leading "All
+  // services" (value "") so a sweep can span services. Generic/untagged
+  // candidates are wildcards — matched in every service scope (mirrors the
+  // backend serviceMatches rule).
+  var services = [];
+  candidates.forEach(function(c) {
+    var v = c.service || 'generic';
+    if (services.indexOf(v) < 0) services.push(v);
+  });
+  services.sort(function(a, b) { return a === 'generic' ? -1 : b === 'generic' ? 1 : a.localeCompare(b); });
+  var serviceSel = E('select', { 'class': 'cbi-input-select' });
+  serviceSel.appendChild(E('option', { 'value': '' }, _('All services')));
+  services.forEach(function(v) { serviceSel.appendChild(E('option', { 'value': v }, v)); });
+  function serviceMatches(candService, want) {
+    if (!want) return true;
+    var s = candService || 'generic';
+    return s === 'generic' || s === want;
+  }
   var candSel = E('select', { 'class': 'cbi-input-select' });
   function rebuildCandidates() {
     candSel.innerHTML = '';
     var isp = ispSel.value;
-    candidates.filter(function(c) { return (c.isp || 'common') === isp; })
+    var svc = serviceSel.value;
+    candidates.filter(function(c) { return (c.isp || 'common') === isp && serviceMatches(c.service, svc); })
       .forEach(function(c) { candSel.appendChild(E('option', { 'value': c.name }, c.name)); });
   }
   ispSel.addEventListener('change', rebuildCandidates);
+  serviceSel.addEventListener('change', rebuildCandidates);
   rebuildCandidates();
   var resultsBox = E('div', { 'style': 'margin:.5em 0' });
   var pollTimer = null;
@@ -739,8 +759,8 @@ function renderStrategyTesterCard(networks, wanNets, wan6Nets, candidates) {
   sweepBtn.addEventListener('click', function(ev) {
     ev.preventDefault();
     stopPolling();
-    resultsBox.innerHTML = _('Testing all %s candidates — this takes a while…').format(ispSel.value);
-    return callZapretSweepStart(wan.value, (sites.value || '').trim(), ispSel.value, dlVal(), suiteVal()).then(function(r) {
+    resultsBox.innerHTML = _('Testing all %s candidates — this takes a while…').format(serviceSel.value || ispSel.value);
+    return callZapretSweepStart(wan.value, (sites.value || '').trim(), ispSel.value, serviceSel.value, dlVal(), suiteVal()).then(function(r) {
       if (r && (r.result === 'started' || r.result === 'busy')) return pollSweep();
       ui.addNotification(null, E('p', _('Sweep failed to start.')), 'danger');
     }).catch(function(e) { stopPolling(); ui.addNotification(null, E('p', e.message), 'danger'); });
@@ -756,6 +776,7 @@ function renderStrategyTesterCard(networks, wanNets, wan6Nets, candidates) {
     row(_('Target suite'), suiteSel),
     row(_('WAN interface'), wan),
     row(_('ISP'), ispSel),
+    row(_('Service'), serviceSel),
     row(_('Candidate'), candSel),
     row(_('Download probe'), E('label', {}, [ dlChk, ' ', E('span', { 'class': 'purewrt-text-dim' }, _('verify bytes actually flow (catches throttling after handshake); slower')) ])),
     E('div', { 'style': 'margin:.5em 0' }, [ testBtn, sweepBtn ]),

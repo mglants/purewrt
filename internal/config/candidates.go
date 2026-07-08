@@ -51,10 +51,13 @@ func CanonicalBlobPath(file string) string {
 // ZapretCandidate is one strategy in the shared list — a superset of the LuCI
 // preset shape (adds ISP + Blobs) so it drives the preset dropdown, the
 // strategy tester, and Create-strategy staging from one source. Candidates are
-// grouped by ISP; "common" is the cross-ISP default set.
+// grouped along two orthogonal axes: ISP (network — "common" is the cross-ISP
+// default set) and Service (what the user is unblocking — youtube/discord/
+// games; empty or "generic" is a wildcard tried in every service-scoped sweep).
 type ZapretCandidate struct {
 	Name      string          `json:"name"`
-	ISP       string          `json:"isp"` // "common" | ISP label, e.g. "Rostelecom (RU)"
+	ISP       string          `json:"isp"`               // "common" | ISP label, e.g. "Rostelecom (RU)"
+	Service   string          `json:"service,omitempty"` // "" | "generic" | "youtube" | "discord" | "games"
 	Protocols []string        `json:"protocols"`
 	TCPPorts  string          `json:"tcp_ports"`
 	UDPPorts  string          `json:"udp_ports"`

@@ -1252,13 +1252,14 @@ var commands = []command{
 			printJSON(res)
 		}},
 	{name: "zapret-strategy-sweep", group: "Zapret (DPI bypass)",
-		args: "[iface] [--isp=<label>] [--download] [--suite=dpi] [site...]",
+		args: "[iface] [--isp=<label>] [--service=<label>] [--download] [--suite=dpi] [site...]",
 		desc: "Test every candidate, streaming ranked results",
 		run: func(m manager.Manager) {
-			// zapret-strategy-sweep [iface] [--isp=<label>] [--download] [site...] —
-			// test every candidate (optionally only those for one ISP), ranked.
+			// zapret-strategy-sweep [iface] [--isp=<label>] [--service=<label>] [--download] [site...] —
+			// test every candidate, optionally filtered by ISP and/or service, ranked.
 			iface := ""
 			isp := ""
+			service := ""
 			download := false
 			haveIface := false
 			var sites []string
@@ -1266,6 +1267,8 @@ var commands = []command{
 				switch {
 				case strings.HasPrefix(a, "--isp="):
 					isp = strings.TrimPrefix(a, "--isp=")
+				case strings.HasPrefix(a, "--service="):
+					service = strings.TrimPrefix(a, "--service=")
 				case a == "--download":
 					download = true
 				case a == "--suite=dpi":
@@ -1284,7 +1287,7 @@ var commands = []command{
 			// whole sweep. os.Stdout is unbuffered (an *os.File) → each line lands
 			// in the bg-job log immediately.
 			enc := json.NewEncoder(os.Stdout)
-			m.ZapretStrategySweepStream(iface, sites, isp, download, func(res manager.ZapretStrategyTestResult) {
+			m.ZapretStrategySweepStream(iface, sites, isp, service, download, func(res manager.ZapretStrategyTestResult) {
 				_ = enc.Encode(res)
 			})
 		}},
