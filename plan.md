@@ -10,27 +10,27 @@ Status legend: `[ ]` open · `[x]` fixed · `[~]` partially fixed
 
 | # | Status | Finding | Where | Severity |
 |---|--------|---------|-------|----------|
-| T1 | [ ] | Monolithic ~825-line switch dispatch; ad-hoc flag parsing (`stripFlag` main.go:86, `stripJSONFlag` main.go:33) per subcommand; no table-driven registry | `cmd/purewrt/main.go:148-972` | Med |
-| T2 | [~] | `client_traffic.go` still 1,824 LOC monolith. **Race concern resolved**: goroutines guard shared maps with `sync.Mutex` (d.mu.Lock at :464, :531, :545, :572, :712, :822, :1773). Remaining issue is modularity only → severity downgraded to Med | `internal/manager/client_traffic.go` | Med (was High) |
-| T3 | [ ] | Silent UCI parse failures — `if len(fields) < 2 { continue }` (uci.go:34-35); unrecognized directives silently ignored | `internal/config/uci.go:28-55` | Med |
+| T1 | [x] | **Done 2026-07-09**: switch replaced by table-driven `commands` registry (name/aliases/group/args/desc/handler) + `lookupCommand`; registry test guards uniqueness and help coverage | `cmd/purewrt/main.go` | — |
+| T2 | [x] | **Done 2026-07-09**: split into client_traffic.go (597 — types, entry points, emit), _pcap.go (562 — packet/DNS/TLS/QUIC decoding), _flow.go (338 — conntrack/flow state), _enrich.go (377 — ASN/hostname/nftset enrichment). Pure code movement; races were already mutex-guarded | `internal/manager/client_traffic*.go` | — |
+| T3 | [x] | **Done 2026-07-09**: parser warns on stderr with file:line for malformed lines, valueless options, options outside sections, unknown directives (`parseWarn`, uci.go) | `internal/config/uci.go` | — |
 | T4 | [ ] | No `Config.Validate()`; validation only in `manager.Validate()` (manager.go:958), surfaces at apply time | `internal/config/model.go`, `manager.go:958` | Med |
-| T5 | [ ] | `updateRuleProvidersAsync` has **no ctx parameter at all** (manager.go:624); goroutine at :691 runs to completion regardless | `internal/manager/manager.go:624-750` | Med |
-| T6 | [ ] | Best-effort errors discarded: `_, _ = config.Backup(m.ConfigPath)` (manager.go:518); `dumpMetrics` swallows via `_ = system.AtomicWrite` in notify.go. Intentional best-effort, but unlogged | `manager.go:518, 593`, `notify.go` | Low-Med |
-| T7 | [~] | Provider order for full-dedup **is explicit**: `orderedRuleProviders` sorts by priority-then-name (stream.go:161, :366-373). Missing: comment documenting winner semantics | `internal/generator/stream.go:161,366-373` | Low (was Med) |
-| T8 | [ ] | Mixin merge failure silently falls back to base config (`if err == nil { return merged } return base`, mihomo.go:18-20); no logging | `internal/generator/mihomo.go:13-21` | Med |
-| T9 | [~] | `cmd/purewrt/main_test.go` exists — one test, `TestExitCodeFor` (exit 3 partial vs 1 hard failure). No dispatch/flag-parsing tests | `cmd/purewrt/main_test.go` | Med |
+| T5 | [x] | **Done 2026-07-09**: fan-out takes a context with 10-min `ruleProviderUpdateBudget`; queued workers stop on cancellation instead of firing new downloads. (In-flight downloads still not ctx-aware — would need provider.DownloadWithOptions API change) | `internal/manager/manager.go` | — |
+| T6 | [x] | **Done 2026-07-09**: `config.Backup` warns centrally on stderr (covers all 8 best-effort call sites); `dumpMetrics` logs WARN on write failure | `internal/config/write.go`, `notify.go` | — |
+| T7 | [x] | **Done 2026-07-09**: `orderedRuleProviders` doc comment states the sort is load-bearing for full-dedup winner selection | `internal/generator/stream.go` | — |
+| T8 | [x] | **Done 2026-07-09**: mixin merge failure warns on stderr that the generated config lacks the user's overrides | `internal/generator/mihomo.go` | — |
+| T9 | [~] | **Improved 2026-07-09**: registry tests added (`TestCommandRegistry` — name/alias uniqueness, help metadata, group coverage; `TestLookupCommand` — alias resolution) alongside `TestExitCodeFor`. Handler bodies still untested (they shell out to Manager) | `cmd/purewrt/main_test.go` | Low |
 | T10 | [ ] | Only sentinel errors exist (`ErrPartialUpdate` in manager.go, `ErrLockBusy` in system/lock.go); no user-mistake vs I/O vs corrupt-state distinction | cross-cutting | Low |
 
 ### User experience & ease of use
 
 | # | Status | Finding | Where | Severity |
 |---|--------|---------|-------|----------|
-| U1 | [ ] | CLI help unusable — `usage()` is a single comma-separated line, no descriptions/grouping; no `case "help"` (falls to "unknown command" at main.go:970); no per-command `--help` | `cmd/purewrt/main.go:1050-1052` | Critical |
-| U2 | [ ] | No progress/phase on long jobs — `start_bg_job`/`poll_bg_job` return only `{running, rc, output}`; static `_('Downloading…')` (subscriptions.js:392) | dispatcher, `subscriptions.js` | High |
-| U3 | [~] | Partial validation: `datatype: 'uinteger'/'integer'` on numeric fields (settings.js, ruleproviders.js:468,471). Missing: cron (settings.js:159), URL (settings.js:176,290-292), CIDR, regex | `settings.js`, `sections.js`, `ruleproviders.js` | High |
-| U4 | [ ] | Errors still truncated: `.slice(-400)` / `.slice(0,400)` (subscriptions.js:124,129); dispatcher `tail -n 500` (rpcd:127); no collapsible full-error display | dispatcher, `subscriptions.js:124-129` | High |
+| U1 | [x] | **Done 2026-07-09**: `purewrt help` prints commands grouped by area with descriptions; `purewrt help <cmd>` gives per-command synopsis + aliases; `-h`/`--help` work; unknown command prints a hint to stderr | `cmd/purewrt/main.go` | — |
+| U2 | [x] | **Done 2026-07-09**: `bg_job.run()` takes an `onProgress` callback ({elapsedMs, output} per poll); provider-update UI shows elapsed + last log line live, ipdb download shows elapsed seconds; zapret blockcheck/sweep already streamed | `bg_job.js`, `update_async.js`, views | — |
+| U3 | [x] | **Done 2026-07-09**: shared `validateCron`/`validateHTTPURL`/`validateCIDR` in purewrt.format; wired into settings (crons, URLs), subscriptions (cron, URL), rule/proxy provider URLs, IP/CIDR add-modal | `format.js` + 5 views | — |
+| U4 | [x] | **Done 2026-07-09**: `fmt.errorDetails` renders summary + full output in collapsible details; all `.slice(400)` sites replaced (subscriptions, diagnostics, save_chain); `poll_bg_job` tail 500→1000 lines | `format.js`, views, dispatcher | — |
 | U5 | [ ] | Wizard re-run still wipes all config — `m.WizardReset()` (wizard.js:238) unconditional; warning banner exists (wizard.js:332) but no partial-reconfigure path | `wizard.js:238,332` | Med |
-| U6 | [~] | Cache mode + rule dedup mode now described (settings.js:222-239); resource profile described in wizard.js:821-824. Remaining: label consistency ("Mihomo binary", DNS "upstreams" terminology) | `settings.js`, `dns.js:83-85` | Low (was Med) |
+| U6 | [x] | **Done 2026-07-09**: "Mihomo binary path"/"Mihomo config path" labels + descriptions, update-channel description (alpha=prerelease, auto-update opt-in), DoH upstreams description added | `settings.js`, `dns.js` | — |
 | U7 | [ ] | Polling hardcoded: `POLL_MS = 3000` (logs.js:56), `setTimeout(..., 2000)` (client_traffic.js:671,790; mihomo.js:270) | LuCI views | Low |
 | U8 | [x] | **Review finding was wrong**: `MihomoAutoUpdateEnabled: false` — auto-update is opt-in (model.go:539 area). Channel default is `alpha` but nothing auto-installs without consent. No action needed | `internal/config/model.go:539` | — |
 | U9 | [ ] | `wizard.js` 1,546 lines; `zapret.js` 1,091 lines | LuCI views | Low |
@@ -57,21 +57,30 @@ Status legend: `[ ]` open · `[x]` fixed · `[~]` partially fixed
 5. ~~**Z4** aggregate blob errors + reject empty fetches~~ — done 2026-07-09.
 6. Commit the WIP.
 
-### Phase 2 — CLI help & error surfacing (biggest UX win per effort)
+### Phase 2 — CLI help & error surfacing — DONE 2026-07-09 (commit 0629a70)
 
-7. **U1 + T1**: structured CLI help — grouped, described command table; `purewrt help [cmd]`. Convert dispatch to table-driven registry (name → {args, desc, handler}). Also makes T9 fully testable.
-8. **U4**: stop truncating errors in LuCI — dispatcher returns full output; views render collapsible details.
-9. **T6 + T8 + T3**: log best-effort failures and mixin merge failures at WARN; warn on skipped UCI lines.
+7. ~~**U1 + T1** registry + grouped help~~ — done.
+8. ~~**U4** full errors, collapsible details~~ — done.
+9. ~~**T6 + T8 + T3** loud fallbacks~~ — done.
 
-### Phase 3 — Form validation & progress feedback
+### Phase 3 — Form validation & progress feedback — DONE 2026-07-09
 
-10. **U3** (remaining): validate cron/URL/CIDR/regex in LuCI forms (numerics already done).
-11. **U2**: background jobs write progress/phase line to status file; views poll and show phase + elapsed. Sweep already streams incrementally — extend to blockcheck/ipdb.
-12. **U6** (remaining): label consistency pass only (descriptions largely done).
+10. ~~**U3** cron/URL/CIDR validation~~ — done.
+11. ~~**U2** live progress on background jobs~~ — done.
+12. ~~**U6** label/description pass~~ — done.
 
-### Phase 4 — Structural debt (opportunistic)
+### Phase 4 — Structural debt
 
-13. **T2**: split `client_traffic.go` into pcap-decode / flow-state / enrichment files (races already mutex-guarded — modularity only).
-14. **T5**: thread context through `updateRuleProvidersAsync`; check ctx.Done() in workers.
-15. **T7** (remaining): one comment on `orderedRuleProviders` documenting dedup-winner semantics (sort already explicit).
+13. ~~**T2** split `client_traffic.go`~~ — done (4 files, no behavior change).
+14. ~~**T5** context in update fan-out~~ — done (10-min budget; in-flight downloads still not ctx-aware).
+15. ~~**T7** dedup-winner comment~~ — done.
 16. ~~**U8** channel/auto-update defaults~~ — non-issue: auto-update already off by default.
+
+### Remaining open (not scheduled)
+
+- **T4** — no `Config.Validate()`; validation stays in `manager.Validate()` (works, surfaces at apply time; a config-side validator is a larger refactor).
+- **T10** — structured error taxonomy (only `ErrPartialUpdate`/`ErrLockBusy` sentinels exist).
+- **U5** — wizard still resets everything on re-run (warning banner exists; partial-reconfigure is a feature design question).
+- **U7** — polling intervals hardcoded (3s logs / 2s traffic) — cosmetic, low value.
+- **U9** — wizard.js/zapret.js single-file size — cosmetic.
+- **Z6 residue** — 1s nfqws bind sleep (now a `zapretBindDelay` var, tunable).
