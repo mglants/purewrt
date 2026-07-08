@@ -35,8 +35,7 @@ var callZapretRestart = rpc.declare({ object: 'purewrt', method: 'zapret_restart
 // purewrt-lists, resolved by the CLI). Drives both the preset dropdown and the
 // strategy tester; replaces the old hardcoded ZAPRET_PRESETS.
 var callZapretCandidates = rpc.declare({ object: 'purewrt', method: 'zapret_candidates', expect: { candidates: [] } });
-var callZapretStrategyTest = rpc.declare({ object: 'purewrt', method: 'zapret_strategy_test', params: [ 'name', 'interface', 'sites', 'download', 'suite' ] });
-var callZapretSweepStart = rpc.declare({ object: 'purewrt', method: 'zapret_strategy_sweep_start', params: [ 'interface', 'sites', 'isp', 'service', 'download', 'suite' ] });
+var callZapretSweepStart = rpc.declare({ object: 'purewrt', method: 'zapret_strategy_sweep_start', params: [ 'interface', 'sites', 'isp', 'service', 'name', 'download', 'suite' ] });
 var callZapretSweepStatus = rpc.declare({ object: 'purewrt', method: 'zapret_strategy_sweep_status', params: [ ] });
 
 // zapretPresets maps candidate name → its object (protocols/ports/pkt/params/
@@ -747,23 +746,27 @@ function renderStrategyTesterCard(networks, wanNets, wan6Nets, candidates) {
     E('option', { 'value': 'dpi' }, _('DPI-checkers suite (CDN hosts)'))
   ]);
   var suiteVal = function() { return suiteSel.value; };
+  // Both buttons run through the sweep bg-job (start + poll). A single full
+  // nfqws probe can take 30-60 s — longer than LuCI's rpc XHR timeout — so the
+  // old synchronous single-test call ("XHR request timed out"). "Test selected"
+  // is just a sweep narrowed to one candidate via the name filter.
+  function startSweep(nameFilter, label) {
+    stopPolling();
+    resultsBox.innerHTML = label;
+    return callZapretSweepStart(wan.value, (sites.value || '').trim(), ispSel.value, serviceSel.value, nameFilter, dlVal(), suiteVal()).then(function(r) {
+      if (r && (r.result === 'started' || r.result === 'busy')) return pollSweep();
+      ui.addNotification(null, E('p', _('Test failed to start.')), 'danger');
+    }).catch(function(e) { stopPolling(); ui.addNotification(null, E('p', e.message), 'danger'); });
+  }
   var testBtn = E('button', { 'class': 'btn cbi-button cbi-button-action' }, [ _('Test selected') ]);
   testBtn.addEventListener('click', function(ev) {
     ev.preventDefault();
-    resultsBox.innerHTML = _('Testing %s…').format(candSel.value);
-    return callZapretStrategyTest(candSel.value, wan.value, (sites.value || '').trim(), dlVal(), suiteVal()).then(function(r) {
-      renderRows([r]);
-    }).catch(function(e) { ui.addNotification(null, E('p', e.message), 'danger'); });
+    return startSweep(candSel.value, _('Testing %s…').format(candSel.value));
   });
   var sweepBtn = E('button', { 'class': 'btn cbi-button cbi-button-apply', 'style': 'margin-left:.5em' }, [ _('Test all') ]);
   sweepBtn.addEventListener('click', function(ev) {
     ev.preventDefault();
-    stopPolling();
-    resultsBox.innerHTML = _('Testing all %s candidates — this takes a while…').format(serviceSel.value || ispSel.value);
-    return callZapretSweepStart(wan.value, (sites.value || '').trim(), ispSel.value, serviceSel.value, dlVal(), suiteVal()).then(function(r) {
-      if (r && (r.result === 'started' || r.result === 'busy')) return pollSweep();
-      ui.addNotification(null, E('p', _('Sweep failed to start.')), 'danger');
-    }).catch(function(e) { stopPolling(); ui.addNotification(null, E('p', e.message), 'danger'); });
+    return startSweep('', _('Testing all %s candidates — this takes a while…').format(serviceSel.value || ispSel.value));
   });
   window.setTimeout(function() { callZapretSweepStatus().then(function(r) { if (r && (r.running === 1 || r.running === true)) pollSweep(); }).catch(function() {}); }, 0);
   var row = function(label, control) {

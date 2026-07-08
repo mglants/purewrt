@@ -239,13 +239,19 @@ func (m Manager) ZapretStrategyTest(opt ZapretStrategyTestOptions) (ZapretStrate
 }
 
 // ZapretStrategySweepStream tests each candidate in the shared list (optionally
-// filtered by ISP and/or service) and invokes emit with each result AS it
-// completes, so a backgrounded caller can surface incremental progress instead
-// of waiting for the whole sweep. Results are unsorted (completion order); rank
-// at display.
-func (m Manager) ZapretStrategySweepStream(iface string, sites []string, isp, service string, download bool, emit func(ZapretStrategyTestResult)) {
+// filtered by ISP and/or service, or narrowed to a single candidate by name)
+// and invokes emit with each result AS it completes, so a backgrounded caller
+// can surface incremental progress instead of waiting for the whole sweep. When
+// name is non-empty only that candidate runs — this is how the LuCI "Test
+// selected" button reuses the sweep's bg-job path instead of a synchronous rpc
+// call (which times out the XHR on a full nfqws probe). Results are unsorted
+// (completion order); rank at display.
+func (m Manager) ZapretStrategySweepStream(iface string, sites []string, isp, service, name string, download bool, emit func(ZapretStrategyTestResult)) {
 	list := config.LoadZapretCandidates()
 	for _, c := range zapretSelectCandidates(list.Candidates, isp, service) {
+		if name != "" && c.Name != name {
+			continue
+		}
 		res, _ := m.ZapretStrategyTest(ZapretStrategyTestOptions{
 			CmdOpts: c.Params, Interface: iface, Sites: sites, Blobs: c.Blobs, Download: download,
 		})
@@ -257,11 +263,12 @@ func (m Manager) ZapretStrategySweepStream(iface string, sites []string, isp, se
 // ZapretStrategySweep tests every candidate in the shared list against the
 // sites and returns results ranked by sites-fixed (then sites-passed). isp and
 // service filter the candidate set (empty = no filter on that axis); service
-// uses wildcard semantics (generic candidates always included).
+// uses wildcard semantics (generic candidates always included). name, when set,
+// narrows to a single candidate.
 // Long-running (each candidate is a full probe) — callers background it.
-func (m Manager) ZapretStrategySweep(iface string, sites []string, isp, service string, download bool) []ZapretStrategyTestResult {
+func (m Manager) ZapretStrategySweep(iface string, sites []string, isp, service, name string, download bool) []ZapretStrategyTestResult {
 	var out []ZapretStrategyTestResult
-	m.ZapretStrategySweepStream(iface, sites, isp, service, download, func(res ZapretStrategyTestResult) {
+	m.ZapretStrategySweepStream(iface, sites, isp, service, name, download, func(res ZapretStrategyTestResult) {
 		out = append(out, res)
 	})
 	rankStrategyResults(out)
