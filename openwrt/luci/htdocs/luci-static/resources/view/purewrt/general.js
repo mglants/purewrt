@@ -303,7 +303,7 @@ function zapretPendingBanner() {
   var basePath = window.location.pathname.replace(/\/general\/?$/, '');
   return E('div', { 'class': 'purewrt-banner purewrt-banner-warn' }, [
     E('strong', {}, _('DPI bypass pending: ')),
-    _('the setup wizard noted you plan to configure zapret. Open the Zapret tab to set up desync strategies (or run the autotune). '),
+    _('the setup wizard noted you plan to configure zapret. Open the Zapret tab to set up desync strategies (or run Blockcheck to find one). '),
     E('a', { 'href': basePath + '/zapret', 'style': 'color:white;text-decoration:underline' }, _('Open Zapret'))
   ]);
 }

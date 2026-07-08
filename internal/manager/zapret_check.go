@@ -52,14 +52,20 @@ func (m Manager) ZapretCheckStrategyWithOptionsWriter(domain string, opt ZapretC
 	return err
 }
 
-func (m Manager) zapretCheckStrategyWithOptions(domain string, opt ZapretCheckOptions, w io.Writer) (string, error) {
-	domain = strings.TrimSpace(domain)
+func (m Manager) zapretCheckStrategyWithOptions(hostsArg string, opt ZapretCheckOptions, w io.Writer) (string, error) {
+	// hostsArg is one or more whitespace-separated domains. A single host is
+	// the classic manual blockcheck; 2+ makes blockcheck2.sh emit a "* COMMON"
+	// block (the intersection strategy that works for every host) — this is
+	// what the merged autotune case relies on.
+	hosts := strings.Fields(strings.TrimSpace(hostsArg))
 	iface := strings.TrimSpace(opt.Interface)
-	if domain == "" {
-		return "", fmt.Errorf("domain is required")
+	if len(hosts) == 0 {
+		return "", fmt.Errorf("at least one domain is required")
 	}
-	if strings.ContainsAny(domain, " \t\r\n;&|`$()<>\"'") {
-		return "", fmt.Errorf("domain contains unsupported characters")
+	for _, h := range hosts {
+		if strings.ContainsAny(h, " \t\r\n;&|`$()<>\"'") {
+			return "", fmt.Errorf("domain %q contains unsupported characters", h)
+		}
 	}
 	if iface != "" && strings.ContainsAny(iface, " \t\r\n;&|`$()<>\"'") {
 		return "", fmt.Errorf("interface contains unsupported characters")
@@ -76,10 +82,22 @@ func (m Manager) zapretCheckStrategyWithOptions(domain string, opt ZapretCheckOp
 	}
 
 	c, _ := m.Load()
-	warning := zapretCheckRuleWarning(c, domain)
-	excluded, excludeOut := m.temporarilyExcludeZapretCheckDomain(ctxForDNS(), domain)
-	if excluded {
-		defer m.removeTemporaryZapretCheckExclusion(domain)
+	// Per-host: warn if a host is claimed by a non-zapret rule provider, and
+	// temporarily bypass its resolved IPs so the probe goes direct instead of
+	// through the current PureWRT routing.
+	var warning string
+	var excludeOut string
+	var excludedHosts []string
+	for _, h := range hosts {
+		warning += zapretCheckRuleWarning(c, h)
+		excluded, msg := m.temporarilyExcludeZapretCheckDomain(ctxForDNS(), h)
+		excludeOut += zapretCheckExclusionMessage(h, excluded, msg)
+		if excluded {
+			excludedHosts = append(excludedHosts, h)
+		}
+	}
+	for _, h := range excludedHosts {
+		defer m.removeTemporaryZapretCheckExclusion(h)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -87,7 +105,7 @@ func (m Manager) zapretCheckStrategyWithOptions(domain string, opt ZapretCheckOp
 	cmd := exec.CommandContext(ctx, script)
 	cmd.Env = append(os.Environ(),
 		"BATCH=1",
-		"DOMAINS="+domain,
+		"DOMAINS="+strings.Join(hosts, " "),
 		"CURL_CMD=1",
 		"CURL_MAX_TIME=4",
 		"CURL_MAX_TIME_QUIC=4",
@@ -109,7 +127,7 @@ func (m Manager) zapretCheckStrategyWithOptions(domain string, opt ZapretCheckOp
 		cmd.Env = append(cmd.Env, "PKTWSD="+bin)
 	}
 
-	prefix := zapretCheckInterfaceMessage(iface) + zapretCheckExclusionMessage(domain, excluded, excludeOut) + warning
+	prefix := zapretCheckInterfaceMessage(iface) + excludeOut + warning
 	if w != nil && prefix != "" {
 		_, _ = io.WriteString(w, prefix)
 	}

@@ -392,6 +392,7 @@ func writeZapretProfile(b *bytes.Buffer, p ZapretProfile) {
 	opt(b, "nfqws_bin", p.NFQWSBin)
 	opt(b, "tpws_bin", p.TPWSBin)
 	optNonEmpty(b, "lua_bundle_dir", p.LuaBundleDir)
+	listv(b, "blob", p.Blobs)
 	fmt.Fprintln(b)
 }
 
@@ -409,7 +410,6 @@ func writeZapretStrategy(b *bytes.Buffer, s ZapretStrategy) {
 	opti(b, "tcp_pkt_in", s.TCPPktIn)
 	opti(b, "udp_pkt_out", s.UDPPktOut)
 	opti(b, "udp_pkt_in", s.UDPPktIn)
-	opt(b, "fake_dir", s.FakeDir)
 	opt(b, "params", s.Params)
 	fmt.Fprintln(b)
 }

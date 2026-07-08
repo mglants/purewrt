@@ -19,23 +19,30 @@ var callZapretInstalled = rpc.declare({ object: 'purewrt', method: 'zapret_insta
 // top-level JSON arrays; expect.updates unwraps it back to the array.
 var callApkUpdates = rpc.declare({ object: 'purewrt', method: 'apk_updates_available', params: [ 'force' ], expect: { updates: [] } });
 
-var callZapretCheck = rpc.declare({ object: 'purewrt', method: 'zapret_check', params: [ 'domain', 'interface', 'scan', 'repeats', 'http', 'tls12', 'tls13', 'http3', 'https_get' ] });
-var callZapretCheckStart = rpc.declare({ object: 'purewrt', method: 'zapret_check_start', params: [ 'domain', 'interface', 'scan', 'repeats', 'http', 'tls12', 'tls13', 'http3', 'https_get' ] });
+// The Blockcheck tool (merged single-host + multi-host). `hosts` is one or
+// more whitespace-separated domains; the CLI splits on whitespace and, for
+// 2+ hosts, blockcheck2.sh emits a COMMON-intersection strategy.
+var callZapretCheck = rpc.declare({ object: 'purewrt', method: 'zapret_check', params: [ 'hosts', 'interface', 'scan', 'repeats', 'http', 'tls12', 'tls13', 'http3', 'https_get' ] });
+var callZapretCheckStart = rpc.declare({ object: 'purewrt', method: 'zapret_check_start', params: [ 'hosts', 'interface', 'scan', 'repeats', 'http', 'tls12', 'tls13', 'http3', 'https_get' ] });
 var callZapretCheckStatus = rpc.declare({ object: 'purewrt', method: 'zapret_check_status', params: [ ] });
+var callZapretCheckStop = rpc.declare({ object: 'purewrt', method: 'zapret_check_stop' });
 var callZapretCompiledOpt = rpc.declare({ object: 'purewrt', method: 'zapret_compiled_opt', expect: { output: '' } });
+// zapret_blobs lists shipped nfqws2 fake-payload .bin files for the profile
+// blob picker. Envelope object (ubus rejects top-level arrays) unwrapped to [].
+var callZapretBlobs = rpc.declare({ object: 'purewrt', method: 'zapret_blobs', expect: { blobs: [] } });
 var callZapretRestart = rpc.declare({ object: 'purewrt', method: 'zapret_restart' });
-var callZapretAutotune = rpc.declare({ object: 'purewrt', method: 'zapret_autotune', params: [ 'hosts' ], expect: { output: '' } });
-var callZapretAutotuneStart = rpc.declare({ object: 'purewrt', method: 'zapret_autotune_start', params: [ 'hosts' ] });
-var callZapretAutotuneStatus = rpc.declare({ object: 'purewrt', method: 'zapret_autotune_status', params: [ ] });
+// Shared strategy candidate list (single source of truth — embed / /etc /
+// purewrt-lists, resolved by the CLI). Drives both the preset dropdown and the
+// strategy tester; replaces the old hardcoded ZAPRET_PRESETS.
+var callZapretCandidates = rpc.declare({ object: 'purewrt', method: 'zapret_candidates', expect: { candidates: [] } });
+var callZapretStrategyTest = rpc.declare({ object: 'purewrt', method: 'zapret_strategy_test', params: [ 'name', 'interface', 'sites', 'download', 'suite' ] });
+var callZapretSweepStart = rpc.declare({ object: 'purewrt', method: 'zapret_strategy_sweep_start', params: [ 'interface', 'sites', 'isp', 'download', 'suite' ] });
+var callZapretSweepStatus = rpc.declare({ object: 'purewrt', method: 'zapret_strategy_sweep_status', params: [ ] });
 
-var ZAPRET_PRESETS = {
-  youtube_tcp: { protocols: [ 'tcp' ], tcp_ports: '443', udp_ports: '', tcp_pkt_out: '15', tcp_pkt_in: '6', udp_pkt_out: '0', udp_pkt_in: '0', fake_dir: '/usr/lib/zapret/fake', params: '--filter-tcp=443 --payload=tls_client_hello --lua-desync=fake:blob=fake_default_tls --lua-desync=multisplit' },
-  youtube_quic: { protocols: [ 'udp' ], tcp_ports: '', udp_ports: '443', tcp_pkt_out: '0', tcp_pkt_in: '0', udp_pkt_out: '9', udp_pkt_in: '0', fake_dir: '/usr/lib/zapret/fake', params: '--filter-udp=443 --dpi-desync=fake --dpi-desync-repeats=6' },
-  googlevideo_tcp: { protocols: [ 'tcp' ], tcp_ports: '443', udp_ports: '', tcp_pkt_out: '15', tcp_pkt_in: '6', udp_pkt_out: '0', udp_pkt_in: '0', fake_dir: '/usr/lib/zapret/fake', params: '--filter-tcp=443 --payload=tls_client_hello --lua-desync=fake:blob=fake_default_tls --lua-desync=multisplit' },
-  discord_voice_udp: { protocols: [ 'udp' ], tcp_ports: '', udp_ports: '443,50000-65535', tcp_pkt_out: '0', tcp_pkt_in: '0', udp_pkt_out: '9', udp_pkt_in: '3', fake_dir: '/usr/lib/zapret/fake', params: '--filter-udp=443,50000-65535 --dpi-desync=fake --dpi-desync-repeats=6' },
-  rkn_https: { protocols: [ 'tcp' ], tcp_ports: '443,2053,2083,2087,2096,8443', udp_ports: '', tcp_pkt_out: '15', tcp_pkt_in: '6', udp_pkt_out: '0', udp_pkt_in: '0', fake_dir: '/usr/lib/zapret/fake', params: '--filter-tcp=443,2053,2083,2087,2096,8443 --payload=tls_client_hello --lua-desync=fake:blob=fake_default_tls --lua-desync=multisplit' },
-  udp_games: { protocols: [ 'udp' ], tcp_ports: '', udp_ports: '1024-65535', tcp_pkt_out: '0', tcp_pkt_in: '0', udp_pkt_out: '6', udp_pkt_in: '2', fake_dir: '/usr/lib/zapret/fake', params: '--filter-udp=1024-65535 --dpi-desync=fake --dpi-desync-repeats=3' }
-};
+// zapretPresets maps candidate name → its object (protocols/ports/pkt/params/
+// blobs), populated in render() from the fetched candidate list. applyPresetTo
+// reads it to fill the strategy-editor fields.
+var zapretPresets = {};
 
 // applyPresetTo uses each form option's widget instance to write the preset
 // values. The previous DOM-poking helpers (querySelectorAll on
@@ -90,7 +97,7 @@ function setMultiDropdown(sectionId, option, values) {
 // the latter returns null once the section wrapper is moved into LuCI's
 // modal (the bound class instance gets detached).
 function applyPresetTo(sectionId, presetKey, fields) {
-  var data = ZAPRET_PRESETS[presetKey];
+  var data = zapretPresets[presetKey];
   if (!data) return;
   Object.keys(fields).forEach(function(key) {
     var optName = fields[key];
@@ -103,8 +110,18 @@ function applyPresetTo(sectionId, presetKey, fields) {
   });
 }
 
+// profileTitle never surfaces a raw cfgXXXX section id. Falls back through the
+// friendly fields (name -> OpenWrt network -> first Linux interface) before
+// giving up to the section id, so anonymous profiles still read sensibly.
 function profileTitle(sid) {
-  return uci.get('purewrt', sid, 'name') || sid || _('New profile');
+  var name = uci.get('purewrt', sid, 'name');
+  if (name) return name;
+  var net = uci.get('purewrt', sid, 'network');
+  if (net) return net;
+  var ifaces = uci.get('purewrt', sid, 'interface');
+  if (Array.isArray(ifaces)) ifaces = ifaces[0];
+  if (ifaces) return ifaces;
+  return sid || _('New profile');
 }
 
 function strategyTitle(sid) {
@@ -174,132 +191,254 @@ function inWrapper(wrapperId) {
   };
 }
 
-// renderAutotuneCard drives the multi-host autotune wizard. Runs in the
-// background via zapret_autotune_start / zapret_autotune_status — same
-// fire-and-forget pattern as the manual blockcheck card. The user can close
-// the tab during a multi-minute scan and come back to see the final result.
-function renderAutotuneCard() {
-  var hostsInput = E('input', { 'class': 'cbi-input-text', 'style': 'width:100%;max-width:36em', 'placeholder': 'rutracker.org youtube.com' });
-  var runBtn = E('button', { 'class': 'btn cbi-button cbi-button-apply' }, [ _('Run autotune') ]);
-  var reloadBtn = E('button', { 'class': 'btn cbi-button cbi-button-neutral', 'style': 'display:none;margin-left:.5em' }, [ _('Reload page to pick up new strategies') ]);
-  reloadBtn.addEventListener('click', function(ev) { ev.preventDefault(); location.reload(); });
-  var out = E('pre', { 'style': 'white-space:pre-wrap;max-height:32em;overflow:auto;font-family:monospace;font-size:.85em;background:#1a1a1a;padding:.5em;border-radius:4px;margin-top:.5em' });
-  var pollTimer = null;
-  var lastNotifiedOk = false;
+// devName coerces a LuCI network device to its name string. getL3Device() /
+// getDevice() return a Device OBJECT on this LuCI (26.x) — not a name — so we
+// must call .getName(); older versions return the string directly. Handle both.
+function devName(x) {
+  if (!x) return '';
+  if (typeof x === 'string') return x;
+  if (typeof x.getName === 'function') {
+    var n = x.getName();
+    return (typeof n === 'string') ? n : '';
+  }
+  return '';
+}
 
-  function stopPolling() {
-    if (pollTimer) {
-      window.clearTimeout(pollTimer);
-      pollTimer = null;
-    }
-  }
-  function renderStatus(r) {
-    var text = r.output || '';
-    out.textContent = text || _('Running zapret autotune...');
-    out.scrollTop = out.scrollHeight;
-  }
-  function handleCompletion(r) {
-    if (r.rc === '0') {
-      if (!lastNotifiedOk) {
-        ui.addNotification(null, E('p', _('Autotune complete. New strategies written to UCI — reload the page to see them.')), 'info');
-        lastNotifiedOk = true;
-      }
-      reloadBtn.style.display = '';
-    } else if (r.rc && r.rc !== '0') {
-      ui.addNotification(null, E('p', _('Autotune exited with rc=%s. See output above.').format(r.rc)), 'warning');
-    }
-  }
-  function pollStatus() {
-    return callZapretAutotuneStatus().then(function(r) {
-      renderStatus(r);
-      if (r.running === 1 || r.running === true) {
-        pollTimer = window.setTimeout(pollStatus, 1500);
-      } else {
-        handleCompletion(r);
-      }
-    }).catch(function(e) {
-      stopPolling();
-      ui.addNotification(null, E('p', e.message), 'danger');
-    });
-  }
-  // Same reattach-on-load pattern as blockcheck: if a previous run already
-  // finished we still want to render its output instead of a blank box.
-  function attachRunningCheck() {
-    return callZapretAutotuneStatus().then(function(r) {
-      if (r.running === 1 || r.running === true) {
-        renderStatus(r);
-        pollTimer = window.setTimeout(pollStatus, 1500);
-      } else if (r.rc !== undefined && r.rc !== null && r.rc !== '' && (r.output || '').length > 0) {
-        renderStatus(r);
-        lastNotifiedOk = true; // don't re-notify on simple page revisit
-        if (r.rc === '0') reloadBtn.style.display = '';
-      } else {
-        out.textContent = '';
-      }
-    }).catch(function(e) {
-      ui.addNotification(null, E('p', e.message), 'danger');
-    });
-  }
-  window.setTimeout(attachRunningCheck, 0);
+// wanDeviceOf resolves an OpenWrt network to the Linux device blockcheck2.sh
+// should bind curl to (--interface). Prefers the L3 device, falls back to the
+// primary device. Returns '' for deviceless/down networks (e.g. an mbim WAN
+// that isn't up), which the picker skips.
+function wanDeviceOf(net) {
+  if (!net) return '';
+  var n = '';
+  if (typeof net.getL3Device === 'function') n = devName(net.getL3Device());
+  if (!n && typeof net.getDevice === 'function') n = devName(net.getDevice());
+  return n;
+}
 
-  runBtn.addEventListener('click', function(ev) {
-    ev.preventDefault();
-    var raw = (hostsInput.value || '').trim();
-    if (!raw) {
-      ui.addNotification(null, E('p', _('Enter at least one canary host before running autotune.')), 'warning');
-      return;
-    }
-    var hosts = raw.split(/\s+/);
-    stopPolling();
-    lastNotifiedOk = false;
-    reloadBtn.style.display = 'none';
-    out.textContent = _('Starting zapret autotune for %d host(s)...').format(hosts.length);
-    return callZapretAutotuneStart(hosts).then(function(r) {
-      if (r && r.result === 'busy') {
-        ui.addNotification(null, E('p', _('An autotune is already running. Showing its current output.')), 'warning');
-        return pollStatus();
-      }
-      if (r && r.result === 'started') {
-        return pollStatus();
-      }
-      ui.addNotification(null, E('p', _('Autotune failed to start: %s').format(r && (r.error || r.result) || 'unknown')), 'danger');
-      out.textContent = '';
-    }).catch(function(e) {
-      stopPolling();
-      ui.addNotification(null, E('p', e.message), 'danger');
+// buildWanSelect builds the interface picker as OpenWrt logical networks:
+// the OPTION LABEL is the friendly network name ("wStarlink"), the VALUE is the
+// resolved Linux device ("br-lan.3000") that reaches blockcheck2.sh. Defaults
+// to the active-WAN network (default route) so the probe egresses the real
+// internet path instead of the first bridge — the bug that made every probe
+// time out. Falls back to WAN6, then the first usable network.
+function buildWanSelect(networks, wanNets, wan6Nets) {
+  var sel = E('select', { 'class': 'cbi-input-select' });
+  var wanName = '';
+  if (wanNets && wanNets[0]) wanName = wanNets[0].getName();
+  else if (wan6Nets && wan6Nets[0]) wanName = wan6Nets[0].getName();
+  var defaultDev = '', count = 0;
+  (networks || []).forEach(function(net) {
+    var name = net.getName && net.getName();
+    if (!name || name === 'loopback' || name === 'lo') return;
+    var dev = wanDeviceOf(net);
+    if (!dev) return;
+    sel.appendChild(E('option', { 'value': dev }, name + ' (' + dev + ')'));
+    if (name === wanName && !defaultDev) defaultDev = dev;
+    if (!defaultDev) defaultDev = dev; // running first-usable fallback
+    count++;
+  });
+  if (!count) {
+    sel.appendChild(E('option', { 'value': '' }, _('(default route)')));
+  } else {
+    // Prefer the WAN device if we matched one; otherwise the first option.
+    var wanDev = '';
+    (networks || []).forEach(function(net) {
+      if (net.getName && net.getName() === wanName) { var d = wanDeviceOf(net); if (d) wanDev = d; }
     });
+    sel.value = wanDev || defaultDev;
+  }
+  return sel;
+}
+
+// stratFromTestLine normalizes a "- curl_test_... : <daemon> <strategy>" line
+// to just the nfqws clause (drops the leading daemon token).
+function stratFromTestLine(line) {
+  var parts = line.split(' : ');
+  if (parts.length < 2) return '';
+  var strat = parts[parts.length - 1].replace(/!!!!!\s*$/, '').trim();
+  var fields = strat.split(/\s+/);
+  if (fields.length > 1 && fields[0].indexOf('--') !== 0) strat = fields.slice(1).join(' ');
+  return strat;
+}
+
+// parseBlockcheckStrategies scrapes working strategies from raw blockcheck2.sh
+// output. Three sources, deduped by exact clause: (1) LIVE per-test winners — a
+// "- curl_test... : nfqws <strat>" line immediately followed by "AVAILABLE" —
+// so strategies show up during the run, not only at the end; (2) the curated
+// "working strategy found !!!!!" summary lines; (3) the multi-host "* COMMON"
+// intersection block. Returns [{ params, common }].
+function parseBlockcheckStrategies(text) {
+  var out = [], seen = {};
+  var push = function(strat, common) {
+    if (!strat) return;
+    var key = (common ? 'C:' : '') + strat;
+    if (seen[key]) return;
+    seen[key] = true;
+    out.push({ params: strat, common: !!common });
+  };
+  var lines = (text || '').split('\n');
+
+  // (1) live winners: remember the last test line, commit it on AVAILABLE.
+  var pending = '';
+  lines.forEach(function(line) {
+    if (line.indexOf('curl_test') >= 0 && line.indexOf(' : ') >= 0 && line.replace(/^\s+/, '').indexOf('-') === 0) {
+      pending = stratFromTestLine(line);
+    } else if (/!!!!!\s*AVAILABLE/.test(line)) {
+      push(pending, false);
+      pending = '';
+    }
   });
 
-  return E('div', { 'class': 'cbi-section purewrt-card' }, [
-    E('h3', {}, _('Autotune — multi-host blockcheck')),
-    E('p', { 'class': 'purewrt-text-dim' }, _('Drives blockcheck2.sh against multiple canary hosts, parses winning <code>--lua-desync</code> combos, and writes them as <code>zapret_strategy</code> sections. Pick 2+ hosts that you know are blocked locally — the wizard prefers the COMMON intersection across all hosts for the safest strategy.')),
-    E('div', { 'style': 'display:flex;gap:.75em;align-items:center;flex-wrap:wrap;margin-top:.5em' }, [
-      E('label', { 'style': 'min-width:8em' }, _('Canary hosts')),
-      hostsInput,
-      runBtn,
-      reloadBtn
-    ]),
-    E('p', { 'class': 'purewrt-text-dim', 'style': 'margin-top:.5em' }, _('Whitespace-separated list of domains. Runs in the background — blockcheck takes 3–10 minutes per host; you can close this tab and come back to see results.')),
-    out
+  // (2) curated per-host winners.
+  lines.forEach(function(line) {
+    if (line.indexOf('working strategy found') < 0 || line.indexOf('!!!!!') < 0) return;
+    push(stratFromTestLine(line), false);
+  });
+
+  // (3) COMMON intersection block.
+  var ci = (text || '').indexOf('* COMMON');
+  if (ci >= 0) {
+    var tail = text.substring(ci);
+    var end = tail.indexOf('Please note this SUMMARY');
+    if (end >= 0) tail = tail.substring(0, end);
+    tail.split('\n').forEach(function(line) {
+      line = line.trim();
+      if (line.indexOf('--') === 0) push(line, true);
+    });
+  }
+  return out;
+}
+
+// blockcheckVerdict explains a zero-strategy result so an empty list isn't read
+// as "everything blocked". Distinguishes a bad test domain (cert-CN mismatch)
+// and an unreachable baseline (link/route/IP-block) from a real DPI verdict.
+function blockcheckVerdict(text, foundCount) {
+  if (foundCount > 0) return '';
+  var t = text || '';
+  var cert = (t.match(/does not match|code=60/g) || []).length;
+  var curlTests = (t.match(/curl_test/g) || []).length;
+  if (cert > 0 && curlTests > 0 && cert >= curlTests)
+    return _('All probes failed TLS certificate verification — this domain has no valid cert for its exact name (bare CDN names like googlevideo.com fail). Not a DPI result: try youtube.com or a specific host.');
+  if (/code=28|code=000|Connection timed out/.test(t))
+    return _('The baseline (no-bypass) probe failed — the host is unreachable direct on this interface (link / route / IP-block). This result is inconclusive, not a DPI verdict. Check the WAN interface selection and that the host is reachable.');
+  // Format drift: blockcheck2.sh emitted its success markers, but the parser
+  // extracted nothing. Distinguishes a genuinely all-blocked run (no markers)
+  // from a broken parser (markers present, zero clauses) so an upstream output
+  // change surfaces as an explicit notice instead of a silent empty list.
+  if (/working strategy found|!!!!!\s*AVAILABLE|\* COMMON/.test(t))
+    return _('Blockcheck reported working strategies, but PureWRT could not parse them — the blockcheck2.sh output format may have changed. See the raw output below and report this.');
+  return '';
+}
+
+// stageStrategyFromParams stages (does NOT write) a zapret_strategy from one
+// blockcheck winner. It appears in LuCI's Unsaved Changes; Save & Apply
+// commits it. Protocols/ports come from the nfqws --filter-tcp/udp clause when
+// present, else from the card's protocol toggles. Returns the derived name.
+function stageStrategyFromParams(params, common, hostsLabel, protoDefaults) {
+  var sid = uci.add('purewrt', 'zapret_strategy');
+  var base = (common ? 'bc_common' : 'bc_' + (hostsLabel || 'host'));
+  base = base.replace(/[^A-Za-z0-9_]+/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '') || 'bc';
+  var existing = {};
+  uci.sections('purewrt', 'zapret_strategy').forEach(function(s) {
+    var n = s.name || s['.name']; if (n) existing[n] = true;
+  });
+  var name = base, i = 2;
+  while (existing[name]) { name = base + '_' + i; i++; }
+  uci.set('purewrt', sid, 'name', name);
+  uci.set('purewrt', sid, 'enabled', '1');
+  uci.set('purewrt', sid, 'profile', 'wan');
+  uci.set('purewrt', sid, 'preset', 'custom');
+  uci.set('purewrt', sid, 'params', params);
+  var protos = [], tcpPorts = '', udpPorts = '';
+  var mt = params.match(/--filter-tcp=(\S+)/); if (mt) { protos.push('tcp'); tcpPorts = mt[1]; }
+  var mu = params.match(/--filter-udp=(\S+)/); if (mu) { protos.push('udp'); udpPorts = mu[1]; }
+  if (!protos.length && protoDefaults) {
+    protos = protoDefaults.protocols || [];
+    tcpPorts = protoDefaults.tcp_ports || '';
+    udpPorts = protoDefaults.udp_ports || '';
+  }
+  if (protos.length) uci.set('purewrt', sid, 'protocols', protos);
+  if (tcpPorts) uci.set('purewrt', sid, 'tcp_ports', tcpPorts);
+  if (udpPorts) uci.set('purewrt', sid, 'udp_ports', udpPorts);
+  return name;
+}
+
+// stageCandidate stages a full candidate (from the shared list) as a
+// zapret_strategy — its params/protocols/ports plus any blob decls added to
+// the wan profile's Custom-blobs list (pointing at the shipped fake dir; the
+// router's ResolveBlob prefers the shipped copy). Returns the staged name.
+function stageCandidate(cand) {
+  var sid = uci.add('purewrt', 'zapret_strategy');
+  var existing = {};
+  uci.sections('purewrt', 'zapret_strategy').forEach(function(s) { var n = s.name || s['.name']; if (n) existing[n] = true; });
+  var name = cand.name, i = 2;
+  while (existing[name]) { name = cand.name + '_' + i; i++; }
+  uci.set('purewrt', sid, 'name', name);
+  uci.set('purewrt', sid, 'enabled', '1');
+  uci.set('purewrt', sid, 'profile', 'wan');
+  uci.set('purewrt', sid, 'preset', 'custom');
+  uci.set('purewrt', sid, 'params', cand.params);
+  if (cand.protocols && cand.protocols.length) uci.set('purewrt', sid, 'protocols', cand.protocols);
+  if (cand.tcp_ports) uci.set('purewrt', sid, 'tcp_ports', cand.tcp_ports);
+  if (cand.udp_ports) uci.set('purewrt', sid, 'udp_ports', cand.udp_ports);
+  (cand.blobs || []).forEach(function(b) {
+    if (!b.name || !b.file) return;
+    var decl = b.name + ':@/usr/libexec/zapret/files/fake/' + b.file;
+    uci.sections('purewrt', 'zapret_profile').forEach(function(p) {
+      var psid = p['.name'];
+      if ((p.name || psid) !== 'wan') return;
+      var cur = uci.get('purewrt', psid, 'blob') || [];
+      if (!Array.isArray(cur)) cur = cur ? [cur] : [];
+      if (cur.indexOf(decl) < 0) { cur.push(decl); uci.set('purewrt', psid, 'blob', cur); }
+    });
+  });
+  return name;
+}
+
+// renderZapretStatusBlock is a config-derived (no live probe) summary shown at
+// the top of the page: enabled profiles/strategies, which routing sections use
+// Action=zapret, and a quiet note when a strategy is enabled but nothing routes
+// to it (so it silently won't take effect). Not a global DoctorWarning —
+// advanced users configure zapret deliberately.
+function renderZapretStatusBlock() {
+  function flagOn(s) { return s.enabled === '1'; }
+  var profiles = uci.sections('purewrt', 'zapret_profile').filter(flagOn);
+  var strategies = uci.sections('purewrt', 'zapret_strategy').filter(flagOn);
+  var sections = uci.sections('purewrt', 'section');
+  var zapretSections = sections.filter(function(s) { return s.enabled !== '0' && s.action === 'zapret'; });
+  var nameOf = function(s) { return s.name || s['.name']; };
+
+  var rows = [];
+  rows.push(E('div', {}, [
+    E('strong', {}, _('Enabled profiles: ')),
+    profiles.length ? profiles.map(nameOf).join(', ') : _('none')
+  ]));
+  rows.push(E('div', {}, [
+    E('strong', {}, _('Enabled strategies: ')),
+    strategies.length ? strategies.map(nameOf).join(', ') : _('none')
+  ]));
+  rows.push(E('div', {}, [
+    E('strong', {}, _('Routing sections using Zapret: ')),
+    zapretSections.length ? zapretSections.map(nameOf).join(', ') : _('none')
+  ]));
+  if (strategies.length > 0 && zapretSections.length === 0) {
+    rows.push(E('div', { 'class': 'alert-message warning', 'style': 'margin-top:.5em' },
+      _('%d zapret strategy(ies) are enabled, but no routing section has Action = Zapret — they will not take effect. Set a section\'s Action to Zapret on the Sections / Routing page.').format(strategies.length)));
+  }
+  return E('div', { 'class': 'cbi-section purewrt-card', 'style': 'margin-bottom:1em' }, [
+    E('h3', {}, _('Zapret status')),
+    E('div', { 'style': 'display:flex;flex-direction:column;gap:.25em' }, rows)
   ]);
 }
 
-// renderManualBlockcheckCard returns the single-host blockcheck wizard card.
-// Distinct from autotune: this one is interactive (shows raw output live),
-// runs against one host at a time, and lets the user toggle protocols.
-function renderManualBlockcheckCard(devices) {
-  var input = E('input', { 'class': 'cbi-input-text', 'placeholder': 'rutracker.org' });
-  var wan = E('select', { 'class': 'cbi-input-select' });
-  var hasWAN = false;
-  (devices || []).forEach(function(dev) {
-    var name = dev.getName && dev.getName();
-    if (name && name !== 'lo') {
-      wan.appendChild(E('option', { 'value': name }, name));
-      hasWAN = true;
-    }
-  });
-  if (!hasWAN)
-    wan.appendChild(E('option', { 'value': 'wan' }, 'wan'));
+// renderBlockcheckCard is the merged DPI-bypass finder (former manual blockcheck
+// + autotune). 1 host = single-host debug; 2+ hosts = COMMON-intersection run.
+// Streams live output via the background job, lists working strategies with a
+// Create button (staged, never auto-written), and explains empty results.
+function renderBlockcheckCard(networks, wanNets, wan6Nets) {
+  var input = E('input', { 'class': 'cbi-input-text', 'style': 'width:100%;max-width:36em', 'placeholder': 'youtube.com rutracker.org' });
+  var wan = buildWanSelect(networks, wanNets, wan6Nets);
   var scan = E('select', { 'class': 'cbi-input-select' }, [
     E('option', { 'value': 'quick' }, _('quick')),
     E('option', { 'value': 'standard' }, _('standard')),
@@ -311,60 +450,99 @@ function renderManualBlockcheckCard(devices) {
   var tls13 = E('input', { 'type': 'checkbox', 'checked': 'checked' });
   var http3 = E('input', { 'type': 'checkbox' });
   var httpsGet = E('input', { 'type': 'checkbox' });
-  var parsed = E('textarea', { 'class': 'cbi-input-textarea', 'style': 'width:100%;min-height:6em', 'readonly': 'readonly' });
+  var verdict = E('div', { 'class': 'alert-message warning', 'style': 'display:none;margin:.5em 0' });
+  var strategiesBox = E('div', { 'style': 'margin:.5em 0' });
   var out = E('pre', { 'style': 'white-space:pre-wrap;max-height:32em;overflow:auto;font-family:monospace;font-size:.85em;background:#1a1a1a;padding:.5em;border-radius:4px' });
   var pollTimer = null;
+  // Accumulate found strategies across polls. poll_bg_job only returns the last
+  // ~500 lines of the log, so early winners scroll out of the tail window — we
+  // must remember them here or they'd vanish from the list mid-run. Keyed by
+  // clause; a clause seen in the COMMON block is upgraded to common=true.
+  var acc = {}, accOrder = [];
+  function resetAcc() { acc = {}; accOrder = []; }
+  function mergeStrategies(list) {
+    (list || []).forEach(function(s) {
+      if (!acc[s.params]) { acc[s.params] = { params: s.params, common: !!s.common }; accOrder.push(s.params); }
+      else if (s.common) { acc[s.params].common = true; }
+    });
+  }
   function checked(v) { return v.checked ? '1' : '0'; }
-  function parseStrategies(text) {
-    var marker = 'PureWRT parsed working strategies:';
-    var idx = text.indexOf(marker);
-    if (idx < 0) return '';
-    return text.substring(idx + marker.length).replace(/^\s+/, '').replace(/^\[[0-9]+\]\s*/gm, '');
+  function protoDefaults() {
+    var protos = [], tcp = '', udp = '';
+    if (tls12.checked || tls13.checked || http.checked || httpsGet.checked) { protos.push('tcp'); tcp = '443'; }
+    if (http3.checked) { protos.push('udp'); udp = '443'; }
+    if (!protos.length) { protos = [ 'tcp' ]; tcp = '443'; }
+    return { protocols: protos, tcp_ports: tcp, udp_ports: udp };
+  }
+  function hostsLabel() { return ((input.value || '').trim().split(/\s+/)[0]) || 'host'; }
+  function renderStrategies(text) {
+    strategiesBox.innerHTML = '';
+    // Verdict only when NOTHING has been found across the whole run.
+    var v = blockcheckVerdict(text, accOrder.length);
+    if (v) { verdict.textContent = v; verdict.style.display = ''; }
+    else { verdict.style.display = 'none'; }
+    if (!accOrder.length) return;
+    strategiesBox.appendChild(E('h4', {}, _('Working strategies (%d)').format(accOrder.length)));
+    accOrder.forEach(function(key) {
+      var s = acc[key];
+      var btn = E('button', { 'class': 'btn cbi-button cbi-button-add' }, [ _('Create strategy') ]);
+      btn.addEventListener('click', function(ev) {
+        ev.preventDefault();
+        var name = stageStrategyFromParams(s.params, s.common, hostsLabel(), protoDefaults());
+        btn.disabled = true;
+        btn.textContent = _('Staged: %s').format(name);
+        ui.addNotification(null, E('p', _('Strategy "%s" staged. Review it in Unsaved Changes, then Save & Apply to create it.').format(name)), 'info');
+      });
+      strategiesBox.appendChild(E('div', { 'style': 'display:flex;gap:.5em;align-items:center;margin:.25em 0;flex-wrap:wrap' }, [
+        s.common ? E('span', { 'class': 'purewrt-pill run', 'style': 'flex:0 0 auto' }, _('COMMON'))
+                 : E('span', { 'style': 'flex:0 0 auto;opacity:.6' }, '•'),
+        E('code', { 'style': 'flex:1 1 20em;word-break:break-all;background:#21262d;padding:.15em .4em;border-radius:3px' }, s.params),
+        btn
+      ]));
+    });
   }
   function stopPolling() {
-    if (pollTimer) {
-      window.clearTimeout(pollTimer);
-      pollTimer = null;
-    }
+    if (pollTimer) { window.clearTimeout(pollTimer); pollTimer = null; }
+  }
+  function setRunning(on) {
+    stopBtn.style.display = on ? '' : 'none';
+    runBtn.disabled = !!on;
   }
   function renderStatus(r) {
     var text = r.output || '';
-    out.textContent = text || _('Running zapret strategy check...');
+    out.textContent = text || _('Running blockcheck...');
     out.scrollTop = out.scrollHeight;
-    parsed.value = parseStrategies(text);
+    mergeStrategies(parseBlockcheckStrategies(text));
+    renderStrategies(text);
   }
   function pollStatus() {
     return callZapretCheckStatus().then(function(r) {
       renderStatus(r);
-      if (r.running === 1 || r.running === true)
+      if (r.running === 1 || r.running === true) {
+        setRunning(true);
         pollTimer = window.setTimeout(pollStatus, 1500);
-      else if (r.rc && r.rc !== '0')
-        ui.addNotification(null, E('p', _('Zapret strategy check failed. See output above.')), 'danger');
+      } else {
+        setRunning(false);
+        if (r.rc && r.rc !== '0' && r.rc !== '143')
+          ui.addNotification(null, E('p', _('Blockcheck exited with an error. See output below.')), 'warning');
+      }
     }).catch(function(e) {
       stopPolling();
+      setRunning(false);
       ui.addNotification(null, E('p', e.message), 'danger');
     });
   }
-  // attachRunningCheck reattaches to whatever the backend currently has:
-  //   - running:1 → resume polling (existing behavior)
-  //   - running:0 with rc set + output → completed run, show its result so
-  //     a user who started a long scan, closed the tab, and came back later
-  //     still sees the final summary instead of an empty view
-  //   - running:0 with no rc → never run / cleared, leave fields empty
-  // The "rc" field comes from /tmp/purewrt-zapret-check.status which the
-  // background job writes on exit. If status file is missing rpcd returns
-  // rc as empty string, which is how we detect "no prior run to show".
+  // Reattach on load: resume polling if a run is live, or show the last
+  // completed run's output (survives tab close / page revisit).
   function attachRunningCheck() {
     return callZapretCheckStatus().then(function(r) {
       if (r.running === 1 || r.running === true) {
+        setRunning(true);
         renderStatus(r);
         pollTimer = window.setTimeout(pollStatus, 1500);
       } else if (r.rc !== undefined && r.rc !== null && r.rc !== '' && (r.output || '').length > 0) {
         renderStatus(r);
-        if (r.rc !== '0')
-          ui.addNotification(null, E('p', _('Last zapret strategy check exited with rc=%s. See output above.').format(r.rc)), 'warning');
       } else {
-        parsed.value = '';
         out.textContent = '';
       }
     }).catch(function(e) {
@@ -372,33 +550,54 @@ function renderManualBlockcheckCard(devices) {
     });
   }
   window.setTimeout(attachRunningCheck, 0);
-  var checkBtn = E('button', { 'class': 'btn cbi-button cbi-button-action' }, [ _('Check strategy') ]);
-  checkBtn.addEventListener('click', function(ev) {
+  var runBtn = E('button', { 'class': 'btn cbi-button cbi-button-action' }, [ _('Run blockcheck') ]);
+  var stopBtn = E('button', { 'class': 'btn cbi-button cbi-button-remove', 'style': 'display:none;margin-left:.5em' }, [ _('Stop') ]);
+  stopBtn.addEventListener('click', function(ev) {
     ev.preventDefault();
+    stopBtn.disabled = true;
+    return callZapretCheckStop().then(function() {
+      stopPolling();
+      setRunning(false);
+      stopBtn.disabled = false;
+      ui.addNotification(null, E('p', _('Blockcheck stopped.')), 'info');
+      // one final status read to show the stopped output tail
+      return callZapretCheckStatus().then(renderStatus);
+    }).catch(function(e) {
+      stopBtn.disabled = false;
+      ui.addNotification(null, E('p', e.message), 'danger');
+    });
+  });
+  runBtn.addEventListener('click', function(ev) {
+    ev.preventDefault();
+    var raw = (input.value || '').trim();
+    if (!raw) {
+      ui.addNotification(null, E('p', _('Enter at least one host.')), 'warning');
+      return;
+    }
     stopPolling();
-    parsed.value = '';
-    out.textContent = _('Running zapret strategy check...');
-    return callZapretCheckStart(input.value, wan.value, scan.value, repeats.value, checked(http), checked(tls12), checked(tls13), checked(http3), checked(httpsGet)).then(function(r) {
+    resetAcc();
+    strategiesBox.innerHTML = '';
+    verdict.style.display = 'none';
+    out.textContent = _('Running blockcheck...');
+    setRunning(true);
+    return callZapretCheckStart(raw, wan.value, scan.value, repeats.value, checked(http), checked(tls12), checked(tls13), checked(http3), checked(httpsGet)).then(function(r) {
       if (r.result === 'busy') {
-        ui.addNotification(null, E('p', _('Another zapret strategy check is already running. Showing its current output.')), 'warning');
+        ui.addNotification(null, E('p', _('A blockcheck is already running. Showing its current output.')), 'warning');
       } else if (r.result !== 'started') {
-        return callZapretCheck(input.value, wan.value, scan.value, repeats.value, checked(http), checked(tls12), checked(tls13), checked(http3), checked(httpsGet)).then(function(syncResult) {
+        setRunning(false);
+        return callZapretCheck(raw, wan.value, scan.value, repeats.value, checked(http), checked(tls12), checked(tls13), checked(http3), checked(httpsGet)).then(function(syncResult) {
           var text = syncResult.output || JSON.stringify(syncResult, null, 2);
           out.textContent = text;
-          parsed.value = parseStrategies(text);
+          mergeStrategies(parseBlockcheckStrategies(text));
+          renderStrategies(text);
         });
       }
       return pollStatus();
     }).catch(function(e) {
       stopPolling();
+      setRunning(false);
       ui.addNotification(null, E('p', e.message), 'danger');
     });
-  });
-  var copyBtn = E('button', { 'class': 'btn cbi-button cbi-button-neutral' }, [ _('Copy parsed strategies') ]);
-  copyBtn.addEventListener('click', function(ev) {
-    ev.preventDefault();
-    if (parsed.value)
-      navigator.clipboard.writeText(parsed.value);
   });
   var row = function(label, control) {
     return E('div', { 'style': 'display:flex;gap:.75em;align-items:center;margin:.35em 0' }, [
@@ -407,9 +606,9 @@ function renderManualBlockcheckCard(devices) {
     ]);
   };
   return E('div', { 'class': 'cbi-section purewrt-card' }, [
-    E('h3', {}, _('Manual blockcheck — single host')),
-    E('p', { 'class': 'purewrt-text-dim' }, _('Runs zapret blockcheck2 against one host with live output. Use this when autotune\'s batch run isn\'t needed, or to debug a single failing site. The check runs in the background — you can close this tab and come back later to see the final result.')),
-    row(_('Domain'), input),
+    E('h3', {}, _('Blockcheck — DPI-bypass finder')),
+    E('p', { 'class': 'purewrt-text-dim' }, _('Runs zapret blockcheck2 against one or more hosts with live output, then lists the working nfqws strategies. One host debugs a single site; 2+ hosts (space-separated) also yields the COMMON strategy that works for all of them. Runs in the background — you can close this tab and come back. Nothing is written until you click Create strategy and Save & Apply.')),
+    row(_('Hosts'), input),
     row(_('WAN interface'), wan),
     row(_('Scan level'), scan),
     row(_('Repeats'), repeats),
@@ -420,11 +619,147 @@ function renderManualBlockcheckCard(devices) {
       E('label', {}, [ http3, ' ', _('HTTP3/QUIC') ]),
       E('label', {}, [ httpsGet, ' ', _('HTTPS GET') ])
     ]),
-    E('div', { 'style': 'margin:.5em 0' }, [ checkBtn ]),
-    E('h4', {}, _('Parsed working strategies')),
-    parsed,
-    E('div', { 'style': 'margin:.35em 0' }, [ copyBtn ]),
+    E('div', { 'style': 'margin:.5em 0' }, [ runBtn, stopBtn ]),
+    verdict,
+    strategiesBox,
     out
+  ]);
+}
+
+// renderStrategyTesterCard sweeps the shared candidate list against target
+// sites through real nfqws2 desync (backend zapret-strategy-test/-sweep),
+// ranks by sites unblocked, and lets you Apply the winner. Complements
+// Blockcheck (which discovers) — this validates a curated set + applies it.
+function renderStrategyTesterCard(networks, wanNets, wan6Nets, candidates) {
+  var sites = E('input', { 'class': 'cbi-input-text', 'style': 'width:100%;max-width:36em', 'placeholder': 'redirector.googlevideo.com telegram.org discord.com (blank = defaults)' });
+  var wan = buildWanSelect(networks, wanNets, wan6Nets);
+  // ISP filter: distinct isp values across candidates ("common" first).
+  var isps = [];
+  candidates.forEach(function(c) {
+    var v = c.isp || 'common';
+    if (isps.indexOf(v) < 0) isps.push(v);
+  });
+  isps.sort(function(a, b) { return a === 'common' ? -1 : b === 'common' ? 1 : a.localeCompare(b); });
+  var ispSel = E('select', { 'class': 'cbi-input-select' });
+  isps.forEach(function(v) { ispSel.appendChild(E('option', { 'value': v }, v)); });
+  var candSel = E('select', { 'class': 'cbi-input-select' });
+  function rebuildCandidates() {
+    candSel.innerHTML = '';
+    var isp = ispSel.value;
+    candidates.filter(function(c) { return (c.isp || 'common') === isp; })
+      .forEach(function(c) { candSel.appendChild(E('option', { 'value': c.name }, c.name)); });
+  }
+  ispSel.addEventListener('change', rebuildCandidates);
+  rebuildCandidates();
+  var resultsBox = E('div', { 'style': 'margin:.5em 0' });
+  var pollTimer = null;
+  function verdictChip(v) {
+    var cls = v === 'fixed' ? 'run' : (v === 'already-ok' ? 'idle' : 'upd');
+    return E('span', { 'class': 'purewrt-pill ' + cls, 'style': 'margin:0 .25em .25em 0' }, v);
+  }
+  function renderRows(rows) {
+    resultsBox.innerHTML = '';
+    if (!rows || !rows.length) return;
+    resultsBox.appendChild(E('h4', {}, _('Results (ranked by sites unblocked)')));
+    rows.forEach(function(r) {
+      var name = r.strategy;
+      var summary = _('%d fixed / %d ok / %d total').format(r.fixed || 0, r.passed || 0, r.total || 0);
+      var applyBtn = E('button', { 'class': 'btn cbi-button cbi-button-add' }, [ _('Apply') ]);
+      applyBtn.addEventListener('click', function(ev) {
+        ev.preventDefault();
+        var cand = zapretPresets[name];
+        if (!cand) { ui.addNotification(null, E('p', _('Unknown candidate %s').format(name)), 'warning'); return; }
+        var sn = stageCandidate(cand);
+        applyBtn.disabled = true; applyBtn.textContent = _('Staged: %s').format(sn);
+        ui.addNotification(null, E('p', _('Strategy "%s" staged. Review in Unsaved Changes, then Save & Apply.').format(sn)), 'info');
+      });
+      var chips = (r.sites || []).map(function(s) {
+        var tip = (s.site || '') + ' ' + (s.appconnect_ms || 0) + 'ms' + (s.download_bytes ? ' ' + s.download_bytes + 'B' : '');
+        return E('span', { 'style': 'margin-right:.4em', 'title': tip }, [ E('code', {}, (s.site || '').replace(/\..*$/, '')), ' ', verdictChip(s.verdict || '?') ]);
+      });
+      resultsBox.appendChild(E('div', { 'style': 'display:flex;gap:.75em;align-items:center;flex-wrap:wrap;border-bottom:1px solid #333;padding:.4em 0' }, [
+        E('strong', { 'style': 'flex:0 0 12em' }, name),
+        E('span', { 'style': 'flex:0 0 12em' }, summary),
+        E('div', { 'style': 'flex:1 1 20em' }, chips),
+        applyBtn
+      ]));
+    });
+  }
+  function stopPolling() { if (pollTimer) { window.clearTimeout(pollTimer); pollTimer = null; } }
+  function pollSweep() {
+    return callZapretSweepStatus().then(function(r) {
+      // The sweep streams one JSON object per line as each candidate finishes,
+      // so parse line-by-line (ignoring a partial trailing line) and rank
+      // client-side — results appear incrementally instead of all at the end.
+      var rows = [];
+      (r.output || '').split('\n').forEach(function(line) {
+        line = line.trim();
+        if (!line) return;
+        try { rows.push(JSON.parse(line)); } catch (e) { /* partial/!json line */ }
+      });
+      rows.sort(function(a, b) { return (b.fixed || 0) - (a.fixed || 0) || (b.passed || 0) - (a.passed || 0); });
+      var running = (r.running === 1 || r.running === true);
+      // The sweep emits its ranked table only when it finishes, so while it
+      // runs there are no rows yet — keep a progress line instead of blanking
+      // the box (which reads as "nothing happening").
+      if (rows.length) {
+        renderRows(rows);
+        if (running)
+          resultsBox.appendChild(E('em', { 'class': 'purewrt-text-dim spinning', 'style': 'display:block;margin-top:.4em' }, _('Tested %d so far — still running…').format(rows.length)));
+      } else if (running) {
+        resultsBox.innerHTML = E('em', { 'class': 'purewrt-text-dim spinning' }, _('Testing candidates — results stream in as each finishes…')).outerHTML;
+      } else {
+        resultsBox.innerHTML = E('em', { 'class': 'purewrt-text-dim' }, _('Sweep finished with no results.')).outerHTML;
+      }
+      if (running) pollTimer = window.setTimeout(pollSweep, 2000);
+    }).catch(function() {
+      // A transient status-poll failure (busy rpcd, dropped request) shouldn't
+      // abandon a sweep that's still running server-side — keep polling.
+      pollTimer = window.setTimeout(pollSweep, 2000);
+    });
+  }
+  var dlChk = E('input', { 'type': 'checkbox' });
+  var dlVal = function() { return dlChk.checked ? '1' : ''; };
+  // Target-suite selector: curated served list (+ manual sites) or the
+  // hyperion-cs/dpi-checkers CDN suite (36 hosts, ignores the sites box).
+  var suiteSel = E('select', { 'class': 'cbi-input-select' }, [
+    E('option', { 'value': '' }, _('Curated / manual')),
+    E('option', { 'value': 'dpi' }, _('DPI-checkers suite (CDN hosts)'))
+  ]);
+  var suiteVal = function() { return suiteSel.value; };
+  var testBtn = E('button', { 'class': 'btn cbi-button cbi-button-action' }, [ _('Test selected') ]);
+  testBtn.addEventListener('click', function(ev) {
+    ev.preventDefault();
+    resultsBox.innerHTML = _('Testing %s…').format(candSel.value);
+    return callZapretStrategyTest(candSel.value, wan.value, (sites.value || '').trim(), dlVal(), suiteVal()).then(function(r) {
+      renderRows([r]);
+    }).catch(function(e) { ui.addNotification(null, E('p', e.message), 'danger'); });
+  });
+  var sweepBtn = E('button', { 'class': 'btn cbi-button cbi-button-apply', 'style': 'margin-left:.5em' }, [ _('Test all') ]);
+  sweepBtn.addEventListener('click', function(ev) {
+    ev.preventDefault();
+    stopPolling();
+    resultsBox.innerHTML = _('Testing all %s candidates — this takes a while…').format(ispSel.value);
+    return callZapretSweepStart(wan.value, (sites.value || '').trim(), ispSel.value, dlVal(), suiteVal()).then(function(r) {
+      if (r && (r.result === 'started' || r.result === 'busy')) return pollSweep();
+      ui.addNotification(null, E('p', _('Sweep failed to start.')), 'danger');
+    }).catch(function(e) { stopPolling(); ui.addNotification(null, E('p', e.message), 'danger'); });
+  });
+  window.setTimeout(function() { callZapretSweepStatus().then(function(r) { if (r && (r.running === 1 || r.running === true)) pollSweep(); }).catch(function() {}); }, 0);
+  var row = function(label, control) {
+    return E('div', { 'style': 'display:flex;gap:.75em;align-items:center;margin:.35em 0' }, [ E('label', { 'style': 'min-width:8em' }, label), control ]);
+  };
+  return E('div', { 'class': 'cbi-section purewrt-card' }, [
+    E('h3', {}, _('Strategy tester')),
+    E('p', { 'class': 'purewrt-text-dim' }, _('Tests the shared strategy candidates against your target sites through real nfqws2 desync, ranked by how many sites they unblock. "Test selected" tries one; "Test all" tries every candidate (slow). Apply stages the winner. Blank target sites uses the served suite. Only meaningful behind real DPI — on an open/SYN-blocked path everything shows "already-ok"/"still-blocked".')),
+    row(_('Target sites'), sites),
+    row(_('Target suite'), suiteSel),
+    row(_('WAN interface'), wan),
+    row(_('ISP'), ispSel),
+    row(_('Candidate'), candSel),
+    row(_('Download probe'), E('label', {}, [ dlChk, ' ', E('span', { 'class': 'purewrt-text-dim' }, _('verify bytes actually flow (catches throttling after handshake); slower')) ])),
+    E('div', { 'style': 'margin:.5em 0' }, [ testBtn, sweepBtn ]),
+    resultsBox
   ]);
 }
 
@@ -466,7 +801,12 @@ return view.extend({
       uci.load('purewrt'),
       network.getDevices(),
       callZapretInstalled().catch(function() { return false; }),
-      callApkUpdates('0').catch(function() { return []; })
+      callApkUpdates('0').catch(function() { return []; }),
+      network.getNetworks().catch(function() { return []; }),
+      network.getWANNetworks().catch(function() { return []; }),
+      network.getWAN6Networks().catch(function() { return []; }),
+      callZapretBlobs().catch(function() { return []; }),
+      callZapretCandidates().catch(function() { return []; })
     ]);
   },
 
@@ -476,6 +816,15 @@ return view.extend({
       return renderNotInstalledPlaceholder();
     }
     var devices = (data && data[1]) || [];
+    var networks = (data && data[4]) || [];
+    var wanNets = (data && data[5]) || [];
+    var wan6Nets = (data && data[6]) || [];
+    var availBlobs = (data && data[7]) || [];
+    var candidates = (data && data[8]) || [];
+    // Populate the shared preset map from the fetched candidate list (single
+    // source of truth for the preset dropdown + the strategy tester).
+    zapretPresets = {};
+    candidates.forEach(function(c) { if (c && c.name) zapretPresets[c.name] = c; });
     var apkUpdates = (data && data[3]) || [];
     var zapretRow = apkUpdates.find(function(u) { return u && u.name === 'zapret'; });
     var m = new form.Map('purewrt', _('PureWRT Zapret'));
@@ -506,10 +855,6 @@ return view.extend({
         ui.addNotification(null, E('p', _('zapret restart: %s').format(r && r.result || 'ok')), 'info');
       });
     };
-
-    // ---- Autotune wizard (custom-render so it doesn't depend on UCI) ----
-    var autotuneSec = m.section(form.NamedSection, 'autotune_view', 'purewrt_autotune_view', _('Autotune'));
-    autotuneSec.render = renderAutotuneCard;
 
     // ---- Runtime profiles (folded into a table after m.render) ----
     var p = m.section(form.TypedSection, 'zapret_profile', _('Zapret runtime profiles'));
@@ -551,6 +896,20 @@ return view.extend({
     plua.placeholder = '/usr/libexec/zapret/lua';
     plua.modalonly = true;
     plua.description = _('Directory containing zapret2 Lua scripts. The generated NFQWS2_OPT prepends --lua-init=@&lt;dir&gt;/...lua so named blobs like fake_default_tls resolve.');
+    // Custom blobs: pick from the shipped fake-payload .bin files. Each option's
+    // VALUE is the nfqws2 declaration `name:@/path` (name = filename minus .bin);
+    // the generator emits it as --blob= in the head, and a strategy references
+    // the name (fake:blob=name / seqovl_pattern=name). The stock
+    // fake_default_tls/http/quic need no entry.
+    var pblob = p.option(form.MultiValue, 'blob', _('Custom blobs'));
+    pblob.modalonly = true;
+    availBlobs.forEach(function(bl) {
+      if (bl && bl.name && bl.path)
+        pblob.value(bl.name + ':@' + bl.path, bl.name);
+    });
+    if (!availBlobs.length)
+      pblob.value('', _('(no fake .bin files found on router)'));
+    pblob.description = _('Select shipped nfqws2 fake payloads to declare (--blob=). Once selected, reference one by its name in a strategy\'s params, e.g. <code>fake:blob=tls_clienthello_www_google_com</code> or <code>seqovl_pattern=&lt;name&gt;</code>. The stock <code>fake_default_tls/http/quic</code> are always available and need no entry.');
 
     // ---- Strategies (folded into a table after m.render) ----
     var zs = m.section(form.TypedSection, 'zapret_strategy', _('Zapret strategies'));
@@ -561,13 +920,11 @@ return view.extend({
     zs.option(form.Value, 'name', _('Name'));
     var preset = zs.option(form.ListValue, 'preset', _('Preset'));
     preset.value('custom', _('custom'));
-    preset.value('youtube_tcp', _('YouTube TCP'));
-    preset.value('youtube_quic', _('YouTube QUIC'));
-    preset.value('googlevideo_tcp', _('googlevideo TCP'));
-    preset.value('discord_voice_udp', _('Discord/STUN voice UDP'));
-    preset.value('rkn_https', _('RKN/common HTTPS'));
-    preset.value('udp_games', _('UDP games / broad UDP'));
-    preset.description = _('Selecting a preset overwrites protocols, ports, packet limits, fake directory, and nfqws parameters. Use custom for manual tuning.');
+    // Preset options come from the fetched candidate list, labelled by ISP.
+    candidates.forEach(function(c) {
+      preset.value(c.name, c.isp ? c.name + ' (' + c.isp + ')' : c.name);
+    });
+    preset.description = _('Selecting a preset overwrites protocols, ports, packet limits, and nfqws parameters from the shared candidate list. Use custom for manual tuning.');
     var profile = zs.option(form.ListValue, 'profile', _('Runtime profile'));
     var profileValues = { wan: true };
     profile.value('wan', 'wan');
@@ -602,12 +959,18 @@ return view.extend({
     var udpIn = zs.option(form.Value, 'udp_pkt_in', _('UDP incoming packet limit'));
     udpIn.datatype = 'uinteger';
     udpIn.modalonly = true;
-    var fakeDir = zs.option(form.Value, 'fake_dir', _('Fake payload directory'));
-    fakeDir.placeholder = '/usr/libexec/zapret/files/fake';
-    fakeDir.modalonly = true;
     var params = zs.option(form.TextValue, 'params', _('nfqws strategy parameters'));
     params.rows = 4;
     params.modalonly = true;
+    params.description = _('Raw nfqws2 args (<code>--lua-desync=...</code>). If this includes its own <code>--filter-tcp/udp</code> it is used verbatim (the fields above are ignored). Put <code>--payload</code> before <code>--lua-desync</code>.');
+    // Arg-order guard: warn if --lua-desync precedes --payload in params.
+    params.validate = function(sid, value) {
+      if (value && /--payload=/.test(value) && value.indexOf('--lua-desync') >= 0 &&
+          value.indexOf('--lua-desync') < value.indexOf('--payload=')) {
+        return _('--payload must come before --lua-desync, otherwise it will not scope the desync.');
+      }
+      return true;
+    };
 
     // Wire preset auto-fill via the document-level `widget-change` event
     // LuCI fires when any form widget mutates. `option.onchange` is set
@@ -621,7 +984,6 @@ return view.extend({
       tcp_pkt_in: 'tcp_pkt_in',
       udp_pkt_out: 'udp_pkt_out',
       udp_pkt_in: 'udp_pkt_in',
-      fake_dir: 'fake_dir',
       params: 'params'
     };
     preset.onchange = function(ev, sectionId, value) {
@@ -637,7 +999,7 @@ return view.extend({
       if (sel) applyPresetTo(m[1], sel.value, presetFields);
     }, true);
 
-    // ---- Usage + manual single-host blockcheck ----
+    // ---- Usage + merged Blockcheck (DPI-bypass finder) ----
     var help = m.section(form.NamedSection, 'zapret_help', 'purewrt_zapret_help', _('Usage'));
     help.render = function() {
       return E('div', {}, [
@@ -645,7 +1007,8 @@ return view.extend({
           E('p', {}, _('Set a routing section Action to Zapret on the Sections / Routing page. Matching OpenWrt-exported rule provider IP/CIDR sets for that section will be sent through zapret instead of mihomo TPROXY.')),
           E('p', {}, _('After saving, run PureWRT Reload/Apply so nftables and purewrt-zapret are regenerated and restarted.'))
         ]),
-        renderManualBlockcheckCard(devices)
+        renderBlockcheckCard(networks, wanNets, wan6Nets),
+        renderStrategyTesterCard(networks, wanNets, wan6Nets, candidates)
       ]);
     };
 
@@ -718,6 +1081,10 @@ return view.extend({
         ]);
         root.insertBefore(pkgRow, root.firstChild);
       }
+
+      // Config-derived status summary at the very top (Zapret-page only, no
+      // live probe): enabled profiles/strategies + a not-routed warning.
+      root.insertBefore(renderZapretStatusBlock(), root.firstChild);
       return root;
     });
   }

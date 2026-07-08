@@ -101,8 +101,12 @@ func ZapretUpstreamConfig(c config.Config) []byte {
 	}
 
 	luaDir := zapretLuaBundleDir(instances)
+	// Global head (before the first --new): the mandatory --lua-init scripts
+	// plus --ctrack-disable=0 to keep nfqws2's connection tracking ON. L7
+	// detection (--filter-l7, MTProto) silently no-ops without ctrack, and
+	// it's harmless for non-L7 strategies — so always enable it in the head.
 	clauses := []string{
-		zapretLuaInit(luaDir),
+		zapretLuaInit(luaDir) + " --ctrack-disable=0" + zapretBlobFlags(instances),
 	}
 	for _, inst := range instances {
 		clauses = append(clauses, zapretProfileClause(inst.strategy))
@@ -139,6 +143,75 @@ func zapretLuaInit(luaDir string) string {
 	return strings.Join(parts, " ")
 }
 
+// zapretBlobFlags renders custom blob declarations for the global head. Blobs
+// are global to the single nfqws2 daemon, so we union them across every enabled
+// profile and dedup by name (the part before the first ':'). Each entry is the
+// raw nfqws2 form "name:@/path" or "name:0xHEX". Entries that are empty, lack a
+// name:value shape, or contain whitespace (which would split the --blob arg)
+// are skipped. Returns a leading-space string ("" when there are none).
+func zapretBlobFlags(instances []zapretInstance) string {
+	seen := map[string]bool{}
+	var parts []string
+	for _, inst := range instances {
+		for _, raw := range inst.profile.Blobs {
+			entry := strings.TrimSpace(raw)
+			if entry == "" || strings.ContainsAny(entry, " \t\r\n\"") {
+				continue
+			}
+			name, value, ok := strings.Cut(entry, ":")
+			if !ok || name == "" || seen[name] {
+				continue
+			}
+			seen[name] = true
+			// A file-backed blob ("name:@<path>") is rewritten to its canonical
+			// resolved path (shipped fake dir, else the /etc fetch cache) so the
+			// emitted --blob points where the manager's blob fetch lands — the
+			// staged path (e.g. a hardcoded /usr/libexec/... from the LuCI editor)
+			// is only a filename hint. Inline-hex ("name:0x…") passes through.
+			if file, isFile := strings.CutPrefix(value, "@"); isFile {
+				entry = name + ":@" + config.CanonicalBlobPath(file)
+			}
+			parts = append(parts, "--blob="+entry)
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " " + strings.Join(parts, " ")
+}
+
+// ZapretRequiredBlobFiles returns the basenames of every file-backed blob that
+// the enabled zapret instances will emit — the set the manager must ensure is
+// present (fetching missing decoys) before generation. Inline-hex blobs are
+// excluded. Pure; deduped by filename.
+func ZapretRequiredBlobFiles(c config.Config) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, inst := range zapretInstances(c) {
+		for _, raw := range inst.profile.Blobs {
+			entry := strings.TrimSpace(raw)
+			if entry == "" || strings.ContainsAny(entry, " \t\r\n\"") {
+				continue
+			}
+			_, value, ok := strings.Cut(entry, ":")
+			if !ok {
+				continue
+			}
+			file, isFile := strings.CutPrefix(value, "@")
+			if !isFile || file == "" {
+				continue
+			}
+			base := filepath.Base(file)
+			if seen[base] {
+				continue
+			}
+			seen[base] = true
+			out = append(out, base)
+		}
+	}
+	return out
+}
+
 // zapretProfileClause turns one UCI strategy into the protocol/port filter
 // + params clause that goes between --new separators. The strategy's own
 // Params can already include filter flags; in that case we don't re-add
@@ -152,10 +225,34 @@ func zapretProfileClause(zs config.ZapretStrategy) string {
 	for _, p := range strategyPortFilters(zs) {
 		parts = append(parts, p)
 	}
+	// Packet-count limit → --out-range=-d<N>. These fields were previously
+	// stored but never emitted; render the relevant one for the strategy's
+	// protocol so the desync only touches the first N data packets.
+	if n := zapretOutRange(zs); n > 0 {
+		parts = append(parts, "--out-range=-d"+itoa(n))
+	}
 	if zs.Params != "" {
 		parts = append(parts, strings.TrimSpace(zs.Params))
 	}
 	return strings.Join(parts, " ")
+}
+
+// zapretOutRange picks the packet-count limit for the strategy's protocol. TCP
+// takes precedence when both are set (rare); 0 means "no limit" (omit).
+func zapretOutRange(zs config.ZapretStrategy) int {
+	for _, proto := range zs.Protocols {
+		switch strings.ToLower(strings.TrimSpace(proto)) {
+		case "tcp":
+			if zs.TCPPktOut > 0 {
+				return zs.TCPPktOut
+			}
+		case "udp":
+			if zs.UDPPktOut > 0 {
+				return zs.UDPPktOut
+			}
+		}
+	}
+	return 0
 }
 
 // strategyPortFilters renders --filter-tcp / --filter-udp pairs from the

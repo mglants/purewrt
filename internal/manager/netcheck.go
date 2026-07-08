@@ -300,7 +300,7 @@ func (rep *NetCheckReport) synthesize() {
 		case !rep.DirectDomestic.OK:
 			rep.set("broken", "wan", "Domestic direct is unreachable — WAN/internet is down.")
 		case rep.layer("zapret") == "fail":
-			rep.set("degraded", "zapret", "Censored targets still blocked on direct — zapret isn't defeating DPI. Run `purewrt zapret-check <domain>` or `zapret-autotune` to find a working strategy.")
+			rep.set("degraded", "zapret", "Censored targets still blocked on direct — zapret isn't defeating DPI. Run `purewrt zapret-check <domain>...` (Blockcheck on the Zapret page) to find a working strategy.")
 		case rep.layer("zapret") == "warn":
 			rep.set("degraded", "zapret", "Blocking check inconclusive (baseline degraded) — re-run when the network is stable.")
 		default:

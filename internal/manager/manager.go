@@ -288,6 +288,9 @@ func (m Manager) GenerateWithOptions(force bool) error {
 	defer log.DebugTimer("generate: total")()
 	log.Info("generate: start")
 	defer log.Info("generate: complete")
+	if err := m.EnsureZapretBlobs(c); err != nil {
+		return err
+	}
 	if force {
 		return generator.WriteAllForce(c)
 	}
@@ -1369,6 +1372,10 @@ func (m Manager) applyPrepare(force bool) (config.Config, system.BackupSet, gene
 	backup, backupCleanup, err := m.applyBackup(c)
 	if err != nil {
 		return c, nil, generator.GeneratedPaths{}, generator.GenerationResult{}, func() {}, err
+	}
+	if err := m.EnsureZapretBlobs(c); err != nil {
+		backupCleanup()
+		return c, backup, generator.GeneratedPaths{}, generator.GenerationResult{}, func() {}, err
 	}
 	log.Info("apply: generating staged outputs")
 	staged, gen, cleanup, err := m.applyStagedGenerate(c, force)

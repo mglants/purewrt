@@ -1,0 +1,53 @@
+{
+  "candidates": [
+    {
+      "name": "youtube_tls",
+      "isp": "common",
+      "protocols": ["tcp"],
+      "tcp_ports": "443",
+      "params": "--filter-tcp=443 --filter-l7=tls --payload=tls_client_hello --lua-desync=multidisorder:pos=midsld:seqovl=midsld-1"
+    },
+    {
+      "name": "youtube_quic",
+      "isp": "common",
+      "protocols": ["udp"],
+      "udp_ports": "80,443",
+      "params": "--filter-udp=80,443 --filter-l7=quic --payload=quic_initial --lua-desync=fake:blob=quic_google:repeats=6",
+      "blobs": [{"name": "quic_google", "file": "quic_initial_www_google_com.bin"}]
+    },
+    {
+      "name": "discord_udp",
+      "isp": "common",
+      "protocols": ["udp"],
+      "udp_ports": "19294-19344,50000-50100",
+      "params": "--filter-udp=19294-19344,50000-50100 --filter-l7=discord,stun --payload=discord_ip_discovery,stun --lua-desync=fake:blob=quic_google:repeats=6",
+      "blobs": [{"name": "quic_google", "file": "quic_initial_www_google_com.bin"}]
+    },
+    {
+      "name": "discord_media",
+      "isp": "common",
+      "protocols": ["tcp"],
+      "tcp_ports": "2053,2083,2087,2096,8443",
+      "params": "--filter-tcp=2053,2083,2087,2096,8443 --lua-desync=hostfakesplit:repeats=4:tcp_ts=-600000:host=www.google.com"
+    },
+    {
+      "name": "userlist_tls",
+      "isp": "common",
+      "protocols": ["tcp"],
+      "tcp_ports": "443",
+      "params": "--filter-tcp=443 --filter-l7=tls --payload=tls_client_hello --lua-desync=multisplit:seqovl_pattern=stun:seqovl=681:pos=2",
+      "blobs": [{"name": "stun", "file": "stun.bin"}]
+    },
+    {
+      "name": "sites_tls",
+      "isp": "common",
+      "protocols": ["tcp"],
+      "tcp_ports": "443",
+      "params": "--filter-tcp=443 --filter-l7=tls --payload=tls_client_hello --lua-desync=fakeddisorder:pattern=tls_onetrust:pos=midsld:seqovl=10:seqovl_pattern=stun:tcp_ack=-66000",
+      "blobs": [
+        {"name": "tls_onetrust", "file": "tls_clienthello_www_onetrust_com.bin"},
+        {"name": "stun", "file": "stun.bin"}
+      ]
+    }
+  ]
+}

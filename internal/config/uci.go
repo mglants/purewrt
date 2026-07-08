@@ -274,6 +274,7 @@ func applySection(c *Config, x struct {
 		p.TPWSBin = one(x.opts, "tpws_bin", "")
 		p.Params = one(x.opts, "params", "")
 		p.LuaBundleDir = one(x.opts, "lua_bundle_dir", "")
+		p.Blobs = list(x.opts, "blob", nil)
 		c.ZapretProfiles = append(c.ZapretProfiles, p)
 	case "zapret_strategy":
 		zs := ZapretStrategy{Name: one(x.opts, "name", x.name), Enabled: b(x.opts, "enabled", true)}
@@ -288,7 +289,6 @@ func applySection(c *Config, x struct {
 		zs.UDPPktIn = i(x.opts, "udp_pkt_in", 0)
 		zs.Preset = one(x.opts, "preset", "")
 		zs.Params = one(x.opts, "params", "")
-		zs.FakeDir = one(x.opts, "fake_dir", "")
 		c.ZapretStrategies = append(c.ZapretStrategies, zs)
 	case "vpn":
 		v := VPN{Name: one(x.opts, "name", x.name), Interface: "wg0"}

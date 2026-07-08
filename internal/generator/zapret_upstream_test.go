@@ -33,6 +33,42 @@ func zapretStrategyNames(s []config.ZapretStrategy) []string {
 	return n
 }
 
+func TestZapretUpstreamConfigEmitsCustomBlobs(t *testing.T) {
+	t.Parallel()
+	c := makeZapretConfig(t, config.ZapretStrategy{
+		Name: "google_alt", Enabled: true, Profile: "wan",
+		Protocols: []string{"tcp"}, TCPPorts: "443", QueueNum: 200,
+		Params: "--payload=tls_client_hello --lua-desync=fake:blob=tls_google",
+	})
+	// Two blobs, plus a duplicate name and a whitespace-broken entry that must be dropped.
+	c.ZapretProfiles[0].Blobs = []string{
+		"tls_google:@/usr/libexec/zapret/files/fake/tls_clienthello_google_com_tlsrec.bin",
+		"tls_google:0xDEAD", // duplicate name -> skipped
+		"bad entry:@/x",     // whitespace -> skipped
+		"myhex:0x1603010000",
+	}
+	out := string(ZapretUpstreamConfig(c))
+	// The file-backed blob path is canonicalized (shipped fake dir, else the
+	// /etc fetch cache) so the emitted --blob points where the fetch lands.
+	wantBlob := "--blob=tls_google:@" + config.CanonicalBlobPath("tls_clienthello_google_com_tlsrec.bin")
+	if !strings.Contains(out, wantBlob) {
+		t.Fatalf("missing %q in:\n%s", wantBlob, out)
+	}
+	if !strings.Contains(out, "--blob=myhex:0x1603010000") {
+		t.Fatalf("missing myhex blob decl in:\n%s", out)
+	}
+	if strings.Contains(out, "0xDEAD") {
+		t.Fatal("duplicate blob name should have been skipped")
+	}
+	if strings.Contains(out, "bad entry") {
+		t.Fatal("whitespace blob entry should have been skipped")
+	}
+	// Blobs live in the head, before the first --new.
+	if bi, ni := strings.Index(out, "--blob="), strings.Index(out, "--new"); bi < 0 || (ni >= 0 && bi > ni) {
+		t.Fatalf("blob decl must be in the head before --new; blob@%d new@%d", bi, ni)
+	}
+}
+
 func TestZapretUpstreamConfigDisabledWhenNoStrategies(t *testing.T) {
 	t.Parallel()
 	c := config.Default()
@@ -54,6 +90,7 @@ func TestZapretUpstreamConfigEmitsLuaInitBundle(t *testing.T) {
 		"--lua-init=@/usr/libexec/zapret/lua/zapret-lib.lua",
 		"--lua-init=@/usr/libexec/zapret/lua/zapret-antidpi.lua",
 		"--lua-init=@/usr/libexec/zapret/lua/zapret-auto.lua",
+		"--ctrack-disable=0",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q in generated config:\n%s", want, out)

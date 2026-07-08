@@ -830,30 +830,10 @@ func main() {
 		prov, err := provider.ParseGeoProvider(c, rp)
 		fatal(err)
 		printJSON(prov)
-	case "zapret-autotune":
-		need(3)
-		opts := manager.ZapretAutotuneOptions{
-			Hosts:       os.Args[2:],
-			EnableHTTP:  true,
-			EnableTLS12: true,
-			EnableTLS13: true,
-			EnableHTTP3: true,
-			ScanLevel:   "standard",
-			WriteUCI:    true,
-		}
-		res, err := m.ZapretAutotune(opts)
-		fatal(err)
-		fmt.Printf("zapret-autotune: hosts=%v\n", res.Hosts)
-		fmt.Printf("  per-host winners: %d\n", len(res.PerHost))
-		fmt.Printf("  COMMON intersection strategies: %d\n", len(res.Common))
-		fmt.Printf("  materialized UCI strategies: %d\n", len(res.Strategies))
-		for _, zs := range res.Strategies {
-			fmt.Printf("    %s: %s\n", zs.Name, zs.Params)
-		}
-		if res.TranscriptPath != "" {
-			fmt.Printf("  transcript: %s\n", res.TranscriptPath)
-		}
 	case "zapret-check":
+		// os.Args[2] is one or more whitespace-separated hosts (the merged
+		// single-host + multi-host "autotune" blockcheck). 2+ hosts make
+		// blockcheck2.sh emit a COMMON-intersection block.
 		need(3)
 		opt := manager.ZapretCheckOptions{}
 		if len(os.Args) > 3 {
@@ -889,6 +869,100 @@ func main() {
 			fmt.Print(out)
 		}
 		fatal(err)
+	case "zapret-candidates":
+		// zapret-candidates [--update] — print the resolved strategy candidate
+		// list (embed / /etc override); --update fetches from purewrt-lists first.
+		if len(os.Args) > 2 && os.Args[2] == "--update" {
+			fatal(m.FetchZapretCandidates())
+		}
+		printJSON(config.LoadZapretCandidates())
+	case "zapret-strategy-test":
+		// zapret-strategy-test <candidate-name> [iface] [--download] [site...] —
+		// probe one candidate through real nfqws2 desync; emits per-site verdicts.
+		need(3)
+		list := config.LoadZapretCandidates()
+		var cand *config.ZapretCandidate
+		for i := range list.Candidates {
+			if list.Candidates[i].Name == os.Args[2] {
+				cand = &list.Candidates[i]
+				break
+			}
+		}
+		if cand == nil {
+			fatal(fmt.Errorf("unknown candidate %q", os.Args[2]))
+		}
+		opt := manager.ZapretStrategyTestOptions{CmdOpts: cand.Params, Blobs: cand.Blobs}
+		haveIface := false
+		for _, a := range os.Args[3:] {
+			switch {
+			case a == "--download":
+				opt.Download = true
+			case a == "--suite=dpi":
+				s, err := m.DPISuiteSites()
+				fatal(err)
+				opt.Sites = append(opt.Sites, s...)
+			case !haveIface:
+				opt.Interface = a
+				haveIface = true
+			default:
+				opt.Sites = append(opt.Sites, a)
+			}
+		}
+		res, err := m.ZapretStrategyTest(opt)
+		fatal(err)
+		printJSON(res)
+	case "zapret-strategy-sweep":
+		// zapret-strategy-sweep [iface] [--isp=<label>] [--download] [site...] —
+		// test every candidate (optionally only those for one ISP), ranked.
+		iface := ""
+		isp := ""
+		download := false
+		haveIface := false
+		var sites []string
+		for _, a := range os.Args[2:] {
+			switch {
+			case strings.HasPrefix(a, "--isp="):
+				isp = strings.TrimPrefix(a, "--isp=")
+			case a == "--download":
+				download = true
+			case a == "--suite=dpi":
+				s, err := m.DPISuiteSites()
+				fatal(err)
+				sites = append(sites, s...)
+			case !haveIface:
+				iface = a
+				haveIface = true
+			default:
+				sites = append(sites, a)
+			}
+		}
+		// Stream one JSON object per line as each candidate finishes, so the
+		// LuCI poller shows results incrementally instead of waiting for the
+		// whole sweep. os.Stdout is unbuffered (an *os.File) → each line lands
+		// in the bg-job log immediately.
+		enc := json.NewEncoder(os.Stdout)
+		m.ZapretStrategySweepStream(iface, sites, isp, download, func(res manager.ZapretStrategyTestResult) {
+			_ = enc.Encode(res)
+		})
+	case "zapret-test-sites":
+		// zapret-test-sites [--update] — print the resolved probe-target suite;
+		// --update fetches it from purewrt-lists first.
+		if len(os.Args) > 2 && os.Args[2] == "--update" {
+			fatal(m.FetchZapretTestSites())
+		}
+		printJSON(config.LoadZapretTestSites())
+	case "zapret-dpi-suite":
+		// zapret-dpi-suite [--update] — print the DPI-checkers probe hosts;
+		// --update re-fetches from hyperion-cs/dpi-checkers.
+		if len(os.Args) > 2 && os.Args[2] == "--update" {
+			s, err := m.FetchDPISuite()
+			fatal(err)
+			printJSON(s)
+		} else {
+			s, err := m.DPISuiteSites()
+			fatal(err)
+			printJSON(s)
+		}
 	case "disable":
 		fatal(m.Disable())
 		fmt.Println("PureWRT generated routing/DNS changes removed")
@@ -974,7 +1048,7 @@ func withOperationLockCoalesce(fn func()) {
 }
 
 func usage() {
-	fmt.Println("usage: purewrt {analyze <url>|preview <url>|import <url> [--proxy-only]|classify <name> [url] [behavior] [format]|rule-provider-status|override <provider> key=value...|add-native-list <url> <section> [--priority=N]|wizard-reset|update [--force]|update-rule-provider <name>|update-proxy-provider <name>|update-if-needed [--force]|mihomo-check-update [alpha|stable]|mihomo-download|mihomo-update|mihomo-install-release <alpha|stable>|mihomo-revert-package|mihomo-auto-update|mihomo-status|mihomo-mixin-get|mihomo-mixin-set|mihomo-mixin-preview|updates-available [--force]|geo-list <geosite|geoip>|geo-extract <geosite|geoip> <name>|generate [--force]|generate-cache-status|cache-clean|prune-orphans [--dry-run]|apply [--force]|reload [--force]|status|statistics|stats|validate|export [--include-secrets]|import-config <file|->|proxy-groups|proxy-select <group> <node> [--no-drain]|proxy-delay-test <group>|doctor|zapret-check <domain> [interface]|client-traffic <IP> [--seconds=N|--live --max-seconds=N] [--json]|ipdb-status|ipdb-update|disable}")
+	fmt.Println("usage: purewrt {analyze <url>|preview <url>|import <url> [--proxy-only]|classify <name> [url] [behavior] [format]|rule-provider-status|override <provider> key=value...|add-native-list <url> <section> [--priority=N]|wizard-reset|update [--force]|update-rule-provider <name>|update-proxy-provider <name>|update-if-needed [--force]|mihomo-check-update [alpha|stable]|mihomo-download|mihomo-update|mihomo-install-release <alpha|stable>|mihomo-revert-package|mihomo-auto-update|mihomo-status|mihomo-mixin-get|mihomo-mixin-set|mihomo-mixin-preview|updates-available [--force]|geo-list <geosite|geoip>|geo-extract <geosite|geoip> <name>|generate [--force]|generate-cache-status|cache-clean|prune-orphans [--dry-run]|apply [--force]|reload [--force]|status|statistics|stats|validate|export [--include-secrets]|import-config <file|->|proxy-groups|proxy-select <group> <node> [--no-drain]|proxy-delay-test <group>|doctor|zapret-check <domain>... [interface]|client-traffic <IP> [--seconds=N|--live --max-seconds=N] [--json]|ipdb-status|ipdb-update|disable}")
 }
 
 // formatClientTrafficReport renders a ClientTrafficReport as a human-readable

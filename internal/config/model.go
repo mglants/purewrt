@@ -348,6 +348,14 @@ type ZapretProfile struct {
 	// auto}.lua so named blobs like `fake_default_tls` resolve at runtime.
 	// Empty falls back to /opt/zapret2/lua.
 	LuaBundleDir string
+	// Blobs are custom nfqws2 fake payloads declared in the NFQWS2_OPT head as
+	// --blob=<entry>. Each entry is the raw nfqws2 form "name:@/path/file.bin"
+	// or "name:0xHEX...". Once declared, a strategy references it by name
+	// (fake:blob=name, seqovl_pattern=name, syndata:blob=name). The three stock
+	// blobs (fake_default_tls/http/quic) need no declaration. Blobs are global
+	// to the single nfqws2 daemon, so the generator unions them across all
+	// enabled profiles and dedups by name.
+	Blobs []string
 }
 
 type ZapretStrategy struct {
@@ -364,7 +372,6 @@ type ZapretStrategy struct {
 	UDPPktIn  int
 	Preset    string
 	Params    string
-	FakeDir   string
 }
 
 // VPN is a tunnel interface mihomo can egress through. Routing is done by
@@ -533,7 +540,7 @@ func Default() Config {
 		DNS:              DNS{Enabled: true, Backend: "dnsmasq", UpstreamMode: "mihomo", HijackLANDNS: true, BlockDoT: true, BlockDoH3: true, BlockDoQ: true, DoH3BlockIPs4: DefaultDoH3BlockIPs4(), DoH3BlockIPs6: DefaultDoH3BlockIPs6(), DoHPolicy: "proxy", Listen: "127.0.0.1:7874", EnhancedMode: "normal", ProxyGroupType: "url-test", ProxyStrategy: "sticky-sessions", DoHUpstreams: []string{"https://dns.google/dns-query", "https://cloudflare-dns.com/dns-query", "https://dns.quad9.net/dns-query"}, UDPUpstreams: []string{"1.1.1.1", "8.8.8.8", "9.9.9.9"}},
 		Mwan3:            Mwan3{Mode: "coexist", Detect: true, MMXMaskAuto: true, PureWRTMark: "0x1", PureWRTMask: "0xff", RulePriority: "100"},
 		ZapretProfiles:   []ZapretProfile{{Name: "wan", Enabled: false, Network: "auto", Interfaces: []string{"wan"}, InterfaceMode: "mwan3_members", FwMark: "0x40000000", NFQWSBin: "/usr/libexec/zapret/nfqws2", TPWSBin: "/usr/libexec/zapret/tpws", LuaBundleDir: "/usr/libexec/zapret/lua"}},
-		ZapretStrategies: []ZapretStrategy{{Name: "youtube_tcp", Enabled: false, Profile: "wan", Protocols: []string{"tcp"}, TCPPorts: "443", TCPPktOut: 15, TCPPktIn: 6, Preset: "youtube_tcp", Params: "--filter-tcp=443 --payload=tls_client_hello --lua-desync=fake:blob=fake_default_tls --lua-desync=multisplit"}, {Name: "youtube_quic", Enabled: false, Profile: "wan", Protocols: []string{"udp"}, UDPPorts: "443", UDPPktOut: 9, UDPPktIn: 0, Preset: "youtube_quic", Params: "--filter-udp=443 --dpi-desync=fake --dpi-desync-repeats=6"}},
+		ZapretStrategies: []ZapretStrategy{{Name: "youtube_tcp", Enabled: false, Profile: "wan", Protocols: []string{"tcp"}, TCPPorts: "443", TCPPktOut: 15, TCPPktIn: 6, Preset: "youtube_tcp", Params: "--filter-tcp=443 --payload=tls_client_hello --lua-desync=fake:blob=fake_default_tls:tcp_md5:ip_autottl=-2,3-20:ip6_autottl=-2,3-20 --lua-desync=multisplit:pos=midsld"}, {Name: "youtube_quic", Enabled: false, Profile: "wan", Protocols: []string{"udp"}, UDPPorts: "443", UDPPktOut: 9, UDPPktIn: 0, Preset: "youtube_quic", Params: "--filter-udp=443 --payload=quic_initial --lua-desync=fake:blob=fake_default_quic:repeats=6:ip_autottl=-2,3-20:ip6_autottl=-2,3-20"}},
 		// VPNs starts empty — the LuCI Sections page + VPN modal handle
 		// the no-VPN-configured case cleanly (empty dropdown / "add VPN"
 		// prompt). Shipping a placeholder `config vpn 'vpn'` led to users
@@ -673,9 +680,6 @@ func (c Config) NormalizeZapretStrategyAt(s ZapretStrategy, index int) ZapretStr
 	}
 	if s.UDPPktOut == 0 {
 		s.UDPPktOut = 9
-	}
-	if s.FakeDir == "" {
-		s.FakeDir = "/usr/libexec/zapret/files/fake"
 	}
 	return s
 }
