@@ -105,7 +105,10 @@ return view.extend({
             // cold subscription downloads. Surfaces backend output on
             // failure so the user sees *why* it failed.
             out.textContent = _('Update started — polling for completion…');
-            return updateAsync.run().then(function(r){
+            return updateAsync.run({ onProgress: function(p) {
+              out.textContent = _('Updating… %ds elapsed').format(Math.round(p.elapsedMs / 1000)) +
+                '\n' + (p.output || '').slice(-2000);
+            } }).then(function(r){
               out.textContent = (r.output || '').slice(-2000);
               if (!r.ok) {
                 ui.addNotification(null, fmt.errorDetails(_('Update failed (rc=%s)').format(r.rc), r.output), 'danger');

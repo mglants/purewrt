@@ -7,6 +7,7 @@
 'require purewrt.table_section as tableSection';
 'require purewrt.update_async as updateAsync';
 'require purewrt.save_chain as saveChain';
+'require purewrt.format as fmt';
 
 var callUpdateProxyProvider = rpc.declare({ object: 'purewrt', method: 'update_proxy_provider', params: [ 'name' ] });
 var callReload = rpc.declare({ object: 'purewrt', method: 'reload' });
@@ -51,7 +52,8 @@ return view.extend({
     type.value('http', _('HTTP'));
     type.value('file', _('File'));
 
-    s.option(form.Value, 'url', _('URL'));
+    var ppURL = s.option(form.Value, 'url', _('URL'));
+    ppURL.validate = fmt.validateHTTPURL;
     s.option(form.Value, 'path', _('Local path'));
 
     var interval = s.option(form.Value, 'interval', _('Update interval'));

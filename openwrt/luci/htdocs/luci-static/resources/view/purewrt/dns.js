@@ -82,7 +82,8 @@ return view.extend({
     };
     var udp = s.option(form.DynamicList, 'udp_upstream', _('UDP DNS fallback upstreams'));
     udp.description = _('Plain DNS servers used before DoH so a fresh router can resolve/bootstrap even when DoH endpoints are blocked.');
-    s.option(form.DynamicList, 'doh_upstream', _('DoH upstreams'));
+    var doh = s.option(form.DynamicList, 'doh_upstream', _('DoH upstreams'));
+    doh.description = _('DNS-over-HTTPS upstreams mihomo resolves through once bootstrapped — the primary resolver path.');
     var doq = s.option(form.DynamicList, 'doq_upstream', _('DoQ upstreams'));
     doq.description = _('DNS-over-QUIC upstreams used by mihomo (e.g. quic://dns.adguard-dns.com or quic://94.140.14.14). Tried alongside DoH; useful when DoH is selectively filtered.');
     // These default to ON in the backend (config.Default: HijackLANDNS,

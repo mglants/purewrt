@@ -361,6 +361,12 @@ func sectionForRuleProvider(c config.Config, rp config.RuleProvider) (config.Sec
 	return config.Section{}, false
 }
 
+// orderedRuleProviders fixes the provider iteration order: priority
+// ascending, then name. This order is LOAD-BEARING for full-mode rule dedup —
+// the first provider to emit a value claims it (via the `claimed` map), so a
+// rule appearing in two providers routes with the LOWER-priority-number
+// (earlier) one. Changing this sort silently changes routing for every
+// duplicated rule.
 func orderedRuleProviders(in []config.RuleProvider) []config.RuleProvider {
 	out := append([]config.RuleProvider(nil), in...)
 	sort.SliceStable(out, func(i, j int) bool {

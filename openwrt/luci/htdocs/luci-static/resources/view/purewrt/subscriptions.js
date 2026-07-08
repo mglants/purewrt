@@ -118,8 +118,14 @@ function sectionTitle(sid) {
 }
 
 function updateSubscriptions() {
-  ui.addNotification(null, E('p', _('Updating providers — this may take a minute on first run.')), 'info');
-  return updateAsync.run().then(function(r) {
+  // Live progress: the em node stays referenced by the poll loop, so the
+  // toast text updates in place while the job runs.
+  var progress = E('em', {}, '');
+  ui.addNotification(null, E('p', [ _('Updating providers — this may take a minute on first run. '), progress ]), 'info');
+  return updateAsync.run({ onProgress: function(p) {
+    var line = (p.output || '').trim().split('\n').pop() || '';
+    progress.textContent = _('%ds elapsed').format(Math.round(p.elapsedMs / 1000)) + (line ? ' — ' + line.slice(0, 120) : '');
+  } }).then(function(r) {
     if (!r.ok) {
       ui.addNotification(null, fmt.errorDetails(_('Provider update failed (rc=%s)').format(r.rc), r.output), 'danger');
       return;
@@ -194,6 +200,7 @@ return view.extend({
     cron.default = '17 */6 * * *';
     cron.rmempty = false;
     cron.retain = true;
+    cron.validate = fmt.validateCron;
     cron.depends('auto_update_enabled', '1');
     var reloadAfterUpdate = st.option(form.Flag, 'reload_after_update', _('Apply only when downloads changed'));
     reloadAfterUpdate.default = '1';
@@ -211,7 +218,8 @@ return view.extend({
 
     s.option(form.Flag, 'enabled', _('Enabled'));
     s.option(form.Value, 'name', _('Name'));
-    s.option(form.Value, 'url', _('URL'));
+    var subURL = s.option(form.Value, 'url', _('URL'));
+    subURL.validate = fmt.validateHTTPURL;
 
     var mode = s.option(form.ListValue, 'mode', _('Import mode'));
     mode.value('auto', _('Auto'));

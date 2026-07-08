@@ -48,9 +48,59 @@ function errorDetails(summary, output) {
   return E('div', {}, body);
 }
 
+// Form validators, shared by the settings/subscriptions/sections views.
+// Each returns true or a translated error string — the shape LuCI's
+// AbstractValue.validate expects — so a typo is rejected at input time
+// instead of surfacing minutes later as a cryptic apply-log line.
+
+// validateCron accepts a 5-field busybox-crond expression (numeric fields
+// with * , - / — crond on OpenWrt has no @daily or name aliases).
+function validateCron(sid, v) {
+  if (!v) return true;
+  var fields = v.trim().split(/\s+/);
+  if (fields.length !== 5)
+    return _('Expected 5 cron fields (minute hour day month weekday), got %d').format(fields.length);
+  var part = /^(\*|\d+(-\d+)?)(\/\d+)?$/;
+  for (var i = 0; i < 5; i++) {
+    var ok = fields[i].split(',').every(function(p) { return part.test(p); });
+    if (!ok) return _('Invalid cron field "%s" — use numbers with * , - /').format(fields[i]);
+  }
+  return true;
+}
+
+// validateHTTPURL accepts empty (use default) or an absolute http(s) URL.
+function validateHTTPURL(sid, v) {
+  if (!v) return true;
+  if (!/^https?:\/\/\S+$/i.test(v.trim()))
+    return _('Must be an absolute http:// or https:// URL');
+  return true;
+}
+
+// validateCIDR accepts a bare IP or CIDR, v4 or v6.
+function validateCIDR(v) {
+  if (!v) return _('Enter an IP or CIDR.');
+  var m = v.trim().match(/^(.+?)(?:\/(\d{1,3}))?$/);
+  var addr = m[1], plen = m[2];
+  var v6 = addr.indexOf(':') >= 0;
+  if (v6) {
+    if (!/^[0-9a-f:]+$/i.test(addr) || addr.indexOf('::') !== addr.lastIndexOf('::'))
+      return _('"%s" is not a valid IPv6 address').format(addr);
+    if (plen !== undefined && +plen > 128) return _('IPv6 prefix length must be 0-128');
+  } else {
+    var oct = addr.split('.');
+    if (oct.length !== 4 || !oct.every(function(o) { return /^\d{1,3}$/.test(o) && +o <= 255; }))
+      return _('"%s" is not a valid IPv4 address').format(addr);
+    if (plen !== undefined && +plen > 32) return _('IPv4 prefix length must be 0-32');
+  }
+  return true;
+}
+
 return baseclass.extend({
   humanAgo: humanAgo,
   humanUptime: humanUptime,
   pill: pill,
-  errorDetails: errorDetails
+  errorDetails: errorDetails,
+  validateCron: validateCron,
+  validateHTTPURL: validateHTTPURL,
+  validateCIDR: validateCIDR
 });

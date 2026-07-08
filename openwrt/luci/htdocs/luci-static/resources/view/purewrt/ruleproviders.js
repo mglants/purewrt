@@ -6,6 +6,7 @@
 'require fs';
 'require ui';
 'require purewrt.table_section as tableSection';
+'require purewrt.format as fmt';
 
 // Manual rule providers (format = "manual") live as plain text files under
 // /etc/purewrt/rulesets/<name>.txt, owned by the user, no `url`. The
@@ -391,6 +392,7 @@ return view.extend({
     var url = s.option(form.Value, 'url', _('URL'));
     url.depends('format', 'text');
     url.depends('format', 'mrs');
+    url.validate = fmt.validateHTTPURL;
     var path = s.option(form.Value, 'path', _('Local path'));
     path.depends('format', 'mrs');
     path.depends({ format: 'text', url: /.+/ });

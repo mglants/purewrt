@@ -289,7 +289,8 @@ function buildCIDRSection() {
         E('button', { 'class': 'btn', 'click': ui.hideModal }, _('Cancel')), ' ',
         E('button', { 'class': 'btn cbi-button cbi-button-action', 'click': function() {
           var cidr = (cidrInput.value || '').trim().toLowerCase();
-          if (!cidr) { ui.addNotification(null, E('p', _('Enter an IP or CIDR.')), 'warning'); return; }
+          var valid = fmt.validateCIDR(cidr);
+          if (valid !== true) { ui.addNotification(null, E('p', valid), 'warning'); return; }
           var family = cidr.indexOf(':') >= 0 ? 6 : 4;
           ui.hideModal();
           // One target per CIDR — re-adding reassigns (purge any existing entry

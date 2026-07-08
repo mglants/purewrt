@@ -42,8 +42,17 @@ return baseclass.extend({
     var totalMs    = spec.totalMs || 240000;
 
     return {
+      // run(param..., [onProgress]) — an optional trailing function is a
+      // progress callback, invoked on every status poll with
+      // {elapsedMs, output} (output = the worker's log tail so far). Lets a
+      // view show "what phase is this in / how long has it run" instead of a
+      // static "Working…" label while a 2-20 minute job grinds.
       run: function() {
         var args = Array.prototype.slice.call(arguments);
+        var onProgress = null;
+        if (args.length && typeof args[args.length - 1] === 'function')
+          onProgress = args.pop();
+        var started = Date.now();
         var deadline = Date.now() + totalMs;
         return callStart.apply(null, args).then(function(r) {
           // Guard the start outcome. A successful launch returns
@@ -72,6 +81,11 @@ return baseclass.extend({
                   result[payloadKey] = (s && s[payloadKey]) || (payloadKey === 'output' ? '' : null);
                   resolve(result);
                 } else {
+                  if (onProgress) {
+                    try {
+                      onProgress({ elapsedMs: Date.now() - started, output: (s && s.output) || '' });
+                    } catch (e) { /* a broken progress renderer must not kill the poll loop */ }
+                  }
                   setTimeout(tick, pollMs);
                 }
               }, reject);

@@ -5,6 +5,7 @@
 'require ui';
 'require uci';
 'require purewrt.styles';
+'require purewrt.format as fmt';
 
 // Global PureWRT settings — everything the Setup Wizard doesn't cover. Each
 // card maps to one form.NamedSection but they all write to the same UCI
@@ -81,6 +82,7 @@ function addRow(section, kind, name, title, opts) {
   if (opts.placeholder !== undefined) o.placeholder = opts.placeholder;
   if (opts.description) o.description = opts.description;
   if (opts.datatype) o.datatype = opts.datatype;
+  if (opts.validate) o.validate = opts.validate;
   if (opts.default !== undefined) o.default = opts.default;
   if (opts.password) o.password = true;
   if (opts.rmempty !== undefined) o.rmempty = opts.rmempty;
@@ -157,6 +159,7 @@ return view.extend({
     addRow(netcheck, form.Flag, 'net_check_enabled', _('Scheduled net-check'), { default: '0',
       description: _('Run net-check on a cron schedule. It transfers real bytes through the proxy, so it consumes subscription quota — off by default.') });
     var ncCron = addRow(netcheck, form.Value, 'net_check_cron', _('Schedule (cron)'), { placeholder: '*/30 * * * *',
+      validate: fmt.validateCron,
       description: _('Cron expression. Empty = manual only (run from Diagnostics).') });
     ncCron.depends('net_check_enabled', '1');
     var ncBytes = addRow(netcheck, form.Value, 'net_check_bytes', _('Probe size (bytes)'), { datatype: 'uinteger', default: '2097152',
@@ -167,14 +170,18 @@ return view.extend({
     var mihomo = m.section(form.NamedSection, 'settings', 'main', _('Mihomo runtime'),
       _('Where PureWRT pulls mihomo from + which release channel to track.'));
     mihomo.anonymous = true;
-    addRow(mihomo, form.Value, 'mihomo_bin', _('Mihomo binary'), { placeholder: '/usr/bin/mihomo' });
-    addRow(mihomo, form.Value, 'mihomo_config', _('Mihomo config'), { placeholder: '/etc/purewrt/generated/mihomo.yaml' });
+    addRow(mihomo, form.Value, 'mihomo_bin', _('Mihomo binary path'), { placeholder: '/usr/bin/mihomo',
+      description: _('Empty uses the package-installed binary. Set automatically by "Install release" on the Mihomo page.') });
+    addRow(mihomo, form.Value, 'mihomo_config', _('Mihomo config path'), { placeholder: '/etc/purewrt/generated/mihomo.yaml',
+      description: _('Where the generated mihomo config is written. Change only for non-standard layouts.') });
     addRow(mihomo, form.Flag, 'mihomo_allow_lan', _('Expose proxy to LAN (allow-lan)'), { default: '0',
       description: _('Off (default) binds mihomo\'s mixed-port (HTTP/SOCKS, 7890) to 127.0.0.1 only, so a LAN scan can\'t detect or use the router as an open proxy. The transparent (TPROXY) routing for your sections is unaffected. Turn on only if you want LAN clients to point at the router as an explicit proxy. (The dashboard/controller port and TPROXY ports are separate.)') });
     addRow(mihomo, form.ListValue, 'mihomo_channel', _('Update channel'), {
-      values: [['alpha', 'alpha (Prerelease)'], ['stable', 'stable (Release)']], default: 'alpha' });
+      values: [['alpha', 'alpha (Prerelease)'], ['stable', 'stable (Release)']], default: 'alpha',
+      description: _('Which MetaCubeX release stream "Install release" and auto-update track. Alpha ships fixes fast but is a prerelease build; pick stable for conservative routers. Auto-update stays off unless you enable it.') });
     addRow(mihomo, form.Value, 'mihomo_release_api', _('Release API URL'),
-      { placeholder: 'https://api.github.com/repos/MetaCubeX/mihomo/releases/tags/Prerelease-Alpha' });
+      { placeholder: 'https://api.github.com/repos/MetaCubeX/mihomo/releases/tags/Prerelease-Alpha',
+        validate: fmt.validateHTTPURL });
     addRow(mihomo, form.Flag, 'mihomo_geodata_enabled', _('Mihomo geodata'), { default: '0',
       description: _('Enable mihomo\'s built-in geodata + auto-update. PureWRT\'s rule providers cover most use cases — leave off unless you write GEOIP/GEOSITE rules manually.') });
 
@@ -191,7 +198,8 @@ return view.extend({
       description: _('Auth token for the external controller. Auto-generated on first run; rotate by clearing and saving.') });
     addRow(dash, form.Value, 'dashboard_path', _('Local install path'), { placeholder: '/etc/purewrt/dashboard' });
     addRow(dash, form.Value, 'dashboard_url', _('Dashboard download URL'),
-      { placeholder: 'https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip' });
+      { placeholder: 'https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip',
+        validate: fmt.validateHTTPURL });
     addRow(dash, form.Value, 'dashboard_name', _('Dashboard name'), { placeholder: 'metacubexd',
       description: _('Subdirectory under /ui/. Lets you bundle multiple dashboard distributions.') });
 
@@ -287,11 +295,12 @@ return view.extend({
     var geo = m.section(form.NamedSection, 'settings', 'main', _('Geo data'),
       _('Sources used by the `geo-refresh` job to keep mihomo\'s GeoIP/GeoSite/MMDB datasets current.'));
     geo.anonymous = true;
-    addRow(geo, form.Value, 'geo_refresh_geoip_url', _('GeoIP URL'), { placeholder: '(default)' });
-    addRow(geo, form.Value, 'geo_refresh_geosite_url', _('GeoSite URL'), { placeholder: '(default)' });
-    addRow(geo, form.Value, 'geo_refresh_mmdb_url', _('MMDB URL'), { placeholder: '(default)' });
+    addRow(geo, form.Value, 'geo_refresh_geoip_url', _('GeoIP URL'), { placeholder: '(default)', validate: fmt.validateHTTPURL });
+    addRow(geo, form.Value, 'geo_refresh_geosite_url', _('GeoSite URL'), { placeholder: '(default)', validate: fmt.validateHTTPURL });
+    addRow(geo, form.Value, 'geo_refresh_mmdb_url', _('MMDB URL'), { placeholder: '(default)', validate: fmt.validateHTTPURL });
     addRow(geo, form.Value, 'geo_refresh_geoip_dir', _('Geo install dir'), { placeholder: '/etc/purewrt/geo' });
     addRow(geo, form.Value, 'geo_refresh_cron', _('Refresh cron'), { placeholder: '7 3 * * *',
+      validate: fmt.validateCron,
       description: _('Empty disables the scheduled refresh (manual only via `purewrt geo-refresh`).') });
 
     // ---- Firewall + routing internals ----

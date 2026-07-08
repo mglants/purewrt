@@ -778,6 +778,7 @@ function applyIpdbBanner(banner, status) {
     btn.disabled = true;
     btn.textContent = _('Downloading…');
     callIpdbUpdateStart().then(function() {
+      var started = Date.now();
       var deadline = Date.now() + 5 * 60 * 1000;
       function poll() {
         callIpdbUpdateStatus().then(function(s) {
@@ -787,6 +788,7 @@ function applyIpdbBanner(banner, status) {
             return;
           }
           if (Number(s && s.running) === 1) {
+            btn.textContent = _('Downloading… %ds').format(Math.round((Date.now() - started) / 1000));
             window.setTimeout(poll, 2000);
             return;
           }

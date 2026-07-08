@@ -2,6 +2,7 @@ package manager
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -359,7 +360,9 @@ func (m Manager) UpdateRuleProvider(name string) (UpdateResult, error) {
 	if !found {
 		return UpdateResult{}, fmt.Errorf("rule provider %q not found", name)
 	}
-	changed, failures, err := m.updateRuleProvidersAsync(selected, now, updateProxyURL, bootstrapFromSettings(c.Settings), fallbackProxyURL(c, updateProxyURL), c.Settings.UpdateConcurrency, true)
+	ctx, cancel := context.WithTimeout(context.Background(), ruleProviderUpdateBudget)
+	defer cancel()
+	changed, failures, err := m.updateRuleProvidersAsync(ctx, selected, now, updateProxyURL, bootstrapFromSettings(c.Settings), fallbackProxyURL(c, updateProxyURL), c.Settings.UpdateConcurrency, true)
 	if err != nil {
 		log.Error("update-rule-provider: %s failed: %v", name, err)
 		return UpdateResult{}, err
@@ -571,7 +574,9 @@ func (m Manager) UpdateDetailedWithOptions(force bool) (UpdateResult, error) {
 		log.Info("proxy-provider: %s changed checksum=%s bytes=%d", pp.Name, shortChecksum(d.Checksum), len(d.Data))
 		changed = true
 	}
-	rpChanged, rpFailures, err := m.updateRuleProvidersAsync(c.RuleProviders, now, updateProxyURL, bootstrapFromSettings(c.Settings), fallbackProxyURL(c, updateProxyURL), c.Settings.UpdateConcurrency, force)
+	rpCtx, rpCancel := context.WithTimeout(context.Background(), ruleProviderUpdateBudget)
+	defer rpCancel()
+	rpChanged, rpFailures, err := m.updateRuleProvidersAsync(rpCtx, c.RuleProviders, now, updateProxyURL, bootstrapFromSettings(c.Settings), fallbackProxyURL(c, updateProxyURL), c.Settings.UpdateConcurrency, force)
 	if err != nil {
 		// Hard error (e.g., disk write failure for ALL providers); abort.
 		return UpdateResult{}, err
@@ -621,7 +626,13 @@ type ruleProviderDownloadResult struct {
 	err     error
 }
 
-func (m Manager) updateRuleProvidersAsync(ruleProviders []config.RuleProvider, now time.Time, updateProxyURL string, bootstrap provider.BootstrapConfig, fallbackProxy string, concurrency int, force bool) (bool, []string, error) {
+// ruleProviderUpdateBudget bounds the whole rule-provider fan-out. One wedged
+// download (a mirror that accepts the connection and never responds through
+// every fallback) must not stall `purewrt update` indefinitely — cron re-runs
+// would pile up coalesced behind the operation lock.
+const ruleProviderUpdateBudget = 10 * time.Minute
+
+func (m Manager) updateRuleProvidersAsync(ctx context.Context, ruleProviders []config.RuleProvider, now time.Time, updateProxyURL string, bootstrap provider.BootstrapConfig, fallbackProxy string, concurrency int, force bool) (bool, []string, error) {
 	log := logging.New(m.logLevel())
 	c, _ := m.Load()
 	// Materialize geo-backed providers first — they don't need the
@@ -691,8 +702,20 @@ func (m Manager) updateRuleProvidersAsync(ruleProviders []config.RuleProvider, n
 		go func() {
 			defer log.DebugTimer("rule-provider: %s download", rp.Name)()
 			defer wg.Done()
-			sem <- struct{}{}
+			// Honour cancellation while queued and before starting the
+			// download — once the budget/caller cancels, remaining jobs
+			// report a soft failure instead of firing new fetches.
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				results <- ruleProviderDownloadResult{rp: rp, meta: provider.Metadata{ErrorMessage: ctx.Err().Error()}, err: ctx.Err()}
+				return
+			}
 			defer func() { <-sem }()
+			if err := ctx.Err(); err != nil {
+				results <- ruleProviderDownloadResult{rp: rp, meta: provider.Metadata{ErrorMessage: err.Error()}, err: err}
+				return
+			}
 			log.Info("rule-provider: %s download start", rp.Name)
 			priorMeta, _ := provider.ReadMetadata(rp.Path)
 			d, err := provider.DownloadWithOptions(rp.URL, provider.DownloadOptions{HWID: rp.HWID, DeviceName: rp.DeviceName, UserAgent: rp.UserAgent, Headers: rp.Headers, ProxyURL: updateProxyURL, Bootstrap: bootstrap, PriorETag: priorMeta.ETag, PriorLastModified: priorMeta.LastModified, Mirrors: rp.Mirrors, FallbackProxyURL: fallbackProxy, PinSHA256: rp.PinSHA256, SuppressHWID: rp.SuppressHWID})
@@ -2192,4 +2215,3 @@ func (m Manager) Status() string {
 	}
 	return b.String()
 }
-
