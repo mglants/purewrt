@@ -6,6 +6,7 @@
 'require purewrt.net_check_async as netCheckAsync';
 'require purewrt.manual_rule_modal as manualModal';
 'require purewrt.format as fmt';
+'require purewrt.styles';
 
 var callStatus = rpc.declare({ object: 'purewrt', method: 'status' });
 var callReload = rpc.declare({ object: 'purewrt', method: 'reload' });
@@ -16,6 +17,111 @@ var callCheck = rpc.declare({ object: 'purewrt', method: 'check', params: [ 'dom
 var callDoctorWarnings = rpc.declare({ object: 'purewrt', method: 'doctor_warnings' });
 var callInspectIPv6 = rpc.declare({ object: 'purewrt', method: 'inspect_ipv6' });
 var callFlushDnsSets = rpc.declare({ object: 'purewrt', method: 'flush_dns_sets' });
+var callResolversProbe = rpc.declare({ object: 'purewrt', method: 'resolvers_probe' });
+var callMihomoStatus = rpc.declare({ object: 'purewrt', method: 'mihomo_status' });
+
+// Health check panel — fires the cheap, side-effect-free checks in parallel and
+// renders each as a spinner → coloured verdict chip as it settles, plus an
+// aggregate banner. net-check is deliberately excluded (slow + burns quota); it
+// keeps its own button below. Reuses fmt.pill / styles purewrt-pill-* + banners
+// and the same 'spinning' class the zapret sweep uses. No new rpcd/ACL.
+//
+// Each check's verdict(res) → { state: 'ok'|'warn'|'danger'|'info', detail, more }
+// where `more` (optional) is the raw payload shown behind a <details>.
+var HEALTH_CHECKS = [
+  { key: 'service', label: _('Service'), run: callStatus, verdict: function(r) {
+    var enabled = r && (r.enabled === true || r.enabled === 'true' || r.status === 'ok');
+    return { state: enabled ? 'ok' : 'warn', detail: enabled ? _('enabled') : _('not fully applied'),
+      more: JSON.stringify(r, null, 2) };
+  } },
+  { key: 'mihomo', label: _('Mihomo'), run: callMihomoStatus, verdict: function(r) {
+    var up = r && (r.running === true || r.running === 1);
+    return { state: up ? 'ok' : 'danger', detail: up ? (r.version || _('running')) : _('not running'),
+      more: JSON.stringify(r, null, 2) };
+  } },
+  { key: 'resolvers', label: _('DNS resolvers'), run: callResolversProbe, verdict: function(r) {
+    var entries = (r && r.entries) || [];
+    var okN = entries.filter(function(e) { return e.ok; }).length;
+    var any = r && (r.any_endpoint_ok || r.ok || okN > 0);
+    return { state: any ? 'ok' : 'danger',
+      detail: entries.length ? _('%d/%d reachable').format(okN, entries.length) : _('no endpoints'),
+      more: JSON.stringify(r, null, 2) };
+  } },
+  { key: 'warnings', label: _('Bypass warnings'), run: callDoctorWarnings, verdict: function(r) {
+    var w = (r && r.warnings) || (Array.isArray(r) ? r : []);
+    return { state: w.length ? 'warn' : 'ok',
+      detail: w.length ? _('%d warning(s)').format(w.length) : _('none'),
+      more: w.length ? w.join('\n') : '' };
+  } },
+  { key: 'ipv6', label: _('IPv6 path'), run: callInspectIPv6, verdict: function(r) {
+    var w = (r && r.warnings) || [];
+    return { state: w.length ? 'warn' : 'ok', detail: (r && r.mode) || 'auto',
+      more: JSON.stringify(r, null, 2) };
+  } }
+];
+
+// worstState folds per-check states into the aggregate banner verdict.
+function worstHealthState(states) {
+  if (states.indexOf('danger') >= 0) return 'danger';
+  if (states.indexOf('warn') >= 0) return 'warn';
+  return 'ok';
+}
+
+function renderHealthPanel() {
+  var banner = E('div', { 'class': 'purewrt-banner purewrt-banner-muted', 'style': 'margin:.5em 0' },
+    _('Click "Run all" to check service, mihomo, DNS resolvers, bypass warnings and IPv6 in parallel.'));
+  // One row per check; the status cell is swapped from spinner to chip in place.
+  var rows = {};
+  var cells = {};
+  HEALTH_CHECKS.forEach(function(c) {
+    var cell = E('span', {}, '—');
+    cells[c.key] = cell;
+    rows[c.key] = E('div', { 'style': 'display:flex;gap:.75em;align-items:center;padding:.3em 0;border-bottom:1px solid #333' }, [
+      E('strong', { 'style': 'flex:0 0 12em' }, c.label),
+      E('div', { 'style': 'flex:1 1 auto' }, cell)
+    ]);
+  });
+  var runBtn = E('button', { 'class': 'btn cbi-button cbi-button-action' }, [ _('Run all') ]);
+  runBtn.addEventListener('click', function(ev) {
+    ev.preventDefault();
+    runBtn.disabled = true;
+    banner.className = 'purewrt-banner purewrt-banner-muted';
+    banner.textContent = _('Running checks…');
+    HEALTH_CHECKS.forEach(function(c) {
+      cells[c.key].innerHTML = E('em', { 'class': 'purewrt-text-dim spinning' }, _('checking…')).outerHTML;
+    });
+    var settled = HEALTH_CHECKS.map(function(c) {
+      return Promise.resolve().then(c.run).then(function(r) {
+        var v = c.verdict(r) || { state: 'info', detail: '' };
+        renderCell(cells[c.key], v);
+        return v.state;
+      }).catch(function(e) {
+        renderCell(cells[c.key], { state: 'danger', detail: _('check failed'), more: (e && e.message) || String(e) });
+        return 'danger';
+      });
+    });
+    Promise.all(settled).then(function(states) {
+      var worst = worstHealthState(states);
+      var okN = states.filter(function(s) { return s === 'ok'; }).length;
+      banner.className = 'purewrt-banner purewrt-banner-' + (worst === 'ok' ? 'ok' : worst === 'warn' ? 'warn' : 'danger');
+      banner.textContent = _('%d/%d checks OK').format(okN, states.length);
+      runBtn.disabled = false;
+    });
+  });
+  function renderCell(cell, v) {
+    var variant = v.state === 'ok' ? 'ok' : v.state === 'warn' ? 'warn' : v.state === 'danger' ? 'danger' : 'info';
+    cell.innerHTML = '';
+    cell.appendChild(fmt.pill(v.state, variant));
+    if (v.detail) cell.appendChild(E('span', { 'style': 'margin-left:.5em' }, v.detail));
+    if (v.more) cell.appendChild(fmt.errorDetails('', v.more));
+  }
+  return E('div', { 'class': 'cbi-section purewrt-card' }, [
+    E('h3', {}, _('Health check')),
+    banner,
+    E('div', {}, Object.keys(rows).map(function(k) { return rows[k]; })),
+    E('div', { 'style': 'margin-top:.5em' }, [ runBtn ])
+  ]);
+}
 // Blocking heuristics moved to its dedicated "What's Blocked Now" page.
 // DNS leak check removed: the Site check tool below resolves a single
 // domain and reports "first A in nftset: true/false" using the same
@@ -95,6 +201,8 @@ return view.extend({
       out.textContent = JSON.stringify(res, null, 2);
       return E('div', { 'class': 'cbi-map' }, [
         E('h2', _('PureWRT Diagnostics')),
+
+        renderHealthPanel(),
 
         E('div', { 'class': 'cbi-section' }, [
           E('h3', _('Quick actions')),
