@@ -124,7 +124,10 @@ poll_bg_job() {
     if ( exec 9>"$lockfile"; flock -nx 9 ) 2>/dev/null; then :; else running=1; fi
   fi
   printf '{"running":%s,"rc":"%s","output":"' "$running" "$rc"
-  tail -n 500 "$log" 2>/dev/null | json_string
+  # 1000 lines: the views show the full payload behind a collapsible details
+  # element, and a failing apply's root cause can sit well before the last
+  # screenful. Still bounded so ubus message limits hold.
+  tail -n 1000 "$log" 2>/dev/null | json_string
   printf '"}'
 }
 

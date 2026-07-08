@@ -45,7 +45,9 @@ func notifyEventEnabled(c config.Config, event string) bool {
 // fail an apply.
 func dumpMetrics(c config.Config) {
 	path := filepath.Join(c.RuntimeDir(), "metrics.prom")
-	_ = system.AtomicWrite(path, []byte(metrics.Default.Render()), 0644)
+	if err := system.AtomicWrite(path, []byte(metrics.Default.Render()), 0644); err != nil {
+		newLog(c).Warn("metrics: dump to %s failed: %v", path, err)
+	}
 }
 
 // notifySubscriptionExpiry sweeps SubscriptionExpiry and notifies per

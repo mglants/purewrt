@@ -5,6 +5,7 @@
 'require purewrt.update_async as updateAsync';
 'require purewrt.net_check_async as netCheckAsync';
 'require purewrt.manual_rule_modal as manualModal';
+'require purewrt.format as fmt';
 
 var callStatus = rpc.declare({ object: 'purewrt', method: 'status' });
 var callReload = rpc.declare({ object: 'purewrt', method: 'reload' });
@@ -107,12 +108,12 @@ return view.extend({
             return updateAsync.run().then(function(r){
               out.textContent = (r.output || '').slice(-2000);
               if (!r.ok) {
-                ui.addNotification(null, E('p', _('Update failed (rc=%s): %s').format(r.rc, (r.output || '').slice(-400))), 'danger');
+                ui.addNotification(null, fmt.errorDetails(_('Update failed (rc=%s)').format(r.rc), r.output), 'danger');
                 return;
               }
               return callReload().then(function(r2) {
                 if (r2 && r2.result === 'failed') {
-                  ui.addNotification(null, E('p', _('Apply failed: %s').format((r2.output || '').slice(0, 400))), 'danger');
+                  ui.addNotification(null, fmt.errorDetails(_('Apply failed'), r2.output), 'danger');
                 } else {
                   ui.addNotification(null, E('p', _('Providers updated and PureWRT reloaded.')), 'info');
                 }
@@ -125,7 +126,7 @@ return view.extend({
             return callReload().then(function(r){
               out.textContent = JSON.stringify(r, null, 2);
               if (r && r.result === 'failed') {
-                ui.addNotification(null, E('p', _('Apply failed: %s').format((r.output || '').slice(0, 400))), 'danger');
+                ui.addNotification(null, fmt.errorDetails(_('Apply failed'), r.output), 'danger');
               } else {
                 ui.addNotification(null, E('p', _('PureWRT reloaded.')), 'info');
               }

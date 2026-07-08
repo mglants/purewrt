@@ -1,6 +1,7 @@
 'use strict';
 'require baseclass';
 'require ui';
+'require purewrt.format as fmt';
 
 // Shared "Save & Apply" chain for LuCI forms. Several views (Zapret,
 // Subscriptions, Proxy Providers) need the same shape: persist UCI, then
@@ -47,11 +48,11 @@ return baseclass.extend({
             // from rpcd-wrapped CLI calls.
             if (r && r.ok === false) {
               ui.addNotification(null,
-                E('p', _('%s failed (rc=%s): %s').format(step.label, r.rc, (r.output || '').slice(-400))),
+                fmt.errorDetails(_('%s failed (rc=%s)').format(step.label, r.rc), r.output),
                 'danger');
             } else if (r && r.result === 'failed') {
               ui.addNotification(null,
-                E('p', _('%s failed: %s').format(step.label, (r.output || '').slice(0, 400))),
+                fmt.errorDetails(_('%s failed').format(step.label), r.output),
                 'danger');
             }
             return r;

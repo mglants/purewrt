@@ -121,12 +121,12 @@ function updateSubscriptions() {
   ui.addNotification(null, E('p', _('Updating providers — this may take a minute on first run.')), 'info');
   return updateAsync.run().then(function(r) {
     if (!r.ok) {
-      ui.addNotification(null, E('p', _('Provider update failed (rc=%s): %s').format(r.rc, (r.output || '').slice(-400))), 'danger');
+      ui.addNotification(null, fmt.errorDetails(_('Provider update failed (rc=%s)').format(r.rc), r.output), 'danger');
       return;
     }
     return callReload().then(function(r2) {
       if (r2 && r2.result === 'failed') {
-        ui.addNotification(null, E('p', _('Apply failed: %s').format((r2.output || '').slice(0, 400))), 'danger');
+        ui.addNotification(null, fmt.errorDetails(_('Apply failed'), r2.output), 'danger');
       } else {
         ui.addNotification(null, E('p', _('Providers updated and PureWRT reloaded.')), 'info');
       }

@@ -2,11 +2,21 @@ package config
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 )
+
+// parseWarn surfaces a skipped UCI line on stderr. The parser deliberately
+// keeps going (a typo in one option must not brick the whole config), but
+// silently dropping the line meant user typos vanished undiagnosed — the
+// option just "didn't work". stderr, not a logger: the log level itself
+// comes from the config being parsed here.
+func parseWarn(path string, lineno int, format string, a ...any) {
+	fmt.Fprintf(os.Stderr, "warning: %s:%d: "+format+"\n", append([]any{path, lineno}, a...)...)
+}
 
 func Load(path string) (Config, error) {
 	c := Default()
@@ -25,13 +35,16 @@ func Load(path string) (Config, error) {
 	var sections []sec
 	cur := sec{}
 	s := bufio.NewScanner(f)
+	lineno := 0
 	for s.Scan() {
+		lineno++
 		line := strings.TrimSpace(s.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 		fields := strings.Fields(line)
 		if len(fields) < 2 {
+			parseWarn(path, lineno, "malformed line %q skipped", line)
 			continue
 		}
 		switch fields[0] {
@@ -43,15 +56,23 @@ func Load(path string) (Config, error) {
 			if len(fields) > 2 {
 				cur.name = unq(fields[2])
 			}
-		case "option":
-			if len(fields) >= 3 {
-				cur.opts[unq(fields[1])] = []string{unq(strings.Join(fields[2:], " "))}
+		case "option", "list":
+			if cur.opts == nil {
+				parseWarn(path, lineno, "%s %q outside any config section skipped", fields[0], unq(fields[1]))
+				continue
 			}
-		case "list":
-			if len(fields) >= 3 {
-				k := unq(fields[1])
+			if len(fields) < 3 {
+				parseWarn(path, lineno, "%s %q has no value, skipped", fields[0], unq(fields[1]))
+				continue
+			}
+			k := unq(fields[1])
+			if fields[0] == "option" {
+				cur.opts[k] = []string{unq(strings.Join(fields[2:], " "))}
+			} else {
 				cur.opts[k] = append(cur.opts[k], unq(strings.Join(fields[2:], " ")))
 			}
+		default:
+			parseWarn(path, lineno, "unknown directive %q skipped", fields[0])
 		}
 	}
 	if cur.typ != "" {

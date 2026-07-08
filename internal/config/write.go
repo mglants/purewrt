@@ -68,16 +68,26 @@ func Save(path string, c Config) error {
 	return system.AtomicWrite(path, Serialize(c), 0600)
 }
 
+// Backup copies path to <path>.purewrt.bak before a Save overwrites it.
+// Missing source is fine (fresh install). Every caller treats the backup as
+// best-effort and discards the error, so a real I/O failure is warned here —
+// once, centrally — instead of vanishing at eight call sites: it means no
+// rollback copy will exist for the save that follows.
 func Backup(path string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", nil
 		}
+		fmt.Fprintf(os.Stderr, "warning: config backup of %s failed: %v\n", path, err)
 		return "", err
 	}
 	backup := filepath.Join(filepath.Dir(path), filepath.Base(path)+".purewrt.bak")
-	return backup, system.AtomicWrite(backup, data, 0600)
+	if err := system.AtomicWrite(backup, data, 0600); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: config backup to %s failed: %v\n", backup, err)
+		return backup, err
+	}
+	return backup, nil
 }
 
 func EnsureDefaults(c Config) Config {

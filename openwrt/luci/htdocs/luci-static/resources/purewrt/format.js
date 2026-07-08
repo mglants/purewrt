@@ -32,8 +32,25 @@ function pill(text, variant) {
   return E('span', { 'class': 'purewrt-pill purewrt-pill-' + (variant || 'muted'), 'style': 'min-width:auto;padding:1px 8px;font-size:.85em' }, text);
 }
 
+// errorDetails renders a failure notification body: a one-line summary plus
+// the FULL command output behind a collapsible <details>, instead of the old
+// .slice(0, 400) truncation that hid the root cause (the interesting error is
+// usually at the end of a long apply log, forcing users into SSH + syslog).
+function errorDetails(summary, output) {
+  var body = [E('p', {}, summary)];
+  output = String(output || '').trim();
+  if (output) {
+    body.push(E('details', { 'style': 'margin-top:6px' }, [
+      E('summary', { 'style': 'cursor:pointer' }, _('Show full output')),
+      E('pre', { 'style': 'max-height:24em;overflow:auto;white-space:pre-wrap;font-size:.85em;margin-top:4px' }, output)
+    ]));
+  }
+  return E('div', {}, body);
+}
+
 return baseclass.extend({
   humanAgo: humanAgo,
   humanUptime: humanUptime,
-  pill: pill
+  pill: pill,
+  errorDetails: errorDetails
 });

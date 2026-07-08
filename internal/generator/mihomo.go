@@ -1,6 +1,8 @@
 package generator
 
 import (
+	"fmt"
+	"os"
 	"strings"
 
 	"github.com/purewrt/purewrt/internal/config"
@@ -13,11 +15,14 @@ func Mihomo(c config.Config) []byte {
 	// false or the file doesn't exist. On merge error (malformed mixin),
 	// falls back to the base so a bad mixin doesn't take down the router —
 	// the user-facing mixin Save endpoint validates before writing, so this
-	// is purely a defensive fallback for tampering or partial writes.
+	// is purely a defensive fallback for tampering or partial writes. The
+	// fallback is loud (stderr → apply output/syslog): the user's overrides
+	// silently not applying is itself a hard-to-diagnose failure.
 	merged, err := applyMihomoMixin(base, c)
 	if err == nil {
 		return merged
 	}
+	fmt.Fprintf(os.Stderr, "warning: mihomo mixin merge failed, generated config WITHOUT mixin overrides: %v\n", err)
 	return base
 }
 

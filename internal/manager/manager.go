@@ -126,7 +126,7 @@ func (m Manager) Import(url, name, mode, preset string) (provider.ImportPlan, er
 	if m.ConfigPath == "" {
 		m.ConfigPath = uciPurewrtPath
 	}
-	_, _ = config.Backup(m.ConfigPath)
+	_, _ = config.Backup(m.ConfigPath) // best-effort; Backup warns on failure
 	if err := config.Save(m.ConfigPath, c); err != nil {
 		return plan, err
 	}
@@ -515,7 +515,7 @@ func (m Manager) UpdateDetailedWithOptions(force bool) (UpdateResult, error) {
 		if m.ConfigPath == "" {
 			m.ConfigPath = uciPurewrtPath
 		}
-		_, _ = config.Backup(m.ConfigPath)
+		_, _ = config.Backup(m.ConfigPath) // best-effort; Backup warns on failure
 		if err := config.Save(m.ConfigPath, c); err != nil {
 			return UpdateResult{}, err
 		}
