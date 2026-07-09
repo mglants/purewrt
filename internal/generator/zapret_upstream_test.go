@@ -1,11 +1,29 @@
 package generator
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/purewrt/purewrt/internal/config"
 )
+
+// TestZapretUpstreamConfigPathAutoDerive: the compiled-config path is derived
+// from the upstream package's presence, not a user setting — it resolves to
+// <dir>/config when the upstream zapret2 dir exists, else "" (disabled).
+func TestZapretUpstreamConfigPathAutoDerive(t *testing.T) {
+	// Missing dir → disabled.
+	t.Setenv("PUREWRT_ZAPRET2_DIR", filepath.Join(t.TempDir(), "does-not-exist"))
+	if got := zapretUpstreamConfigPath(); got != "" {
+		t.Fatalf("missing upstream dir: got %q, want empty", got)
+	}
+	// Present dir → <dir>/config.
+	dir := t.TempDir()
+	t.Setenv("PUREWRT_ZAPRET2_DIR", dir)
+	if got, want := zapretUpstreamConfigPath(), filepath.Join(dir, "config"); got != want {
+		t.Fatalf("present upstream dir: got %q, want %q", got, want)
+	}
+}
 
 // makeZapretConfig builds a Default()-rooted config with one enabled zapret
 // section + one or more strategies, suitable for exercising ZapretUpstreamConfig.

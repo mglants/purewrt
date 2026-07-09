@@ -25,7 +25,7 @@ type GeneratedPaths struct {
 	FirewallFile         string
 	Mwan3File            string
 	ZapretEnv            string
-	ZapretUpstreamConfig string // /opt/zapret2/config; empty disables
+	ZapretUpstreamConfig string // auto-derived: /opt/zapret2/config when the upstream package is installed, else empty (disabled)
 }
 
 // uciConfigDir is the directory holding fw4/mwan3 UCI config files that
@@ -37,6 +37,31 @@ func uciConfigDir() string {
 		return d
 	}
 	return "/etc/config"
+}
+
+// zapretUpstreamDir is where the upstream zapret2 package keeps its config;
+// PUREWRT_ZAPRET2_DIR overrides it for tests.
+func zapretUpstreamDir() string {
+	if d := os.Getenv("PUREWRT_ZAPRET2_DIR"); d != "" {
+		return d
+	}
+	return "/opt/zapret2"
+}
+
+// zapretUpstreamConfigPath auto-derives where to write the compiled
+// NFQWS2_OPT file. It is NOT user-configurable: PureWRT ships the zapret
+// integration, so the path is ours to know. We write it only when the
+// upstream zapret2 package is actually installed (its dir exists); otherwise
+// we return "" and the legacy per-strategy env file is the only zapret output.
+// This removes the old free-text setting, which was a silent-no-op footgun —
+// a user who installed upstream zapret2 but didn't type the path got compiled
+// strategies that never reached the running daemon.
+func zapretUpstreamConfigPath() string {
+	dir := zapretUpstreamDir()
+	if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
+		return filepath.Join(dir, "config")
+	}
+	return ""
 }
 
 func DefaultGeneratedPaths(c config.Config) GeneratedPaths {
@@ -56,7 +81,7 @@ func DefaultGeneratedPaths(c config.Config) GeneratedPaths {
 	dnsmasqFile := filepath.Join(runtimeGeneratedDir, "purewrt.conf")
 	nftFile := filepath.Join(persistentGeneratedDir, "purewrt.nft")
 	nftSetsFile := filepath.Join(runtimeGeneratedDir, "purewrt-sets.nft")
-	return GeneratedPaths{MihomoConfig: mihomoConfig, DNSMasqFile: dnsmasqFile, DNSMasqFragmentDir: c.Settings.DNSMasqIncludeDir, NFTFile: nftFile, NFTSetsFile: nftSetsFile, FirewallFile: filepath.Join(uciConfigDir(), "purewrt-firewall.generated"), Mwan3File: filepath.Join(uciConfigDir(), "purewrt-mwan3.generated"), ZapretEnv: filepath.Join(persistentGeneratedDir, "zapret.env"), ZapretUpstreamConfig: c.Settings.ZapretUpstreamConfigPath}
+	return GeneratedPaths{MihomoConfig: mihomoConfig, DNSMasqFile: dnsmasqFile, DNSMasqFragmentDir: c.Settings.DNSMasqIncludeDir, NFTFile: nftFile, NFTSetsFile: nftSetsFile, FirewallFile: filepath.Join(uciConfigDir(), "purewrt-firewall.generated"), Mwan3File: filepath.Join(uciConfigDir(), "purewrt-mwan3.generated"), ZapretEnv: filepath.Join(persistentGeneratedDir, "zapret.env"), ZapretUpstreamConfig: zapretUpstreamConfigPath()}
 }
 
 func StagedGeneratedPaths(c config.Config, stageDir string) GeneratedPaths {

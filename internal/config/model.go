@@ -235,15 +235,11 @@ type Settings struct {
 	BootstrapTOFUPath       string // empty -> default; "off" disables
 	BootstrapTOFUTTLSec     int    // 0 -> default (7 days)
 	BootstrapHealthGate     bool   // run resolvers probe before apply; abort if zero endpoints answer
-	// ZapretUpstreamConfigPath, when set, is where the generator writes the
-	// compiled upstream-format NFQWS2_OPT shell file (consumed by upstream
-	// /etc/init.d/zapret2). Typically /opt/zapret2/config on devices that
-	// installed the upstream package. Empty disables — keep the legacy
-	// per-strategy env file (`paths.ZapretEnv`) flow as the only zapret
-	// output. Default empty so tests and dev hosts that lack /opt/zapret2/
-	// don't trip on permission errors.
-	ZapretUpstreamConfigPath string
-	IPv6Mode                string // "" / "auto" (default), "on", "off"
+	// Where the compiled upstream-format NFQWS2_OPT file goes (consumed by
+	// upstream /etc/init.d/zapret2) is NOT a setting — the generator
+	// auto-derives it from the installed upstream package. See
+	// generator.zapretUpstreamConfigPath.
+	IPv6Mode string // "" / "auto" (default), "on", "off"
 	IPv6RejectWhenOff       bool
 	// RouterOutputProxy gates the OUTPUT chain that proxies router-originated
 	// traffic through mihomo using the same destination-set match as the

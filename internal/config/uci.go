@@ -236,7 +236,6 @@ func applySection(c *Config, x struct {
 		c.Settings.BootstrapTOFUPath = one(x.opts, "bootstrap_tofu_path", c.Settings.BootstrapTOFUPath)
 		c.Settings.BootstrapTOFUTTLSec = i(x.opts, "bootstrap_tofu_ttl_sec", c.Settings.BootstrapTOFUTTLSec)
 		c.Settings.BootstrapHealthGate = b(x.opts, "bootstrap_health_gate", c.Settings.BootstrapHealthGate)
-		c.Settings.ZapretUpstreamConfigPath = one(x.opts, "zapret_upstream_config_path", c.Settings.ZapretUpstreamConfigPath)
 		c.Settings.IPv6Mode = one(x.opts, "ipv6_mode", c.Settings.IPv6Mode)
 		c.Settings.IPv6RejectWhenOff = b(x.opts, "ipv6_reject_when_off", c.Settings.IPv6RejectWhenOff)
 		c.Settings.RouterOutputProxy = b(x.opts, "router_output_proxy", c.Settings.RouterOutputProxy)

@@ -341,7 +341,6 @@ func writeMain(b *bytes.Buffer, s Settings) {
 	optNonEmpty(b, "bootstrap_tofu_path", s.BootstrapTOFUPath)
 	opti(b, "bootstrap_tofu_ttl_sec", s.BootstrapTOFUTTLSec)
 	optb(b, "bootstrap_health_gate", s.BootstrapHealthGate)
-	optNonEmpty(b, "zapret_upstream_config_path", s.ZapretUpstreamConfigPath)
 	opt(b, "ipv6_mode", s.IPv6Mode)
 	optb(b, "ipv6_reject_when_off", s.IPv6RejectWhenOff)
 	optb(b, "router_output_proxy", s.RouterOutputProxy)
