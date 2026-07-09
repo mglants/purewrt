@@ -73,8 +73,12 @@ func shellEscape(s string) string { return strings.ReplaceAll(s, "\"", "\\\"") }
 func shellQuote(s string) string { return strings.ReplaceAll(s, " ", "_") }
 
 // ZapretUpstreamConfig compiles the enabled UCI zapret_strategy sections into
-// the single-NFQWS2_OPT shell file that upstream zapret2's init.d script
-// (/etc/init.d/zapret2) expects to source from /opt/zapret2/config.
+// the single-NFQWS2_OPT upstream-format representation (what upstream zapret2's
+// init.d would source from /opt/zapret2/config). PureWRT does NOT write this
+// file — it runs nfqws per-instance from its own env via
+// /etc/init.d/purewrt-zapret. This is used only for the read-only
+// "Show compiled NFQWS2_OPT" preview and the `zapret-compiled-opt` CLI: a
+// human-readable overview of all strategies as one command line.
 //
 // Shape:
 //

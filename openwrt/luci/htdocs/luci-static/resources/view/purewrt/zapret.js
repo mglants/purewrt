@@ -855,9 +855,10 @@ return view.extend({
 
     // ---- Integration mode ----
     var st = m.section(form.NamedSection, 'settings', 'main', _('Zapret integration mode'));
-    // The compiled-config path is not user-configurable — PureWRT ships the
-    // zapret integration and auto-writes /opt/zapret2/config when the upstream
-    // package is installed, else uses its own per-strategy env file.
+    // "Show compiled NFQWS2_OPT" is a read-only summary of all enabled
+    // strategies as one upstream-format nfqws2 command line. PureWRT actually
+    // runs nfqws per-instance from its own env file (/etc/init.d/purewrt-zapret);
+    // this is a human-readable overview, not a file written anywhere.
     var showCompiled = st.option(form.Button, '_compiled_opt', _('Show compiled NFQWS2_OPT'));
     showCompiled.inputstyle = 'action';
     showCompiled.description = _('Read-only preview of what nfqws2 will see on the next <code>apply</code>.');

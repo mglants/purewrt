@@ -235,10 +235,6 @@ type Settings struct {
 	BootstrapTOFUPath       string // empty -> default; "off" disables
 	BootstrapTOFUTTLSec     int    // 0 -> default (7 days)
 	BootstrapHealthGate     bool   // run resolvers probe before apply; abort if zero endpoints answer
-	// Where the compiled upstream-format NFQWS2_OPT file goes (consumed by
-	// upstream /etc/init.d/zapret2) is NOT a setting — the generator
-	// auto-derives it from the installed upstream package. See
-	// generator.zapretUpstreamConfigPath.
 	IPv6Mode string // "" / "auto" (default), "on", "off"
 	IPv6RejectWhenOff       bool
 	// RouterOutputProxy gates the OUTPUT chain that proxies router-originated

@@ -25,7 +25,6 @@ type GeneratedPaths struct {
 	FirewallFile         string
 	Mwan3File            string
 	ZapretEnv            string
-	ZapretUpstreamConfig string // auto-derived: /opt/zapret2/config when the upstream package is installed, else empty (disabled)
 }
 
 // uciConfigDir is the directory holding fw4/mwan3 UCI config files that
@@ -37,31 +36,6 @@ func uciConfigDir() string {
 		return d
 	}
 	return "/etc/config"
-}
-
-// zapretUpstreamDir is where the upstream zapret2 package keeps its config;
-// PUREWRT_ZAPRET2_DIR overrides it for tests.
-func zapretUpstreamDir() string {
-	if d := os.Getenv("PUREWRT_ZAPRET2_DIR"); d != "" {
-		return d
-	}
-	return "/opt/zapret2"
-}
-
-// zapretUpstreamConfigPath auto-derives where to write the compiled
-// NFQWS2_OPT file. It is NOT user-configurable: PureWRT ships the zapret
-// integration, so the path is ours to know. We write it only when the
-// upstream zapret2 package is actually installed (its dir exists); otherwise
-// we return "" and the legacy per-strategy env file is the only zapret output.
-// This removes the old free-text setting, which was a silent-no-op footgun —
-// a user who installed upstream zapret2 but didn't type the path got compiled
-// strategies that never reached the running daemon.
-func zapretUpstreamConfigPath() string {
-	dir := zapretUpstreamDir()
-	if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
-		return filepath.Join(dir, "config")
-	}
-	return ""
 }
 
 func DefaultGeneratedPaths(c config.Config) GeneratedPaths {
@@ -81,7 +55,7 @@ func DefaultGeneratedPaths(c config.Config) GeneratedPaths {
 	dnsmasqFile := filepath.Join(runtimeGeneratedDir, "purewrt.conf")
 	nftFile := filepath.Join(persistentGeneratedDir, "purewrt.nft")
 	nftSetsFile := filepath.Join(runtimeGeneratedDir, "purewrt-sets.nft")
-	return GeneratedPaths{MihomoConfig: mihomoConfig, DNSMasqFile: dnsmasqFile, DNSMasqFragmentDir: c.Settings.DNSMasqIncludeDir, NFTFile: nftFile, NFTSetsFile: nftSetsFile, FirewallFile: filepath.Join(uciConfigDir(), "purewrt-firewall.generated"), Mwan3File: filepath.Join(uciConfigDir(), "purewrt-mwan3.generated"), ZapretEnv: filepath.Join(persistentGeneratedDir, "zapret.env"), ZapretUpstreamConfig: zapretUpstreamConfigPath()}
+	return GeneratedPaths{MihomoConfig: mihomoConfig, DNSMasqFile: dnsmasqFile, DNSMasqFragmentDir: c.Settings.DNSMasqIncludeDir, NFTFile: nftFile, NFTSetsFile: nftSetsFile, FirewallFile: filepath.Join(uciConfigDir(), "purewrt-firewall.generated"), Mwan3File: filepath.Join(uciConfigDir(), "purewrt-mwan3.generated"), ZapretEnv: filepath.Join(persistentGeneratedDir, "zapret.env")}
 }
 
 func StagedGeneratedPaths(c config.Config, stageDir string) GeneratedPaths {
@@ -95,21 +69,7 @@ func StagedGeneratedPaths(c config.Config, stageDir string) GeneratedPaths {
 		FirewallFile:         filepath.Join(stageDir, filepath.Base(live.FirewallFile)),
 		Mwan3File:            filepath.Join(stageDir, filepath.Base(live.Mwan3File)),
 		ZapretEnv:            filepath.Join(stageDir, filepath.Base(live.ZapretEnv)),
-		ZapretUpstreamConfig: stagedOrEmpty(stageDir, live.ZapretUpstreamConfig, "zapret2.config"),
 	}
-}
-
-// stagedOrEmpty returns a staged path next to stageDir for a live path that
-// might be empty (e.g. the upstream zapret2 config is opt-out).
-func stagedOrEmpty(stageDir, live, fallback string) string {
-	if live == "" {
-		return ""
-	}
-	base := filepath.Base(live)
-	if base == "" || base == "." || base == "/" {
-		base = fallback
-	}
-	return filepath.Join(stageDir, base)
 }
 
 func PromoteGeneratedPaths(staged, live GeneratedPaths) error {
@@ -129,19 +89,18 @@ func PromoteGeneratedPathsForGroups(staged, live GeneratedPaths, groups Generati
 		{staged.FirewallFile, live.FirewallFile, 0600, groups.Firewall},
 		{staged.Mwan3File, live.Mwan3File, 0600, groups.Mwan3},
 		{staged.ZapretEnv, live.ZapretEnv, 0644, groups.Zapret},
-		{staged.ZapretUpstreamConfig, live.ZapretUpstreamConfig, 0644, groups.Zapret},
 	} {
 		if !f.ok {
 			continue
 		}
 		if f.from == "" || f.to == "" {
-			// Path-disabled output (e.g. ZapretUpstreamConfig when the user
-			// hasn't opted in via Settings.ZapretUpstreamConfigPath).
+			// Path-disabled output (e.g. firewall/mwan3 when that group
+			// isn't selected).
 			continue
 		}
 		data, err := os.ReadFile(f.from)
 		if err != nil {
-			if os.IsNotExist(err) && (f.from == staged.FirewallFile || f.from == staged.Mwan3File || f.from == staged.ZapretUpstreamConfig) {
+			if os.IsNotExist(err) && (f.from == staged.FirewallFile || f.from == staged.Mwan3File) {
 				continue
 			}
 			return err
@@ -343,21 +302,6 @@ func WriteAllToResult(c config.Config, paths GeneratedPaths, opt WriteOptions) (
 			res.Changed["zapret"] = changed
 			logWrite(log, "generate: zapret env", paths.ZapretEnv, changed, len(zapret), time.Since(t))
 			metrics.GenerateDurationMS.Observe(float64(time.Since(t).Milliseconds()), "zapret")
-		}
-		if paths.ZapretUpstreamConfig != "" {
-			upstream := ZapretUpstreamConfig(c)
-			t = time.Now()
-			if changed, err := system.WriteIfChanged(paths.ZapretUpstreamConfig, upstream, 0644); err != nil {
-				// Don't fail apply on this — /opt/zapret2 may not exist yet on
-				// devices that haven't adopted the upstream init script. Log
-				// and move on.
-				log.Warn("generate: zapret2 upstream config write failed (skipping): %v", err)
-			} else {
-				if changed {
-					res.Changed["zapret"] = true
-				}
-				logWrite(log, "generate: zapret2 upstream config", paths.ZapretUpstreamConfig, changed, len(upstream), time.Since(t))
-			}
 		}
 	}
 	if err == nil && !opt.SkipFingerprint {

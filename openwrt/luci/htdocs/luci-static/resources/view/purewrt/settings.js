@@ -335,8 +335,6 @@ return view.extend({
     addRow(paths, form.Value, 'runtime_dir', _('Runtime dir'), { placeholder: '/tmp/purewrt' });
     addRow(paths, form.Value, 'generated_dir', _('Generated dir'), { placeholder: '(default: runtime_dir/generated)' });
     addRow(paths, form.Value, 'dnsmasq_include_dir', _('Dnsmasq include dir'), { placeholder: '(autodetect)' });
-    addRow(paths, form.Value, 'zapret_upstream_config_path', _('Zapret upstream config path'), { placeholder: '/opt/zapret2/config',
-      description: _('When set, PureWRT also writes a compiled NFQWS2_OPT shell file here so upstream zapret2 picks it up. Empty = legacy per-strategy env file only.') });
 
     return m.render().then(function(root) {
       // Default LuCI footer Save/Save & Apply work fine since every section
