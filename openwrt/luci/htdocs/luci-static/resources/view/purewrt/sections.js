@@ -523,9 +523,10 @@ return view.extend({
 
     return m.render().then(function(root) {
       tableSection.render(root, {
-        columns: '5rem 0 2fr 1fr 1fr 1fr 12rem',
-        headers: [ '', '', _('Name'), _('Action'), _('Target'), _('Priority'), '' ],
+        columns: '5rem 0 2fr 1fr 1fr 1fr 5rem 12rem',
+        headers: [ '', '', _('Name'), _('Action'), _('Target'), _('Priority'), _('Enabled'), '' ],
         draggable: true,
+        showEnable: true,
         titleOf: sectionTitle,
         summaryOf: routingSummary,
         save: function() { return m.save().then(callReload); },
