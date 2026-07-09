@@ -22,6 +22,7 @@ func ZapretEnv(c config.Config) []byte {
 		names = append(names, shellQuote(inst.strategy.Name))
 	}
 	b.WriteString("PUREWRT_ZAPRET_INSTANCES=\"" + strings.Join(names, " ") + "\"\n")
+	catalog := zapretCatalogBlobFiles()
 	for i, inst := range instances {
 		p := inst.profile
 		zs := inst.strategy
@@ -35,9 +36,10 @@ func ZapretEnv(c config.Config) []byte {
 		// Each nfqws instance must be told about the fake blobs its params
 		// reference (--lua-desync=fake:blob=NAME). Without this the daemon logs
 		// "LUA ERROR: blob 'NAME' unavailable" and passes packets unmodified —
-		// the desync silently no-ops. Blobs live on the profile; emit that
-		// profile's set as canonical --blob= decls for the init script to pass.
-		b.WriteString(prefix + "BLOBS=\"" + shellEscape(strings.TrimSpace(zapretProfileBlobFlags(p))) + "\"\n")
+		// the desync silently no-ops. Auto-derived from the params (+ any
+		// explicit profile decls), so it works no matter how the strategy was
+		// created (tester apply, editor preset, blockcheck, manual edit).
+		b.WriteString(prefix + "BLOBS=\"" + shellEscape(strings.TrimSpace(zapretInstanceBlobFlags(inst, catalog))) + "\"\n")
 	}
 	b.WriteString("PUREWRT_ZAPRET_INSTANCE_COUNT=\"" + itoa(len(instances)) + "\"\n")
 	return []byte(b.String())
@@ -160,10 +162,11 @@ func zapretLuaInit(luaDir string) string {
 // name:value shape, or contain whitespace (which would split the --blob arg)
 // are skipped. Returns a leading-space string ("" when there are none).
 func zapretBlobFlags(instances []zapretInstance) string {
+	catalog := zapretCatalogBlobFiles()
 	seen := map[string]bool{}
 	var parts []string
 	for _, inst := range instances {
-		parts = appendBlobFlags(parts, seen, inst.profile.Blobs)
+		parts = appendInstanceBlobFlags(parts, seen, inst, catalog)
 	}
 	if len(parts) == 0 {
 		return ""
@@ -171,15 +174,74 @@ func zapretBlobFlags(instances []zapretInstance) string {
 	return " " + strings.Join(parts, " ")
 }
 
-// zapretProfileBlobFlags renders the --blob= decls for ONE profile — used by
-// ZapretEnv to give each per-instance nfqws launch exactly its profile's blobs.
-// Leading-space string ("" when none), same shape as zapretBlobFlags.
-func zapretProfileBlobFlags(p config.ZapretProfile) string {
-	parts := appendBlobFlags(nil, map[string]bool{}, p.Blobs)
+// zapretInstanceBlobFlags renders the --blob= decls for ONE instance — used by
+// ZapretEnv to give each per-instance nfqws launch exactly the blobs it needs.
+// Leading-space string ("" when none).
+func zapretInstanceBlobFlags(inst zapretInstance, catalog map[string]string) string {
+	parts := appendInstanceBlobFlags(nil, map[string]bool{}, inst, catalog)
 	if len(parts) == 0 {
 		return ""
 	}
 	return " " + strings.Join(parts, " ")
+}
+
+// appendInstanceBlobFlags emits the blobs one instance needs: explicit profile
+// decls first (authoritative), then any fake blobs referenced in the strategy
+// params (blob=NAME / seqovl_pattern=NAME) auto-resolved via the candidate
+// catalog. Auto-derivation is why blobs work regardless of how the strategy was
+// created — no UI path has to remember to declare them.
+func appendInstanceBlobFlags(parts []string, seen map[string]bool, inst zapretInstance, catalog map[string]string) []string {
+	parts = appendBlobFlags(parts, seen, inst.profile.Blobs)
+	for _, name := range zapretParamBlobNames(inst.strategy.Params) {
+		if seen[name] || zapretBuiltinBlobs[name] {
+			continue
+		}
+		file := catalog[name]
+		if file == "" {
+			continue // unknown alias: nfqws built-in, or genuinely missing — nothing to point at
+		}
+		seen[name] = true
+		parts = append(parts, "--blob="+name+":@"+config.CanonicalBlobPath(file))
+	}
+	return parts
+}
+
+// zapretBuiltinBlobs are nfqws2's always-available fakes — referencing them in
+// params needs no --blob= declaration.
+var zapretBuiltinBlobs = map[string]bool{
+	"fake_default_tls": true, "fake_default_http": true, "fake_default_quic": true,
+}
+
+// zapretParamBlobNames extracts fake-blob aliases referenced in a strategy's
+// params via blob=NAME and seqovl_pattern=NAME tokens (e.g.
+// "--lua-desync=fake:blob=quic_google:repeats=6" → "quic_google").
+func zapretParamBlobNames(params string) []string {
+	var names []string
+	for _, tok := range strings.Fields(params) {
+		for _, seg := range strings.Split(tok, ":") {
+			for _, key := range []string{"blob=", "seqovl_pattern="} {
+				if v, ok := strings.CutPrefix(seg, key); ok && v != "" {
+					names = append(names, v)
+				}
+			}
+		}
+	}
+	return names
+}
+
+// zapretCatalogBlobFiles builds the blob alias→file map from the shared
+// candidate list (/etc override or embed) — the source of truth for what file
+// each named fake blob resolves to.
+func zapretCatalogBlobFiles() map[string]string {
+	m := map[string]string{}
+	for _, cand := range config.LoadZapretCandidates().Candidates {
+		for _, b := range cand.Blobs {
+			if b.Name != "" && b.File != "" && m[b.Name] == "" {
+				m[b.Name] = b.File
+			}
+		}
+	}
+	return m
 }
 
 // appendBlobFlags normalizes each "name:@path" / "name:0xHEX" blob into a
@@ -213,26 +275,37 @@ func appendBlobFlags(parts []string, seen map[string]bool, blobs []string) []str
 func ZapretRequiredBlobFiles(c config.Config) []string {
 	seen := map[string]bool{}
 	var out []string
+	add := func(base string) {
+		if base == "" || base == "." || seen[base] {
+			return
+		}
+		seen[base] = true
+		out = append(out, base)
+	}
+	catalog := zapretCatalogBlobFiles()
 	for _, inst := range zapretInstances(c) {
+		// Explicit profile decls (file-backed only).
 		for _, raw := range inst.profile.Blobs {
 			entry := strings.TrimSpace(raw)
 			if entry == "" || strings.ContainsAny(entry, " \t\r\n\"") {
 				continue
 			}
-			_, value, ok := strings.Cut(entry, ":")
-			if !ok {
+			if _, value, ok := strings.Cut(entry, ":"); ok {
+				if file, isFile := strings.CutPrefix(value, "@"); isFile {
+					add(filepath.Base(file))
+				}
+			}
+		}
+		// Param-referenced fake blobs, resolved through the candidate catalog —
+		// so non-shipped decoys get fetched even when the strategy carries no
+		// explicit profile decl.
+		for _, name := range zapretParamBlobNames(inst.strategy.Params) {
+			if zapretBuiltinBlobs[name] {
 				continue
 			}
-			file, isFile := strings.CutPrefix(value, "@")
-			if !isFile || file == "" {
-				continue
+			if file := catalog[name]; file != "" {
+				add(filepath.Base(file))
 			}
-			base := filepath.Base(file)
-			if seen[base] {
-				continue
-			}
-			seen[base] = true
-			out = append(out, base)
 		}
 	}
 	return out

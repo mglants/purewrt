@@ -1111,21 +1111,31 @@ func TestZapretNFTablesAndEnv(t *testing.T) {
 }
 
 // TestZapretEnvEmitsBlobs guards the fix for "LUA ERROR: blob unavailable":
-// each per-instance env var must carry the profile's --blob= declarations so
-// the init script passes them to nfqws (params reference fake:blob=NAME).
+// each per-instance env var must carry the --blob= declarations so the init
+// script passes them to nfqws. Blobs are auto-derived from the params
+// (blob=NAME), resolved via the candidate catalog — no profile decl needed —
+// so it works no matter how the strategy was created.
 func TestZapretEnvEmitsBlobs(t *testing.T) {
 	c := config.Default()
-	c.ZapretProfiles = []config.ZapretProfile{{Name: "wan", Enabled: true, Interfaces: []string{"wan"}, FwMark: "0x40000000", NFQWSBin: "/usr/bin/nfqws", Blobs: []string{"quic_google:@quic_initial_www_google_com.bin"}}}
+	// No explicit profile blobs — must still resolve quic_google from params
+	// via the embedded candidate catalog (youtube_combined declares it).
+	c.ZapretProfiles = []config.ZapretProfile{{Name: "wan", Enabled: true, Interfaces: []string{"wan"}, FwMark: "0x40000000", NFQWSBin: "/usr/bin/nfqws"}}
 	c.ZapretStrategies = []config.ZapretStrategy{{Name: "yt", Enabled: true, Profile: "wan", QueueNum: 200, Protocols: []string{"udp"}, UDPPorts: "443", Params: "--filter-udp=443 --lua-desync=fake:blob=quic_google"}}
 	c.Sections = []config.Section{{Name: "Youtube", Enabled: true, Action: "zapret", IPv4Enabled: true, Priority: 10, ZapretStrategies: []string{"yt"}}}
 	env := string(ZapretEnv(c))
 	if !strings.Contains(env, "PUREWRT_ZAPRET_INSTANCE_0_BLOBS=\"") || !strings.Contains(env, "--blob=quic_google:@") {
-		t.Fatalf("env missing per-instance --blob decl:\n%s", env)
+		t.Fatalf("env missing param-derived --blob decl:\n%s", env)
 	}
-	// A disabled/no-blob profile must not emit a spurious flag.
-	c.ZapretProfiles[0].Blobs = nil
+	// A strategy that references no blob (only built-ins would be fine too)
+	// emits an empty BLOBS var.
+	c.ZapretStrategies[0].Params = "--filter-tcp=443 --lua-desync=multisplit:pos=1"
 	if env2 := string(ZapretEnv(c)); !strings.Contains(env2, "PUREWRT_ZAPRET_INSTANCE_0_BLOBS=\"\"") {
-		t.Fatalf("no-blob profile should emit empty BLOBS:\n%s", env2)
+		t.Fatalf("no-blob strategy should emit empty BLOBS:\n%s", env2)
+	}
+	// A built-in blob reference needs no decl either.
+	c.ZapretStrategies[0].Params = "--filter-tcp=443 --lua-desync=fake:blob=fake_default_tls"
+	if env3 := string(ZapretEnv(c)); !strings.Contains(env3, "PUREWRT_ZAPRET_INSTANCE_0_BLOBS=\"\"") {
+		t.Fatalf("built-in blob should not emit a decl:\n%s", env3)
 	}
 }
 
