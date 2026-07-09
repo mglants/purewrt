@@ -8,6 +8,7 @@
 'require purewrt.styles';
 'require purewrt.table_section as tableSection';
 'require purewrt.save_chain as saveChain';
+'require purewrt.format as fmt';
 
 // callZapretInstalled tells us whether the optional Zapret package is on
 // the box. The view's load() runs this; render() short-circuits to a
@@ -35,6 +36,7 @@ var callZapretRestart = rpc.declare({ object: 'purewrt', method: 'zapret_restart
 // purewrt-lists, resolved by the CLI). Drives both the preset dropdown and the
 // strategy tester; replaces the old hardcoded ZAPRET_PRESETS.
 var callZapretCandidates = rpc.declare({ object: 'purewrt', method: 'zapret_candidates', expect: { candidates: [] } });
+var callZapretCandidatesRefresh = rpc.declare({ object: 'purewrt', method: 'zapret_candidates_refresh' });
 var callZapretSweepStart = rpc.declare({ object: 'purewrt', method: 'zapret_strategy_sweep_start', params: [ 'interface', 'sites', 'isp', 'service', 'name', 'download', 'suite' ] });
 var callZapretSweepStatus = rpc.declare({ object: 'purewrt', method: 'zapret_strategy_sweep_status', params: [ ] });
 
@@ -42,6 +44,13 @@ var callZapretSweepStatus = rpc.declare({ object: 'purewrt', method: 'zapret_str
 // blobs), populated in render() from the fetched candidate list. applyPresetTo
 // reads it to fill the strategy-editor fields.
 var zapretPresets = {};
+
+// refreshStrategyCandidates is set by renderStrategyTesterCard to a function
+// that fetches the latest candidate list from purewrt-lists and rebuilds the
+// tester dropdowns in place. The integration-mode "Update strategies" button
+// (top of page) calls it — kept as a shared ref so the button can live in a
+// different part of the form from the tester closure it mutates.
+var refreshStrategyCandidates = null;
 
 // applyPresetTo uses each form option's widget instance to write the preset
 // values. The previous DOM-poking helpers (querySelectorAll on
@@ -632,34 +641,36 @@ function renderBlockcheckCard(networks, wanNets, wan6Nets) {
 function renderStrategyTesterCard(networks, wanNets, wan6Nets, candidates) {
   var sites = E('input', { 'class': 'cbi-input-text', 'style': 'width:100%;max-width:36em', 'placeholder': 'redirector.googlevideo.com telegram.org discord.com (blank = defaults)' });
   var wan = buildWanSelect(networks, wanNets, wan6Nets);
-  // ISP filter: distinct isp values across candidates ("common" first).
-  var isps = [];
-  candidates.forEach(function(c) {
-    var v = c.isp || 'common';
-    if (isps.indexOf(v) < 0) isps.push(v);
-  });
-  isps.sort(function(a, b) { return a === 'common' ? -1 : b === 'common' ? 1 : a.localeCompare(b); });
+  // ISP filter ("common" first) + Service filter ("generic" first, with a
+  // leading "All services"). Generic/untagged candidates are wildcards —
+  // matched in every service scope (mirrors the backend serviceMatches rule).
+  // Built via re-callable helpers so "Update from purewrt-lists" can rebuild
+  // the dropdowns in place after fetching a fresh candidate list.
   var ispSel = E('select', { 'class': 'cbi-input-select' });
-  isps.forEach(function(v) { ispSel.appendChild(E('option', { 'value': v }, v)); });
-  // Service filter: distinct service values ("generic" first) + a leading "All
-  // services" (value "") so a sweep can span services. Generic/untagged
-  // candidates are wildcards — matched in every service scope (mirrors the
-  // backend serviceMatches rule).
-  var services = [];
-  candidates.forEach(function(c) {
-    var v = c.service || 'generic';
-    if (services.indexOf(v) < 0) services.push(v);
-  });
-  services.sort(function(a, b) { return a === 'generic' ? -1 : b === 'generic' ? 1 : a.localeCompare(b); });
   var serviceSel = E('select', { 'class': 'cbi-input-select' });
-  serviceSel.appendChild(E('option', { 'value': '' }, _('All services')));
-  services.forEach(function(v) { serviceSel.appendChild(E('option', { 'value': v }, v)); });
+  var candSel = E('select', { 'class': 'cbi-input-select' });
+  function distinctValues(key, first) {
+    var out = [];
+    candidates.forEach(function(c) { var v = c[key] || first; if (out.indexOf(v) < 0) out.push(v); });
+    out.sort(function(a, b) { return a === first ? -1 : b === first ? 1 : a.localeCompare(b); });
+    return out;
+  }
+  function fillSelect(sel, values, leadingLabel) {
+    var prev = sel.value;
+    sel.innerHTML = '';
+    if (leadingLabel !== undefined) sel.appendChild(E('option', { 'value': '' }, leadingLabel));
+    values.forEach(function(v) { sel.appendChild(E('option', { 'value': v }, v)); });
+    if (prev) sel.value = prev; // preserve selection across a refresh when still present
+  }
   function serviceMatches(candService, want) {
     if (!want) return true;
     var s = candService || 'generic';
     return s === 'generic' || s === want;
   }
-  var candSel = E('select', { 'class': 'cbi-input-select' });
+  function rebuildFilters() {
+    fillSelect(ispSel, distinctValues('isp', 'common'));
+    fillSelect(serviceSel, distinctValues('service', 'generic'), _('All services'));
+  }
   function rebuildCandidates() {
     candSel.innerHTML = '';
     var isp = ispSel.value;
@@ -669,6 +680,7 @@ function renderStrategyTesterCard(networks, wanNets, wan6Nets, candidates) {
   }
   ispSel.addEventListener('change', rebuildCandidates);
   serviceSel.addEventListener('change', rebuildCandidates);
+  rebuildFilters();
   rebuildCandidates();
   var resultsBox = E('div', { 'style': 'margin:.5em 0' });
   var pollTimer = null;
@@ -768,6 +780,26 @@ function renderStrategyTesterCard(networks, wanNets, wan6Nets, candidates) {
     ev.preventDefault();
     return startSweep('', _('Testing all %s candidates — this takes a while…').format(serviceSel.value || ispSel.value));
   });
+  // Register the candidate-refresh for the integration-mode "Update strategies"
+  // button (top of page). Fetches the latest list from purewrt-lists, mutates
+  // `candidates` in place (so zapretPresets/Apply see fresh params), and
+  // rebuilds these dropdowns — no page reload, unsaved form edits survive.
+  refreshStrategyCandidates = function() {
+    return callZapretCandidatesRefresh().then(function(r) {
+      if (r && r.result === 'failed')
+        throw new Error(_('fetch from purewrt-lists failed (check default_lists_base_url + connectivity)'));
+      return callZapretCandidates();
+    }).then(function(fresh) {
+      fresh = fresh || [];
+      candidates.length = 0;
+      fresh.forEach(function(c) { candidates.push(c); });
+      zapretPresets = {};
+      candidates.forEach(function(c) { if (c && c.name) zapretPresets[c.name] = c; });
+      rebuildFilters();
+      rebuildCandidates();
+      return candidates.length;
+    });
+  };
   window.setTimeout(function() { callZapretSweepStatus().then(function(r) { if (r && (r.running === 1 || r.running === true)) pollSweep(); }).catch(function() {}); }, 0);
   var row = function(label, control) {
     return E('div', { 'style': 'display:flex;gap:.75em;align-items:center;margin:.35em 0' }, [ E('label', { 'style': 'min-width:8em' }, label), control ]);
@@ -878,6 +910,20 @@ return view.extend({
     restartBtn.onclick = function() {
       return callZapretRestart().then(function(r) {
         ui.addNotification(null, E('p', _('zapret restart: %s').format(r && r.result || 'ok')), 'info');
+      });
+    };
+    // Fetch the latest strategy candidate list from purewrt-lists and refresh
+    // the tester dropdowns in place (via the ref the tester card registers).
+    var updateCands = st.option(form.Button, '_update_candidates', _('Update strategies'));
+    updateCands.inputstyle = 'action';
+    updateCands.description = _('Fetch the latest strategy candidates from purewrt-lists and refresh the tester dropdowns.');
+    updateCands.onclick = function() {
+      if (!refreshStrategyCandidates)
+        return ui.addNotification(null, E('p', _('Strategy tester not loaded.')), 'warning');
+      return refreshStrategyCandidates().then(function(n) {
+        ui.addNotification(null, E('p', _('Loaded %d strategy candidate(s) from purewrt-lists.').format(n)), 'info');
+      }).catch(function(e) {
+        ui.addNotification(null, fmt.errorDetails(_('Could not update candidates from purewrt-lists'), (e && e.message) || String(e)), 'danger');
       });
     };
 
