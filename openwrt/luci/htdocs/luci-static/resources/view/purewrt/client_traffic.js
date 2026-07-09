@@ -4,6 +4,7 @@
 'require ui';
 'require purewrt.manual_rule_modal as manualModal';
 'require purewrt.styles';
+'require purewrt.format as fmt';
 
 // Client Traffic — observe a LAN client's blocked flows in real time.
 //
@@ -183,7 +184,7 @@ function renderLookupSection() {
       return;
     }
     input.value = q;
-    out.textContent = _('Looking up %s…').format(q);
+    out.innerHTML = ''; out.appendChild(fmt.spinner(_('Looking up %s…').format(q)));
     out.style.display = '';
     btn.disabled = true;
     callRuleCheck(q).then(function(r) {

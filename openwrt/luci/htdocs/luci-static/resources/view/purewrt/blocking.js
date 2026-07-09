@@ -6,6 +6,7 @@
 'require purewrt.dpi_check_async as dpiCheckAsync';
 'require purewrt.manual_rule_modal as manualModal';
 'require purewrt.styles';
+'require purewrt.format as fmt';
 
 // hostOf extracts just the FQDN from a probe target string. Targets are
 // formatted as "host:port" (with optional path), so we split on the first
@@ -291,6 +292,7 @@ return view.extend({
       // doesn't drift out of sync with the new split storage.
       uci.unset('purewrt', 'main', 'blocking_canaries');
       uci.save();
+      lastRunAt.innerHTML = ''; lastRunAt.appendChild(fmt.spinner(_('Probing…')));
       return callBlocking(bl, wh).then(function(r) {
         // New shim shape: {report: {whitelist, blacklist, verdict, reason}, results: [...]}.
         // Old shape: {results: [...]} → no report data, render flat as blacklist.
@@ -435,7 +437,7 @@ function tcp1620Section() {
     uci.set('purewrt', 'main', 'dpi_check_host', host);
     uci.save();
     setStatus(_('Probing %s… this takes 1-3 minutes.').format(host));
-    resultBox.innerHTML = '';
+    resultBox.innerHTML = ''; resultBox.appendChild(fmt.spinner(_('Probing %s…').format(host)));
     return dpiCheckAsync.run({ host: host }).then(function(r) {
       if (!r.ok) {
         setStatus(_('Probe failed (rc=%s).').format(r.rc));

@@ -290,7 +290,7 @@ return view.extend({
           E('p', {}, _('Drives a real download/upload through the proxy and isolates the failing layer (mihomo / node / routing / WAN). Unlike url-test it catches nodes that answer probes but can\'t carry data. Per-node sweeps every node individually — slower, uses more bandwidth.')),
           E('button', { 'class': 'btn cbi-button cbi-button-action', 'click': function(ev) {
             var btn = ev.target; btn.disabled = true;
-            netCheckOut.innerHTML = ''; netCheckOut.appendChild(E('em', {}, _('Running connectivity test…')));
+            netCheckOut.innerHTML = ''; netCheckOut.appendChild(fmt.spinner(_('Running connectivity test…')));
             return netCheckAsync.run({}).then(function(r) {
               btn.disabled = false; netCheckOut.innerHTML = ''; netCheckOut.appendChild(renderNetCheck(r.report));
             }, function(e) {
@@ -301,7 +301,7 @@ return view.extend({
           ' ',
           E('button', { 'class': 'btn cbi-button cbi-button-action', 'click': function(ev) {
             var btn = ev.target; btn.disabled = true;
-            netCheckOut.innerHTML = ''; netCheckOut.appendChild(E('em', {}, _('Probing every node — this takes a while…')));
+            netCheckOut.innerHTML = ''; netCheckOut.appendChild(fmt.spinner(_('Probing every node — this takes a while…')));
             return netCheckAsync.run({ perNode: true }).then(function(r) {
               btn.disabled = false; netCheckOut.innerHTML = ''; netCheckOut.appendChild(renderNetCheck(r.report));
             }, function(e) {
@@ -316,6 +316,7 @@ return view.extend({
           E('h3', _('Bypass warnings')),
           E('p', {}, _('Surfaces censorship-bypass misconfigurations: missing DNS hijack, disabled DoT/DoH3/DoQ block, no DoH bootstrap, expiring subscriptions, missing dnsmasq-full.')),
           E('button', { 'class': 'btn cbi-button cbi-button-action', 'click': function(){
+            warningsOut.innerHTML = ''; warningsOut.appendChild(fmt.spinner(_('Checking…')));
             return callDoctorWarnings().then(function(r){
               // rpcd returns { ubus_rpc_session?, ...the JSON array }; if it's an array directly use it, else .warnings.
               var warnings = Array.isArray(r) ? r : (r && r.warnings ? r.warnings : []);
@@ -329,6 +330,7 @@ return view.extend({
           E('h3', _('IPv6 path')),
           E('p', {}, _('Inspects the live kernel state vs the configured IPv6 routing mode; flags common silent leaks (mode=off but v6 default route present, mode=on but no v6 addr).')),
           E('button', { 'class': 'btn cbi-button cbi-button-action', 'click': function(){
+            ipv6Out.innerHTML = ''; ipv6Out.appendChild(fmt.spinner(_('Inspecting…')));
             return callInspectIPv6().then(function(r){
               ipv6Out.innerHTML = ''; ipv6Out.appendChild(renderIPv6(r || {}));
             });
@@ -339,7 +341,7 @@ return view.extend({
         E('div', { 'class': 'cbi-section' }, [
           E('h3', _('Site check')),
           domain,
-          E('button', { 'class': 'btn cbi-button cbi-button-action', 'click': function(){ return callCheck(domain.value || 'chatgpt.com').then(function(r){ out.textContent = r.output || JSON.stringify(r, null, 2); }); } }, _('Check domain')),
+          E('button', { 'class': 'btn cbi-button cbi-button-action', 'click': function(){ out.innerHTML = ''; out.appendChild(fmt.spinner(_('Checking %s…').format(domain.value || 'chatgpt.com'))); return callCheck(domain.value || 'chatgpt.com').then(function(r){ out.textContent = r.output || JSON.stringify(r, null, 2); }); } }, _('Check domain')),
           ' ',
           // After a site check, you usually already know whether the
           // domain needs routing. This CTA jumps straight into the manual

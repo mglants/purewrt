@@ -764,7 +764,7 @@ function renderStrategyTesterCard(networks, wanNets, wan6Nets, candidates) {
   // is just a sweep narrowed to one candidate via the name filter.
   function startSweep(nameFilter, label) {
     stopPolling();
-    resultsBox.innerHTML = label;
+    resultsBox.innerHTML = ''; resultsBox.appendChild(fmt.spinner(label));
     return callZapretSweepStart(wan.value, (sites.value || '').trim(), ispSel.value, serviceSel.value, nameFilter, dlVal(), suiteVal()).then(function(r) {
       if (r && (r.result === 'started' || r.result === 'busy')) return pollSweep();
       ui.addNotification(null, E('p', _('Test failed to start.')), 'danger');

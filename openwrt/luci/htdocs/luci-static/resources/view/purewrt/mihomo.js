@@ -3,6 +3,7 @@
 'require rpc';
 'require ui';
 'require uci';
+'require purewrt.format as fmt';
 
 // PureWRT Mihomo tab — one focused place for everything mihomo:
 //   - runtime status (running / version / uptime / connections)
@@ -253,7 +254,7 @@ function renderUpgradeSection(checkResult, currentChannel) {
     if (!confirm(_('Install the latest %s mihomo binary? PureWRT will download, verify the SHA256, atomically place the binary in <workdir>/mihomo-bin/, update the UCI binary path, and restart the mihomo service.').format(channelSel.value))) return;
     installBtn.disabled = true;
     progressOut.innerHTML = '';
-    progressOut.appendChild(E('p', {}, '⏳ ' + _('Starting install of channel %s…').format(channelSel.value)));
+    progressOut.appendChild(fmt.spinner(_('Starting install of channel %s…').format(channelSel.value)));
     callInstallStart(channelSel.value).then(function() {
       var deadline = Date.now() + 5 * 60 * 1000;
       function poll() {

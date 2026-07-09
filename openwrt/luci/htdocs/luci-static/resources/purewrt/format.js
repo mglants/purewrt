@@ -32,6 +32,13 @@ function pill(text, variant) {
   return E('span', { 'class': 'purewrt-pill purewrt-pill-' + (variant || 'muted'), 'style': 'min-width:auto;padding:1px 8px;font-size:.85em' }, text);
 }
 
+// spinner returns a rotating-spinner loading line (LuCI's stock .spinning class
+// + our dim styling). Use while an async action runs, then replace it with the
+// result. Centralises the pattern previously inlined across the views.
+function spinner(text) {
+  return E('em', { 'class': 'purewrt-text-dim spinning' }, text || _('Working…'));
+}
+
 // errorDetails renders a failure notification body: a one-line summary plus
 // the FULL command output behind a collapsible <details>, instead of the old
 // .slice(0, 400) truncation that hid the root cause (the interesting error is
@@ -99,6 +106,7 @@ return baseclass.extend({
   humanAgo: humanAgo,
   humanUptime: humanUptime,
   pill: pill,
+  spinner: spinner,
   errorDetails: errorDetails,
   validateCron: validateCron,
   validateHTTPURL: validateHTTPURL,
