@@ -4,6 +4,59 @@ All notable changes to PureWRT are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are the `purewrt`
 package version.
 
+## [0.3.0] - 2026-07-09
+
+### Added
+- **Zapret strategy tester & candidate sweep.** Load a candidate desync
+  strategy through real nfqws2 behind a throwaway nft queue and rank it by how
+  many target sites it unblocks (baseline vs with-strategy), streamed live in
+  LuCI. Candidates come from a shared list (embedded baseline + `/etc` override
+  + `purewrt-lists` fetch), each with SHA256-verified fake-blob resolution.
+  - **Service tags** (youtube / discord / games / generic) alongside ISP, with
+    a service-scoped sweep; generic candidates are wildcards tried in every
+    scope. Combined TCP+UDP strategies (one nfqws instance via `--new`).
+  - **"Update strategies"** button fetches the latest candidate list from
+    purewrt-lists and rebuilds the tester dropdowns in place.
+- **Live Zapret status block.** Running/stopped pill, per-instance
+  queue→nfqws PID, per-section queued-packet counters (from nftables), uptime,
+  and recent-error surfacing — `zapret-status` CLI + `zapret_status` rpcd.
+- **Parallel health-check panel** on Diagnostics: one "Run all" fans out
+  service / mihomo / DNS-resolvers / bypass-warnings / IPv6 checks concurrently,
+  each a spinner→green/yellow/red verdict chip with an aggregate banner.
+- **Enable/disable toggle column** on the Sections / Routing table (mirrors
+  rule providers).
+- **Grouped CLI help.** `purewrt help` lists commands by area with
+  descriptions; `purewrt help <cmd>` gives a per-command synopsis (dispatch is
+  now a table-driven registry).
+- **Client-side form validation** (cron / URL / CIDR) across settings,
+  subscriptions, providers, and the IP/CIDR modal — errors caught at input
+  instead of at apply time.
+- **Loading spinners** on slow/no-feedback async actions (connectivity test,
+  site check, blockcheck, DPI probe, lookups, install).
+
+### Changed
+- **Fake blobs auto-declared from strategy params.** `blob=NAME` /
+  `seqovl_pattern=NAME` in a strategy's params are resolved to `--blob=` decls
+  via the candidate catalog at generation time — works regardless of how the
+  strategy was created; the profile Custom-blobs picker now also offers
+  candidate aliases.
+- **Full error output in LuCI** — failure notifications show the complete
+  backend output behind a collapsible details element instead of a 400-char
+  truncation; previously-silent failures (UCI parse, mixin merge, config
+  backup, metrics dump) now warn.
+- **Live progress on background jobs** (elapsed + last log line); the
+  rule-provider update fan-out gains a context deadline.
+- **Zapret upstream-config path is auto-derived, not a user setting** — the
+  dead `/opt/zapret2` write path was removed (PureWRT runs its own per-instance
+  nfqws from the env file).
+- `client_traffic.go` split into pcap-decode / flow-state / enrichment files.
+
+### Fixed
+- **"Test selected" no longer times out the XHR** — a single strategy test now
+  runs through the sweep background job instead of a synchronous rpc.
+- Blob-using strategies no longer fail at runtime with
+  `LUA ERROR: blob unavailable` (the active launch path never emitted `--blob`).
+
 ## [0.2.0] - 2026-07-02
 
 ### Added
@@ -130,5 +183,7 @@ package version.
 
 - Initial release.
 
+[0.3.0]: https://github.com/mglants/purewrt/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/mglants/purewrt/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/mglants/purewrt/compare/v0.0.1...v0.1.0
 [0.0.1]: https://github.com/mglants/purewrt/releases/tag/v0.0.1
