@@ -37,6 +37,7 @@ var callZapretRestart = rpc.declare({ object: 'purewrt', method: 'zapret_restart
 // strategy tester; replaces the old hardcoded ZAPRET_PRESETS.
 var callZapretCandidates = rpc.declare({ object: 'purewrt', method: 'zapret_candidates', expect: { candidates: [] } });
 var callZapretCandidatesRefresh = rpc.declare({ object: 'purewrt', method: 'zapret_candidates_refresh' });
+var callZapretStatus = rpc.declare({ object: 'purewrt', method: 'zapret_status' });
 var callZapretSweepStart = rpc.declare({ object: 'purewrt', method: 'zapret_strategy_sweep_start', params: [ 'interface', 'sites', 'isp', 'service', 'name', 'download', 'suite' ] });
 var callZapretSweepStatus = rpc.declare({ object: 'purewrt', method: 'zapret_strategy_sweep_status', params: [ ] });
 
@@ -434,9 +435,50 @@ function renderZapretStatusBlock() {
     rows.push(E('div', { 'class': 'alert-message warning', 'style': 'margin-top:.5em' },
       _('%d zapret strategy(ies) are enabled, but no routing section has Action = Zapret — they will not take effect. Set a section\'s Action to Zapret on the Sections / Routing page.').format(strategies.length)));
   }
+  // Live box: filled from the zapret_status rpc (nfqws running? per-instance
+  // pid/queue, per-section queued traffic). Refreshed on load + on demand.
+  var liveBox = E('div', { 'style': 'margin:.4em 0' }, fmt.spinner(_('Checking nfqws…')));
+  var refreshBtn = E('button', { 'class': 'btn cbi-button', 'style': 'margin-top:.4em' }, [ _('Refresh status') ]);
+  function renderLive(s) {
+    s = s || {};
+    var insts = s.instances || [];
+    var running = insts.filter(function(i) { return i.running; }).length;
+    var kids = [];
+    kids.push(E('div', {}, [
+      E('strong', {}, _('nfqws: ')),
+      fmt.pill(s.running ? _('running') : _('stopped'), s.running ? 'ok' : 'danger'),
+      insts.length ? E('span', { 'style': 'margin-left:.5em' }, _('%d/%d instances up').format(running, insts.length)) : '',
+      s.uptime_seconds ? E('span', { 'style': 'margin-left:.5em', 'class': 'purewrt-text-dim' }, _('up %s').format(fmt.humanUptime(s.uptime_seconds))) : ''
+    ]));
+    insts.forEach(function(i) {
+      kids.push(E('div', { 'class': i.running ? '' : 'purewrt-text-dim', 'style': 'font-size:.9em' }, [
+        '· ' + i.strategy + ' → queue ' + i.queue + ' → ',
+        i.running ? ('nfqws PID ' + i.pid) : _('not running')
+      ]));
+    });
+    (s.sections || []).forEach(function(sec) {
+      kids.push(E('div', { 'style': 'font-size:.9em' },
+        '· ' + sec.section + ': ' + _('%d packets queued').format(sec.packets || 0)));
+    });
+    if (s.recent_error)
+      kids.push(fmt.errorDetails(_('Recent nfqws error'), s.recent_error));
+    liveBox.innerHTML = '';
+    kids.forEach(function(k) { if (k) liveBox.appendChild(k); });
+  }
+  function fetchLive() {
+    liveBox.innerHTML = ''; liveBox.appendChild(fmt.spinner(_('Checking nfqws…')));
+    return callZapretStatus().then(renderLive).catch(function(e) {
+      liveBox.innerHTML = '';
+      liveBox.appendChild(E('em', { 'class': 'purewrt-text-dim' }, _('Status unavailable: %s').format((e && e.message) || String(e))));
+    });
+  }
+  refreshBtn.addEventListener('click', function(ev) { ev.preventDefault(); fetchLive(); });
+  window.setTimeout(fetchLive, 0);
   return E('div', { 'class': 'cbi-section purewrt-card', 'style': 'margin-bottom:1em' }, [
     E('h3', {}, _('Zapret status')),
-    E('div', { 'style': 'display:flex;flex-direction:column;gap:.25em' }, rows)
+    liveBox,
+    E('div', { 'style': 'display:flex;flex-direction:column;gap:.25em;margin-top:.4em' }, rows),
+    refreshBtn
   ]);
 }
 

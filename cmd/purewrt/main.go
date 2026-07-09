@@ -950,6 +950,12 @@ var commands = []command{
 			// driven by /usr/bin/nfqws's depends.fs, not by this method.
 			printJSON(map[string]bool{"installed": m.ZapretInstalled()})
 		}},
+	{name: "zapret-status", group: "Zapret (DPI bypass)",
+		args: "",
+		desc: "Live nfqws2 status: running instances + queued traffic (JSON)",
+		run: func(m manager.Manager) {
+			printJSON(m.ZapretStatus())
+		}},
 	{name: "ooni-installed", group: "OONI",
 		args: "",
 		desc: "Report whether ooniprobe is installed (JSON)",

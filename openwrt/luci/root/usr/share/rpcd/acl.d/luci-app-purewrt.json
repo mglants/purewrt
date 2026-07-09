@@ -36,6 +36,7 @@
           "ipdb_update_status",
           "ipdb_asn",
           "zapret_installed",
+          "zapret_status",
           "ooni_installed",
           "ooni_status",
           "ooni_run_status",
