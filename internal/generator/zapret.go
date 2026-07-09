@@ -32,6 +32,12 @@ func ZapretEnv(c config.Config) []byte {
 		b.WriteString(prefix + "FWMARK=\"" + shellEscape(p.FwMark) + "\"\n")
 		b.WriteString(prefix + "NFQWS=\"" + shellEscape(p.NFQWSBin) + "\"\n")
 		b.WriteString(prefix + "PARAMS=\"" + shellEscape(zs.Params) + "\"\n")
+		// Each nfqws instance must be told about the fake blobs its params
+		// reference (--lua-desync=fake:blob=NAME). Without this the daemon logs
+		// "LUA ERROR: blob 'NAME' unavailable" and passes packets unmodified —
+		// the desync silently no-ops. Blobs live on the profile; emit that
+		// profile's set as canonical --blob= decls for the init script to pass.
+		b.WriteString(prefix + "BLOBS=\"" + shellEscape(strings.TrimSpace(zapretProfileBlobFlags(p))) + "\"\n")
 	}
 	b.WriteString("PUREWRT_ZAPRET_INSTANCE_COUNT=\"" + itoa(len(instances)) + "\"\n")
 	return []byte(b.String())
@@ -157,31 +163,47 @@ func zapretBlobFlags(instances []zapretInstance) string {
 	seen := map[string]bool{}
 	var parts []string
 	for _, inst := range instances {
-		for _, raw := range inst.profile.Blobs {
-			entry := strings.TrimSpace(raw)
-			if entry == "" || strings.ContainsAny(entry, " \t\r\n\"") {
-				continue
-			}
-			name, value, ok := strings.Cut(entry, ":")
-			if !ok || name == "" || seen[name] {
-				continue
-			}
-			seen[name] = true
-			// A file-backed blob ("name:@<path>") is rewritten to its canonical
-			// resolved path (shipped fake dir, else the /etc fetch cache) so the
-			// emitted --blob points where the manager's blob fetch lands — the
-			// staged path (e.g. a hardcoded /usr/libexec/... from the LuCI editor)
-			// is only a filename hint. Inline-hex ("name:0x…") passes through.
-			if file, isFile := strings.CutPrefix(value, "@"); isFile {
-				entry = name + ":@" + config.CanonicalBlobPath(file)
-			}
-			parts = append(parts, "--blob="+entry)
-		}
+		parts = appendBlobFlags(parts, seen, inst.profile.Blobs)
 	}
 	if len(parts) == 0 {
 		return ""
 	}
 	return " " + strings.Join(parts, " ")
+}
+
+// zapretProfileBlobFlags renders the --blob= decls for ONE profile — used by
+// ZapretEnv to give each per-instance nfqws launch exactly its profile's blobs.
+// Leading-space string ("" when none), same shape as zapretBlobFlags.
+func zapretProfileBlobFlags(p config.ZapretProfile) string {
+	parts := appendBlobFlags(nil, map[string]bool{}, p.Blobs)
+	if len(parts) == 0 {
+		return ""
+	}
+	return " " + strings.Join(parts, " ")
+}
+
+// appendBlobFlags normalizes each "name:@path" / "name:0xHEX" blob into a
+// --blob= flag, deduped by name via seen, file-backed entries rewritten to the
+// canonical resolved path. Skips empty / malformed / whitespace-bearing entries
+// (which would split the arg). Shared by the union (upstream) and per-profile
+// (env) emitters.
+func appendBlobFlags(parts []string, seen map[string]bool, blobs []string) []string {
+	for _, raw := range blobs {
+		entry := strings.TrimSpace(raw)
+		if entry == "" || strings.ContainsAny(entry, " \t\r\n\"") {
+			continue
+		}
+		name, value, ok := strings.Cut(entry, ":")
+		if !ok || name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		if file, isFile := strings.CutPrefix(value, "@"); isFile {
+			entry = name + ":@" + config.CanonicalBlobPath(file)
+		}
+		parts = append(parts, "--blob="+entry)
+	}
+	return parts
 }
 
 // ZapretRequiredBlobFiles returns the basenames of every file-backed blob that

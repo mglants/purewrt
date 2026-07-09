@@ -1110,6 +1110,25 @@ func TestZapretNFTablesAndEnv(t *testing.T) {
 	}
 }
 
+// TestZapretEnvEmitsBlobs guards the fix for "LUA ERROR: blob unavailable":
+// each per-instance env var must carry the profile's --blob= declarations so
+// the init script passes them to nfqws (params reference fake:blob=NAME).
+func TestZapretEnvEmitsBlobs(t *testing.T) {
+	c := config.Default()
+	c.ZapretProfiles = []config.ZapretProfile{{Name: "wan", Enabled: true, Interfaces: []string{"wan"}, FwMark: "0x40000000", NFQWSBin: "/usr/bin/nfqws", Blobs: []string{"quic_google:@quic_initial_www_google_com.bin"}}}
+	c.ZapretStrategies = []config.ZapretStrategy{{Name: "yt", Enabled: true, Profile: "wan", QueueNum: 200, Protocols: []string{"udp"}, UDPPorts: "443", Params: "--filter-udp=443 --lua-desync=fake:blob=quic_google"}}
+	c.Sections = []config.Section{{Name: "Youtube", Enabled: true, Action: "zapret", IPv4Enabled: true, Priority: 10, ZapretStrategies: []string{"yt"}}}
+	env := string(ZapretEnv(c))
+	if !strings.Contains(env, "PUREWRT_ZAPRET_INSTANCE_0_BLOBS=\"") || !strings.Contains(env, "--blob=quic_google:@") {
+		t.Fatalf("env missing per-instance --blob decl:\n%s", env)
+	}
+	// A disabled/no-blob profile must not emit a spurious flag.
+	c.ZapretProfiles[0].Blobs = nil
+	if env2 := string(ZapretEnv(c)); !strings.Contains(env2, "PUREWRT_ZAPRET_INSTANCE_0_BLOBS=\"\"") {
+		t.Fatalf("no-blob profile should emit empty BLOBS:\n%s", env2)
+	}
+}
+
 func TestZapretNFTablesInterfaceSet(t *testing.T) {
 	c := config.Default()
 	c.ZapretProfiles = []config.ZapretProfile{{Name: "wan", Enabled: true, Interfaces: []string{"pppoe-wan", "eth2"}, FwMark: "0x40000000", NFQWSBin: "/usr/bin/nfqws"}}
