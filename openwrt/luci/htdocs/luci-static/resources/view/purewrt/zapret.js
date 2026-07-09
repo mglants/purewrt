@@ -974,13 +974,33 @@ return view.extend({
     // fake_default_tls/http/quic need no entry.
     var pblob = p.option(form.MultiValue, 'blob', _('Custom blobs'));
     pblob.modalonly = true;
+    // Union two naming systems so the picker matches whatever a strategy's
+    // params reference: (1) shipped .bin files by filename-stem, and (2) the
+    // candidate-list aliases (e.g. quic_google → quic_initial_www_google_com.bin)
+    // that the shared candidates use in params. Resolving the alias's file to a
+    // shipped path keeps the decl consistent; the generator re-canonicalizes the
+    // path at apply time anyway. Note: with params-driven auto-declare, picking
+    // here is only needed for manual strategies — candidate strategies work
+    // without it.
+    var blobPathByFile = {};
     availBlobs.forEach(function(bl) {
-      if (bl && bl.name && bl.path)
+      if (bl && bl.name && bl.path) {
         pblob.value(bl.name + ':@' + bl.path, bl.name);
+        blobPathByFile[bl.name + '.bin'] = bl.path;
+      }
     });
-    if (!availBlobs.length)
+    var aliasSeen = {};
+    candidates.forEach(function(c) {
+      (c.blobs || []).forEach(function(b) {
+        if (!b.name || !b.file || aliasSeen[b.name]) return;
+        aliasSeen[b.name] = true;
+        var path = blobPathByFile[b.file] || '/usr/libexec/zapret/files/fake/' + b.file;
+        pblob.value(b.name + ':@' + path, b.name + ' → ' + b.file);
+      });
+    });
+    if (!availBlobs.length && !Object.keys(aliasSeen).length)
       pblob.value('', _('(no fake .bin files found on router)'));
-    pblob.description = _('Select shipped nfqws2 fake payloads to declare (--blob=). Once selected, reference one by its name in a strategy\'s params, e.g. <code>fake:blob=tls_clienthello_www_google_com</code> or <code>seqovl_pattern=&lt;name&gt;</code>. The stock <code>fake_default_tls/http/quic</code> are always available and need no entry.');
+    pblob.description = _('Declare nfqws2 fake payloads (--blob=), referenced from a strategy\'s params by name (<code>fake:blob=&lt;name&gt;</code> / <code>seqovl_pattern=&lt;name&gt;</code>). Lists both shipped .bin files (by filename) and the shared-candidate aliases (e.g. <code>quic_google</code>). Strategies applied from the candidate list auto-declare their blobs — you only need this for manually-written params. Stock <code>fake_default_tls/http/quic</code> need no entry.');
 
     // ---- Strategies (folded into a table after m.render) ----
     var zs = m.section(form.TypedSection, 'zapret_strategy', _('Zapret strategies'));
