@@ -512,3 +512,37 @@ func applyTestLivePaths(dir string) generator.GeneratedPaths {
 		ZapretEnv:          filepath.Join(dir, "live", "zapret.env"),
 	}
 }
+
+// applyStagedGenerate's defer-cleanup never runs when the process dies
+// mid-apply (SIGKILL, power loss), leaking .purewrt-stage-* dirs — a router
+// accumulated 15.6MB of them on tmpfs. Each apply sweeps leftovers older
+// than an hour; younger ones are kept because they may belong to a
+// concurrent apply that is still staging.
+func TestApplyStagedGenerateSweepsStaleStageDirs(t *testing.T) {
+	dir := t.TempDir()
+	c, _, _ := applyTestConfig(t, dir)
+	c.Settings.LANSourceZones = nil // DefaultGeneratedPaths writes firewall to real /etc/config; opt out
+	stageBase := c.Settings.GeneratedDir
+	stale := filepath.Join(stageBase, ".purewrt-stage-leaked")
+	fresh := filepath.Join(stageBase, ".purewrt-stage-inflight")
+	for _, d := range []string{stale, fresh} {
+		if err := os.MkdirAll(d, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(stale, old, old); err != nil {
+		t.Fatal(err)
+	}
+	_, _, cleanup, err := (Manager{}).applyStagedGenerate(c, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("stale stage dir must be swept, err=%v", err)
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Fatalf("fresh stage dir must survive (concurrent apply): %v", err)
+	}
+}

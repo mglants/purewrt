@@ -931,7 +931,15 @@ func (m Manager) cleanupArtifactCache() error {
 	if err != nil {
 		return err
 	}
-	_, err = provider.CleanupArtifacts(c.CacheDir(), provider.CacheLimits{MaxBytes: c.Settings.ArtifactCacheMaxBytes, MaxEntries: c.Settings.ArtifactCacheMaxEntries})
+	// Live map: one entry per configured provider (enabled or not — a
+	// disabled provider may be re-enabled and its artifact is still valid),
+	// so superseded checksums and removed providers get pruned instead of
+	// accumulating on flash below the byte cap forever.
+	live := make(map[string]string, len(c.RuleProviders))
+	for _, rp := range c.RuleProviders {
+		live[rp.Name] = provider.ArtifactChecksum(rp.Path)
+	}
+	_, err = provider.CleanupArtifacts(c.CacheDir(), provider.CacheLimits{MaxBytes: c.Settings.ArtifactCacheMaxBytes, MaxEntries: c.Settings.ArtifactCacheMaxEntries, Live: live})
 	return err
 }
 
@@ -1443,6 +1451,32 @@ func applyBackupMaxBytes(c config.Config) int64 {
 	}
 }
 
+// sweepStaleStageDirs removes .purewrt-stage-* leftovers under stageBase.
+// The normal `defer cleanup()` never runs when an apply dies mid-flight
+// (SIGKILL, watchdog, power loss), and the leaks accumulate until reboot
+// (or forever when GeneratedDir points at persistent storage). Only dirs
+// older than an hour go — a younger one may be a concurrent apply that is
+// still staging. Best-effort: a sweep failure must not block the apply.
+func sweepStaleStageDirs(c config.Config, stageBase string) {
+	entries, err := os.ReadDir(stageBase)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-time.Hour)
+	for _, e := range entries {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), ".purewrt-stage-") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil || info.ModTime().After(cutoff) {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(stageBase, e.Name())); err == nil {
+			newLog(c).Info("apply: swept stale stage dir path=%s", filepath.Join(stageBase, e.Name()))
+		}
+	}
+}
+
 func (m Manager) applyStagedGenerate(c config.Config, force bool) (generator.GeneratedPaths, generator.GenerationResult, func(), error) {
 	stageBase := c.Settings.GeneratedDir
 	if stageBase == "" {
@@ -1460,6 +1494,7 @@ func (m Manager) applyStagedGenerate(c config.Config, force bool) (generator.Gen
 	if err := os.MkdirAll(stageBase, 0755); err != nil {
 		return generator.GeneratedPaths{}, generator.GenerationResult{}, func() {}, err
 	}
+	sweepStaleStageDirs(c, stageBase)
 	stageDir, err := os.MkdirTemp(stageBase, ".purewrt-stage-*")
 	if err != nil {
 		return generator.GeneratedPaths{}, generator.GenerationResult{}, func() {}, err

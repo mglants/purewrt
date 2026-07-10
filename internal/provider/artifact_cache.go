@@ -31,6 +31,15 @@ var safeArtifactNameRE = regexp.MustCompile(`[^A-Za-z0-9_.-]+`)
 type CacheLimits struct {
 	MaxBytes   int64
 	MaxEntries int
+	// Live maps provider name → checksum of its current source file. When
+	// non-nil, artifacts under a provider dir not present in the map, or
+	// with a checksum other than the live one, are pruned — the size caps
+	// alone never fire in practice (16MB default vs a few MB of live
+	// artifacts) so superseded checksums otherwise accumulate on flash
+	// forever. An empty checksum value means "source currently unreadable";
+	// that provider's artifacts are kept. Nil keeps the legacy
+	// measure-and-cap-only behaviour (statistics uses it to count).
+	Live map[string]string
 }
 
 type CacheStats struct {
@@ -145,6 +154,13 @@ func CleanupArtifacts(cacheDir string, limits CacheLimits) (CacheStats, error) {
 		return stats, err
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].mod.Before(items[j].mod) })
+	var liveByDir map[string]string
+	if limits.Live != nil {
+		liveByDir = make(map[string]string, len(limits.Live))
+		for name, sum := range limits.Live {
+			liveByDir[safeArtifactName(name)] = sum
+		}
+	}
 	remove := func(it item) {
 		// Only credit the stats when the artifact actually went away —
 		// otherwise a flaky filesystem makes Bytes/Entries drift below
@@ -159,6 +175,24 @@ func CleanupArtifacts(cacheDir string, limits CacheLimits) (CacheStats, error) {
 		stats.Bytes -= it.size
 		stats.Entries--
 		stats.Removed++
+	}
+	if liveByDir != nil {
+		kept := items[:0]
+		for _, it := range items {
+			providerDir := filepath.Dir(it.path)
+			liveSum, known := liveByDir[filepath.Base(providerDir)]
+			if known && liveSum == "" {
+				kept = append(kept, it) // source unreadable — can't compare, keep
+				continue
+			}
+			if known && strings.TrimSuffix(filepath.Base(it.path), ".rules") == liveSum {
+				kept = append(kept, it)
+				continue
+			}
+			remove(it)
+			_ = os.Remove(providerDir) // best-effort; fails while non-empty
+		}
+		items = kept
 	}
 	for _, it := range items {
 		if limits.MaxEntries > 0 && stats.Entries > limits.MaxEntries {
@@ -178,26 +212,26 @@ func CleanupArtifacts(cacheDir string, limits CacheLimits) (CacheStats, error) {
 	return stats, nil
 }
 
-func artifactDir(workdir, providerName string) string {
-	if workdir == "" {
-		workdir = "/etc/purewrt"
-	}
+func safeArtifactName(providerName string) string {
 	name := strings.Trim(safeArtifactNameRE.ReplaceAllString(providerName, "_"), "_")
 	if name == "" {
 		name = "provider"
 	}
-	return filepath.Join(workdir, "cache", "rules", name)
+	return name
+}
+
+func artifactDir(workdir, providerName string) string {
+	if workdir == "" {
+		workdir = "/etc/purewrt"
+	}
+	return filepath.Join(workdir, "cache", "rules", safeArtifactName(providerName))
 }
 
 func artifactDirFromCache(cacheDir, providerName string) string {
 	if cacheDir == "" {
 		cacheDir = filepath.Join("/etc/purewrt", "cache")
 	}
-	name := strings.Trim(safeArtifactNameRE.ReplaceAllString(providerName, "_"), "_")
-	if name == "" {
-		name = "provider"
-	}
-	return filepath.Join(cacheDir, "rules", name)
+	return filepath.Join(cacheDir, "rules", safeArtifactName(providerName))
 }
 
 func ArtifactChecksum(path string) string {
