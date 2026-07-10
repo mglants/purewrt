@@ -55,6 +55,18 @@ func effectiveRuleDedupMode(c config.Config) ruleDedupMode {
 	}
 }
 
+// claimedForSection returns the full-dedup claim map, or nil for zapret
+// sections: zapret claims only strategy-covered ports at the nft level, so
+// its hosts must also stay in proxy sets for non-covered traffic to fall
+// through. Zapret providers neither claim nor honor claims
+// (docs/zapret-port-scoped-claims.md).
+func claimedForSection(sec config.Section, claimed map[string]struct{}) map[string]struct{} {
+	if sec.Action == "zapret" {
+		return nil
+	}
+	return claimed
+}
+
 func (m ruleDedupMode) section() bool { return m == ruleDedupSection || m == ruleDedupFull }
 
 func (m ruleDedupMode) full() bool { return m == ruleDedupFull }
@@ -187,6 +199,10 @@ func streamRuleOutputs(c config.Config, sinks generationSinks) error {
 				log.Debug("generate: rule-provider %s skipped missing section=%s", rp.Name, rp.Section)
 				return nil
 			}
+			// Shadow the claim map per provider: zapret sections are exempt
+			// from full dedup (both directions) — covers the MRS streamDedup
+			// and the materialized loop below.
+			claimed := claimedForSection(sec, claimed)
 			data, err := os.ReadFile(rp.Path)
 			if err != nil {
 				path = "read-failed"

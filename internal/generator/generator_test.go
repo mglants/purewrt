@@ -243,16 +243,18 @@ func TestNFTRouterOutputProxyEmitsSectionMark(t *testing.T) {
 func TestNFTRouterOutputProxyZapretSectionReturns(t *testing.T) {
 	c := config.Default()
 	c.Settings.RouterOutputProxy = true
-	// Add a zapret section to the default config.
+	c.ZapretProfiles = []config.ZapretProfile{{Name: "wan", Enabled: true, FwMark: "0x40000000", QueueNum: 200}}
+	c.ZapretStrategies = []config.ZapretStrategy{{Name: "quic", Enabled: true, Profile: "wan", Protocols: []string{"udp"}, UDPPorts: "443"}}
 	c.Sections = append(c.Sections, config.Section{
 		Name: "zap", Enabled: true, Action: "zapret", TPROXYPort: 7895,
+		ZapretStrategies: []string{"quic"},
 	})
 	out := string(NFTables(c))
 	chain := extractOutputChain(out)
-	// Zapret destinations must `return` from OUTPUT (so nfqws POSTROUTING
-	// handles them on the raw outbound), not get marked.
-	if !strings.Contains(chain, `ip daddr @proxy_zap4 counter name "proxy_zap4" return`) {
-		t.Fatalf("zapret section must emit `return` in OUTPUT; got:\n%s", chain)
+	// Zapret claims only its strategy-covered ports in OUTPUT; other ports
+	// fall through to the proxy mark rules (port-scoped claims design).
+	if !strings.Contains(chain, `ip daddr @proxy_zap4 meta l4proto udp udp dport { 443 } counter name "proxy_zap4" return`) {
+		t.Fatalf("zapret section must emit a port-scoped `return` in OUTPUT; got:\n%s", chain)
 	}
 	if strings.Contains(chain, "@proxy_zap4 meta mark set") {
 		t.Fatalf("zapret section must not mark in OUTPUT; got:\n%s", chain)

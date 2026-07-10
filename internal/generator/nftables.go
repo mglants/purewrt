@@ -188,6 +188,7 @@ func NFTablesWithNative(c config.Config, native map[string][]string) []byte {
 		}
 		if s.Action == "zapret" {
 			writeZapretPreroutingRules(&b, c, s, includeIPv6)
+			writeZapretClaimReturns(&b, c, s, includeIPv6)
 			continue
 		}
 		if s.Action != "proxy" {
@@ -299,8 +300,11 @@ func NFTablesWithNative(c config.Config, native map[string][]string) []byte {
 //
 // Per-section dispatch:
 //   - reject sections: `reject` (same as PREROUTING).
-//   - direct/zapret sections: `return` — zapret destinations specifically
-//     stay out of mihomo so nfqws can mangle them via POSTROUTING.
+//   - direct sections: `return`.
+//   - zapret sections: port-scoped `return` for strategy-covered
+//     (protocol, port) pairs only — those stay out of mihomo so nfqws can
+//     mangle them via POSTROUTING; other ports to the same hosts fall
+//     through to the proxy mark rules below.
 //   - vpn sections: mark with the VPN's fwmark; the VPN's own ip rule
 //     handles the route.
 //   - proxy sections: mark with `Settings.FwMark`. No `tproxy` action here
@@ -344,7 +348,7 @@ func writeOutputChain(b *strings.Builder, c config.Config, includeIPv6 bool) {
 					b.WriteString("    ip6 daddr @" + set + counterTag(set) + " reject\n")
 				}
 			}
-		case "direct", "zapret":
+		case "direct":
 			for _, set := range nftSetRefs(s.NFTSet4()) {
 				b.WriteString("    ip daddr @" + set + counterTag(set) + " return\n")
 			}
@@ -353,6 +357,8 @@ func writeOutputChain(b *strings.Builder, c config.Config, includeIPv6 bool) {
 					b.WriteString("    ip6 daddr @" + set + counterTag(set) + " return\n")
 				}
 			}
+		case "zapret":
+			writeZapretClaimReturns(b, c, s, includeIPv6)
 		case "proxy", "":
 			for _, set := range nftSetRefs(s.NFTSet4()) {
 				b.WriteString("    ip daddr @" + set + " meta l4proto tcp meta mark set meta mark | " + c.Settings.FwMark + counterTag(set) + " accept\n")
@@ -615,6 +621,90 @@ func protocolEnabled(zs config.ZapretStrategy, proto string) bool {
 		}
 	}
 	return false
+}
+
+// writeZapretClaimReturns emits the section's port-scoped claim: covered
+// (protocol, port) traffic to the section's sets returns from the chain so
+// it stays direct for nfqws; everything else falls through to later
+// sections' rules. Shared by PREROUTING and OUTPUT — both need the exact
+// same claim shape (docs/zapret-port-scoped-claims.md). Precedence against
+// proxy sections comes purely from section order.
+func writeZapretClaimReturns(b *strings.Builder, c config.Config, s config.Section, includeIPv6 bool) {
+	claims := zapretSectionPortClaims(c, s)
+	if len(claims) == 0 {
+		return
+	}
+	emit := func(family string, sets []string) {
+		for _, set := range sets {
+			for _, proto := range []string{"tcp", "udp"} {
+				cl, ok := claims[proto]
+				if !ok {
+					continue
+				}
+				b.WriteString("    " + family + " daddr @" + set + " meta l4proto " + proto + nftPortExpr(proto, "dport", cl.ports) + counterTag(set) + " return\n")
+			}
+		}
+	}
+	emit("ip", nftSetRefs(s.NFTSet4()))
+	if includeIPv6 {
+		emit("ip6", nftSetRefs(s.NFTSet6()))
+	}
+}
+
+// zapretPortClaim is one protocol's share of a zapret section's claim.
+// all=true means every port of the protocol (a strategy with an empty
+// port list); otherwise ports is a comma-joined, order-preserving union
+// across the section's enabled strategies, ready for nftPortExpr.
+type zapretPortClaim struct {
+	ports string
+	all   bool
+}
+
+// zapretSectionPortClaims computes which (protocol, ports) a zapret section
+// claims: the union over its enabled strategies. Ports outside the claim
+// fall through the chain to later sections (docs/zapret-port-scoped-claims.md).
+func zapretSectionPortClaims(c config.Config, s config.Section) map[string]zapretPortClaim {
+	claims := map[string]zapretPortClaim{}
+	seen := map[string]map[string]bool{}
+	add := func(proto, ports string) {
+		cl := claims[proto]
+		if cl.all {
+			return
+		}
+		if strings.TrimSpace(ports) == "" {
+			claims[proto] = zapretPortClaim{all: true}
+			return
+		}
+		if seen[proto] == nil {
+			seen[proto] = map[string]bool{}
+		}
+		parts := []string{}
+		if cl.ports != "" {
+			parts = append(parts, cl.ports)
+		}
+		for _, p := range strings.Split(ports, ",") {
+			p = strings.TrimSpace(p)
+			if p == "" || seen[proto][p] {
+				continue
+			}
+			seen[proto][p] = true
+			parts = append(parts, p)
+		}
+		claims[proto] = zapretPortClaim{ports: strings.Join(parts, ", ")}
+	}
+	for _, name := range s.ZapretStrategies {
+		zs, ok := c.ZapretStrategyByName(name)
+		if !ok {
+			continue
+		}
+		if protocolEnabled(zs, "tcp") {
+			add("tcp", zs.TCPPorts)
+		}
+		if protocolEnabled(zs, "udp") {
+			add("udp", zs.UDPPorts)
+		}
+	}
+	return claims
 }
 
 func nftPortExpr(proto, dir, ports string) string {
