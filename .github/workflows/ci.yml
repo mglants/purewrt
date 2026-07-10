@@ -25,7 +25,7 @@ jobs:
           cache: true
       - run: go test ./...
       - run: go vet ./...
-      - run: go build ./cmd/purewrt ./cmd/purewrt-check ./cmd/purewrt-api
+      - run: go build ./cmd/purewrt
 
   # Cheap package smoke build on ubuntu-latest (gh-action-sdk ships the toolchain
   # prebuilt). Covers x86_64 + mipsel_24kc on 25.12 so a feed/Makefile break — or
