@@ -12,7 +12,11 @@ import (
 	"github.com/purewrt/purewrt/internal/mihomoapi"
 )
 
-func main() {
+// apiMain is the purewrt-api entry point — the daemon installs as a symlink
+// to purewrt and main() dispatches here on argv[0]. It deliberately skips
+// tuneGC(): the aggressive CLI GC target trades heap ceiling for latency,
+// which is the wrong trade for a long-lived daemon.
+func apiMain() {
 	m := manager.Manager{}
 	handler := newHandler(m)
 	// api_listen UCI list selects bind addresses; empty = all interfaces.
@@ -177,11 +181,4 @@ func serveLive(m manager.Manager, w http.ResponseWriter, r *http.Request) {
 func jsonString(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
-}
-
-func fatal(err error) {
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
-	}
 }

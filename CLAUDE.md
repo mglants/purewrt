@@ -47,9 +47,11 @@ exercise self-heal. It runs OpenWrt 25.12 (apk, not opkg; busybox without
 
 ## Architecture
 
-Three binaries in `cmd/`: `purewrt` (the CLI manager — ~47 subcommands,
-dispatched by a big switch in `cmd/purewrt/main.go`), `purewrt-check` (domain
-checker), `purewrt-api` (optional local API daemon).
+One multi-call binary in `cmd/purewrt`: `purewrt` (the CLI manager — ~47
+subcommands, dispatched by a big switch in `cmd/purewrt/main.go`). It also
+serves as `purewrt-check` (domain checker, `check.go`) and `purewrt-api`
+(optional local API daemon, `api.go`) — those install as symlinks and
+`main()` dispatches on the argv[0] basename, busybox-style.
 
 The data flow is a pipeline, each stage in its own package:
 

@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -135,7 +137,49 @@ const (
 	operationCoalesceCap = 10
 )
 
+// cliGCPercent is the GC target for the short-lived CLI. Generation wall
+// time on ARM routers is GC-pacing-bound: default GOGC measured erratic
+// 0.3–10 s per `generate --force` on a cortex-a53 (80 k-domain config)
+// where 800 gave a flat 0.12 s, for +1.2 MB peak RSS — live heap stays
+// tiny because rule providers stream. Long-lived daemons (purewrt-api)
+// must NOT adopt this: their heap ceiling matters more than latency.
+const cliGCPercent = 800
+
+// tuneGC applies cliGCPercent unless the user set GOGC themselves — an
+// explicit env var (including GOGC=off) always wins.
+func tuneGC() {
+	if _, ok := os.LookupEnv("GOGC"); ok {
+		return
+	}
+	debug.SetGCPercent(cliGCPercent)
+}
+
+// multiCallEntry maps an argv[0] basename to a dedicated entry point.
+// purewrt-check and purewrt-api install as symlinks to the purewrt binary
+// (three separate Go binaries duplicated ~13MB of runtime/stdlib on flash);
+// anything unrecognized falls through to the regular CLI so renamed copies
+// (e.g. the purewrt-new scp temp name from the deploy recipe) still work.
+func multiCallEntry(argv0 string) string {
+	switch argv0 {
+	case "purewrt-check":
+		return "check"
+	case "purewrt-api":
+		return "api"
+	}
+	return ""
+}
+
 func main() {
+	switch multiCallEntry(filepath.Base(os.Args[0])) {
+	case "check":
+		tuneGC() // short-lived like the CLI — same GC trade applies
+		checkMain()
+		return
+	case "api":
+		apiMain()
+		return
+	}
+	tuneGC()
 	m := manager.Manager{}
 	if len(os.Args) < 2 {
 		usage()

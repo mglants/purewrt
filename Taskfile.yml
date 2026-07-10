@@ -212,7 +212,7 @@ tasks:
     cmds:
       - go test ./...
       - go vet ./...
-      - go build ./cmd/purewrt ./cmd/purewrt-check ./cmd/purewrt-api
+      - go build ./cmd/purewrt
 
   build:cudy-wr3000h:
     desc: Build packages for Cudy WR3000H on OpenWrt 25.12 mediatek/filogic

@@ -3,6 +3,8 @@ package main
 import (
 	"errors"
 	"fmt"
+	"os"
+	"runtime/debug"
 	"testing"
 
 	"github.com/purewrt/purewrt/internal/manager"
@@ -64,5 +66,48 @@ func TestExitCodeFor(t *testing.T) {
 	}
 	if got := exitCodeFor(errors.New("nft -f failed")); got != 1 {
 		t.Fatalf("hard failure must exit 1, got %d", got)
+	}
+}
+
+// Generation wall time on ARM routers is GC-pacing-bound: default GOGC gave
+// erratic 0.3-10s runs where GOGC=800 gave a flat 0.12s for +1.2MB peak RSS
+// (measured on cortex-a53, 80k-domain config). tuneGC applies that default
+// for the short-lived CLI, but a user-supplied GOGC env must win.
+func TestTuneGCSetsAggressivePercent(t *testing.T) {
+	old := debug.SetGCPercent(100)
+	defer debug.SetGCPercent(old)
+	t.Setenv("GOGC", "")
+	os.Unsetenv("GOGC")
+	tuneGC()
+	if got := debug.SetGCPercent(100); got != cliGCPercent {
+		t.Fatalf("tuneGC must set GC percent to %d, got %d", cliGCPercent, got)
+	}
+}
+
+func TestTuneGCRespectsUserGOGC(t *testing.T) {
+	old := debug.SetGCPercent(100)
+	defer debug.SetGCPercent(old)
+	t.Setenv("GOGC", "50")
+	tuneGC()
+	if got := debug.SetGCPercent(100); got != 100 {
+		t.Fatalf("tuneGC must not override user GOGC, got %d", got)
+	}
+}
+
+// purewrt-check and purewrt-api install as symlinks to the purewrt binary
+// (three separate Go binaries duplicated ~13MB of runtime/stdlib on flash);
+// entry selection is by argv[0] basename, busybox-style. Anything else —
+// including future symlink typos — falls through to the regular CLI.
+func TestMultiCallEntry(t *testing.T) {
+	cases := map[string]string{
+		"purewrt-check": "check",
+		"purewrt-api":   "api",
+		"purewrt":       "",
+		"purewrt-new":   "", // scp temp name from the deploy recipe
+	}
+	for argv0, want := range cases {
+		if got := multiCallEntry(argv0); got != want {
+			t.Fatalf("multiCallEntry(%q) = %q, want %q", argv0, got, want)
+		}
 	}
 }

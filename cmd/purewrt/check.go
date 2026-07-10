@@ -10,7 +10,9 @@ import (
 	"github.com/purewrt/purewrt/internal/config"
 )
 
-func main() {
+// checkMain is the purewrt-check entry point — the binary installs as a
+// symlink to purewrt and main() dispatches here on argv[0].
+func checkMain() {
 	if len(os.Args) < 2 {
 		fmt.Println("usage: purewrt-check <domain>")
 		os.Exit(2)

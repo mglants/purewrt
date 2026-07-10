@@ -32,7 +32,7 @@ include $(INCLUDE_DIR)/package.mk
 include $(TOPDIR)/feeds/packages/lang/golang/golang-package.mk
 
 GO_PKG:=github.com/purewrt/purewrt
-GO_PKG_BUILD_PKG:=$(GO_PKG)/cmd/purewrt $(GO_PKG)/cmd/purewrt-check $(GO_PKG)/cmd/purewrt-api
+GO_PKG_BUILD_PKG:=$(GO_PKG)/cmd/purewrt
 
 define Package/purewrt
   SECTION:=net
@@ -75,8 +75,8 @@ endef
 define Package/purewrt/install
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) $(GO_PKG_BUILD_BIN_DIR)/purewrt $(1)/usr/bin/purewrt
-	$(INSTALL_BIN) $(GO_PKG_BUILD_BIN_DIR)/purewrt-check $(1)/usr/bin/purewrt-check
-	$(INSTALL_BIN) $(GO_PKG_BUILD_BIN_DIR)/purewrt-api $(1)/usr/bin/purewrt-api
+	$(LN) purewrt $(1)/usr/bin/purewrt-check
+	$(LN) purewrt $(1)/usr/bin/purewrt-api
 	$(CP) $(PKG_BUILD_DIR)/files/* $(1)/
 	$(INSTALL_DIR) $(1)/usr/libexec
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/files/usr/libexec/purewrt-peerdns $(1)/usr/libexec/purewrt-peerdns
