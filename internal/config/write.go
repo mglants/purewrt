@@ -294,6 +294,7 @@ func writeMain(b *bytes.Buffer, s Settings) {
 	opt(b, "mihomo_sha256_url", s.MihomoSHA256URL)
 	optb(b, "mihomo_geodata_enabled", s.MihomoGeodataEnabled)
 	optb(b, "update_via_proxy", s.UpdateViaProxy)
+	optb(b, "suppress_hwid", s.SuppressHWID)
 	opt(b, "update_proxy_url", s.UpdateProxyURL)
 	opti(b, "update_concurrency", s.UpdateConcurrency)
 	optb(b, "auto_update_enabled", s.AutoUpdateEnabled)

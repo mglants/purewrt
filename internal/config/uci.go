@@ -189,6 +189,7 @@ func applySection(c *Config, x struct {
 		c.Settings.MihomoSHA256URL = one(x.opts, "mihomo_sha256_url", c.Settings.MihomoSHA256URL)
 		c.Settings.MihomoGeodataEnabled = b(x.opts, "mihomo_geodata_enabled", c.Settings.MihomoGeodataEnabled)
 		c.Settings.UpdateViaProxy = b(x.opts, "update_via_proxy", c.Settings.UpdateViaProxy)
+		c.Settings.SuppressHWID = b(x.opts, "suppress_hwid", c.Settings.SuppressHWID)
 		c.Settings.UpdateProxyURL = one(x.opts, "update_proxy_url", c.Settings.UpdateProxyURL)
 		c.Settings.UpdateConcurrency = i(x.opts, "update_concurrency", c.Settings.UpdateConcurrency)
 		c.Settings.AutoUpdateEnabled = b(x.opts, "auto_update_enabled", c.Settings.AutoUpdateEnabled)

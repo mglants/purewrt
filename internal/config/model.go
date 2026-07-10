@@ -172,6 +172,11 @@ type Settings struct {
 	// than the interactive default to bound quota (default ~2 MiB).
 	NetCheckBytes           int
 	UpdateViaProxy          bool
+	// SuppressHWID globally disables router-identity injection (HWID /
+	// device-name in URLs and headers) for every download, overriding the
+	// per-subscription / per-proxy-provider opt-in. The per-entity
+	// suppress_hwid flags remain for opting out a single panel.
+	SuppressHWID bool
 	UpdateProxyURL          string
 	UpdateConcurrency       int
 	AutoUpdateEnabled       bool

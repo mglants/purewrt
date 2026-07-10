@@ -207,6 +207,8 @@ return view.extend({
     var upd = m.section(form.NamedSection, 'settings', 'main', _('Updates (advanced)'),
       _('Beyond auto-update on/off + cron — these tune the network + I/O priorities of the update job.'));
     upd.anonymous = true;
+    addRow(upd, form.Flag, 'suppress_hwid', _('Suppress HWID fingerprint (global)'), { default: '0',
+      description: _('Never send router identity (HWID / device-name query params and x-hwid / X-Device-* headers) with any download. Overrides the per-subscription and per-proxy-provider settings; panels that key responses on device identity may serve different content.') });
     addRow(upd, form.Flag, 'update_via_proxy', _('Download via proxy'), { default: '0',
       description: _('Route subscription + provider downloads through the local mihomo proxy (the generated config always opens mixed-port 7890) instead of the WAN directly. Useful when the WAN path is censored but mihomo\'s nodes can reach the provider. No URL needed — it uses mihomo automatically.') });
     addRow(upd, form.Value, 'update_proxy_url', _('Proxy URL override'), { placeholder: _('(empty = local mihomo proxy, http://127.0.0.1:7890)'),
