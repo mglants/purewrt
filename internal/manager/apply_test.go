@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -415,6 +416,71 @@ func TestApplyStagedGenerateForceMarksAllGroupsDirty(t *testing.T) {
 	}
 }
 
+// The LuCI "config dirty" banner compares /etc/config/purewrt's mtime
+// against <RuntimeDir>/.last_applied. Only the rpcd wrapper used to write
+// the marker, so CLI-side applies (cron update-if-needed) left the banner
+// stuck on "unapplied changes". Every successful apply — including the
+// no-dirty-groups short-circuit — must refresh the marker; failures and
+// dry runs must not.
+func TestApplySuccessTouchesLastAppliedMarker(t *testing.T) {
+	dir := t.TempDir()
+	c, staged, backup := applyTestConfig(t, dir)
+	live := applyTestLivePaths(dir)
+	before := time.Now().Add(-time.Second)
+	if err := (Manager{}).applyWithRunnerPaths(c, backup, staged, live, &fakeRunner{}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(c.RuntimeDir(), ".last_applied"))
+	if err != nil {
+		t.Fatalf("expected .last_applied marker after successful apply: %v", err)
+	}
+	ts, err := strconv.ParseInt(strings.TrimSpace(string(got)), 10, 64)
+	if err != nil {
+		t.Fatalf("marker must hold unix seconds (rpcd config_state does shell -gt on it), got %q: %v", got, err)
+	}
+	if ts < before.Unix() || ts > time.Now().Unix() {
+		t.Fatalf("marker timestamp %d outside test window", ts)
+	}
+}
+
+func TestApplyNoDirtyGroupsStillTouchesLastAppliedMarker(t *testing.T) {
+	dir := t.TempDir()
+	c, staged, backup := applyTestConfig(t, dir)
+	live := applyTestLivePaths(dir)
+	gen := generator.GenerationResult{Reason: "fingerprint match"}
+	if err := (Manager{}).applyWithRunnerPaths(c, backup, staged, live, gen, &fakeRunner{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(c.RuntimeDir(), ".last_applied")); err != nil {
+		t.Fatalf("no-op apply leaves config in applied state, marker must refresh: %v", err)
+	}
+}
+
+func TestApplyFailureDoesNotTouchLastAppliedMarker(t *testing.T) {
+	dir := t.TempDir()
+	c, staged, backup := applyTestConfig(t, dir)
+	live := applyTestLivePaths(dir)
+	r := &fakeRunner{failContains: "mihomo -t"}
+	if err := (Manager{}).applyWithRunnerPaths(c, backup, staged, live, r); err == nil {
+		t.Fatal("expected apply failure")
+	}
+	if _, err := os.Stat(filepath.Join(c.RuntimeDir(), ".last_applied")); !os.IsNotExist(err) {
+		t.Fatalf("failed apply must not refresh marker, stat err=%v", err)
+	}
+}
+
+func TestApplyDryRunDoesNotTouchLastAppliedMarker(t *testing.T) {
+	dir := t.TempDir()
+	c, staged, backup := applyTestConfig(t, dir)
+	live := applyTestLivePaths(dir)
+	if err := (Manager{DryRun: true}).applyWithRunnerPaths(c, backup, staged, live, &fakeRunner{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(c.RuntimeDir(), ".last_applied")); !os.IsNotExist(err) {
+		t.Fatalf("dry-run apply must not refresh marker, stat err=%v", err)
+	}
+}
+
 func applyTestConfig(t *testing.T, dir string) (config.Config, generator.GeneratedPaths, system.BackupSet) {
 	t.Helper()
 	c := config.Default()
@@ -425,6 +491,7 @@ func applyTestConfig(t *testing.T, dir string) (config.Config, generator.Generat
 	c.DNS.HijackLANDNS = false
 	c.DNS.Enabled = false
 	c.Settings.RollbackOnFail = true
+	c.Settings.RuntimeDir = filepath.Join(dir, "run")
 	stage := filepath.Join(dir, "stage")
 	staged := generator.StagedGeneratedPaths(c, stage)
 	if err := generator.WriteAllTo(c, staged); err != nil {

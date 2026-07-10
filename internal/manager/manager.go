@@ -1494,6 +1494,7 @@ func (m Manager) applyWithRunnerPaths(c config.Config, backup system.BackupSet, 
 	log := newLog(c)
 	if !gen.DirtyGroups.Any() {
 		log.Info("apply: no dirty generation groups reason=%s; skipping reloads", gen.Reason)
+		m.touchLastApplied(c)
 		return nil
 	}
 	if err := m.applyValidateStaged(c, staged, gen.DirtyGroups, r); err != nil {
@@ -1521,7 +1522,28 @@ func (m Manager) applyWithRunnerPaths(c config.Config, backup system.BackupSet, 
 	if err := generator.CommitGenerationFingerprint(c); err != nil {
 		return m.applyRollback(c, backup, r, err)
 	}
+	m.touchLastApplied(c)
 	return nil
+}
+
+// touchLastApplied refreshes <RuntimeDir>/.last_applied, the marker the
+// rpcd config_state method compares against /etc/config/purewrt's mtime to
+// drive the LuCI "config has unapplied changes" banner. The rpcd wrapper
+// also writes it for LuCI-initiated applies, but CLI paths (cron
+// update-if-needed, boot apply) only pass through here — without this the
+// banner sticks after any cron update that rewrites UCI. Content is unix
+// seconds because config_state does a shell -gt on it. Best-effort: a
+// marker write failure must not fail an otherwise committed apply.
+func (m Manager) touchLastApplied(c config.Config) {
+	if m.DryRun {
+		return
+	}
+	dir := c.RuntimeDir()
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return
+	}
+	ts := strconv.FormatInt(time.Now().UTC().Unix(), 10) + "\n"
+	_ = os.WriteFile(filepath.Join(dir, ".last_applied"), []byte(ts), 0644)
 }
 
 // applyNetworkInterfaces enforces the IPv6-WAN state in /etc/config/network.
