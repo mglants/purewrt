@@ -33,6 +33,9 @@ include $(TOPDIR)/feeds/packages/lang/golang/golang-package.mk
 
 GO_PKG:=github.com/purewrt/purewrt
 GO_PKG_BUILD_PKG:=$(GO_PKG)/cmd/purewrt
+# Stamp the runtime version (User-Agent, version output) from PKG_VERSION so
+# packaged binaries always match the release even if the Go-side default lags.
+GO_PKG_LDFLAGS_X:=$(GO_PKG)/internal/version.Version=$(PKG_VERSION)
 
 define Package/purewrt
   SECTION:=net

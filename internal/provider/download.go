@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/purewrt/purewrt/internal/version"
 )
 
 type DownloadResult struct {
@@ -271,7 +273,7 @@ func jitterFrac() float64 {
 func setDownloadHeaders(req *http.Request, opt DownloadOptions) {
 	ua := opt.UserAgent
 	if ua == "" {
-		ua = "PureWRT/0.1"
+		ua = "PureWRT/" + version.Version
 	}
 	req.Header.Set("User-Agent", ua)
 	// HWID/device headers are panel-driven fingerprints. Only downloads
@@ -283,6 +285,9 @@ func setDownloadHeaders(req *http.Request, opt DownloadOptions) {
 		hwid := opt.EffectiveHWID()
 		device := opt.EffectiveDeviceName()
 		req.Header.Set("x-hwid", hwid)
+		// Happ/v2board header convention: x-device-os names the OS,
+		// x-ver-os carries the bare OS version.
+		req.Header.Set("x-device-os", "OpenWrt")
 		req.Header.Set("x-ver-os", AutomaticOSVersion())
 		req.Header.Set("x-device-model", device)
 		req.Header.Set("X-Device-HWID", hwid)

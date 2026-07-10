@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/purewrt/purewrt/internal/version"
 )
 
 func TestDownloadWithOptionsHTTP(t *testing.T) {
@@ -77,5 +79,33 @@ func TestDownloadWithOptionsFile(t *testing.T) {
 	}
 	if string(res.Data) != "local" {
 		t.Fatalf("Data = %q, want local", res.Data)
+	}
+}
+
+// Panel-facing identity headers follow the Happ/v2board convention:
+// x-device-os names the OS, x-ver-os carries the bare OS version (no
+// "OpenWrt " prefix), and the default User-Agent embeds the purewrt
+// package version instead of a hardcoded one.
+func TestDownloadIdentityHeaderConvention(t *testing.T) {
+	t.Parallel()
+	var gotUA, gotDeviceOS, gotVerOS string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUA = r.Header.Get("User-Agent")
+		gotDeviceOS = r.Header.Get("x-device-os")
+		gotVerOS = r.Header.Get("x-ver-os")
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+	if _, err := DownloadWithOptions(srv.URL, DownloadOptions{IncludeHWID: true}); err != nil {
+		t.Fatalf("DownloadWithOptions: %v", err)
+	}
+	if want := "PureWRT/" + version.Version; gotUA != want {
+		t.Fatalf("default User-Agent = %q, want %q", gotUA, want)
+	}
+	if gotDeviceOS != "OpenWrt" {
+		t.Fatalf("x-device-os = %q, want OpenWrt", gotDeviceOS)
+	}
+	if gotVerOS == "" || strings.HasPrefix(gotVerOS, "OpenWrt") {
+		t.Fatalf("x-ver-os must be the bare OS version, got %q", gotVerOS)
 	}
 }

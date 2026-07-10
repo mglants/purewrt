@@ -30,22 +30,24 @@ func AutomaticHWID() string {
 	return fmt.Sprintf("purewrt-%x", h[:12])
 }
 
+// AutomaticOSVersion returns the bare OS release ("25.12.4") for the
+// x-ver-os header — the OS *name* travels separately in x-device-os.
 func AutomaticOSVersion() string {
 	if b, err := os.ReadFile("/etc/openwrt_release"); err == nil {
 		for _, line := range strings.Split(string(b), "\n") {
 			if strings.HasPrefix(line, "DISTRIB_RELEASE=") {
-				return "OpenWrt " + strings.Trim(strings.TrimPrefix(line, "DISTRIB_RELEASE="), "'\"")
+				return strings.Trim(strings.TrimPrefix(line, "DISTRIB_RELEASE="), "'\"")
 			}
 		}
 	}
 	if b, err := os.ReadFile("/etc/os-release"); err == nil {
 		for _, line := range strings.Split(string(b), "\n") {
-			if strings.HasPrefix(line, "PRETTY_NAME=") {
-				return strings.Trim(strings.TrimPrefix(line, "PRETTY_NAME="), "'\"")
+			if strings.HasPrefix(line, "VERSION_ID=") {
+				return strings.Trim(strings.TrimPrefix(line, "VERSION_ID="), "'\"")
 			}
 		}
 	}
-	return "OpenWrt"
+	return "unknown"
 }
 
 func AutomaticDeviceModel() string {
