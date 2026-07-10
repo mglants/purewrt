@@ -476,13 +476,10 @@ type RuleProvider struct {
 	DetectedCategory      string
 	UserOverriddenSection bool
 	UserOverriddenAction  bool
-	HWID                  string
-	DeviceName            string
 	UserAgent             string
 	Headers               []string
 	Mirrors               []string
 	PinSHA256             string
-	SuppressHWID          bool
 	LastError             string
 	// GeoTarget is the v2ray-dat entry name (geosite category or geoip
 	// country code) this provider extracts from

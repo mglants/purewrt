@@ -28,8 +28,9 @@ func TestDownloadWithOptionsHTTP(t *testing.T) {
 	defer srv.Close()
 
 	res, err := DownloadWithOptions(srv.URL+"/sub?token=secret", DownloadOptions{
-		UserAgent: "PureWRT-Test",
-		Headers:   []string{"X-Test: yes"},
+		IncludeHWID: true,
+		UserAgent:   "PureWRT-Test",
+		Headers:     []string{"X-Test: yes"},
 	})
 	if err != nil {
 		t.Fatalf("DownloadWithOptions: %v", err)

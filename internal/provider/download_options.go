@@ -6,6 +6,12 @@ import (
 )
 
 type DownloadOptions struct {
+	// IncludeHWID opts a download into router-identity injection (hwid /
+	// device_name query params and the x-hwid / X-Device-* header family).
+	// Only subscriptions and proxy providers set it — their panels key
+	// responses on device identity. Every other download (rule providers,
+	// geo data, native-list catalog, zapret candidates) stays anonymous.
+	IncludeHWID      bool
 	HWID             string
 	DeviceName       string
 	UserAgent        string
@@ -38,10 +44,10 @@ type DownloadOptions struct {
 }
 
 func ApplyDownloadOptions(raw string, opt DownloadOptions) string {
-	if opt.SuppressHWID {
-		// User explicitly opted out of panel fingerprinting. Don't inject
-		// HWID or device-name into the URL — preserve whatever the user
-		// typed verbatim.
+	if !opt.IncludeHWID || opt.SuppressHWID {
+		// Identity injection is opt-in (subscriptions/proxy providers) and
+		// the user's SuppressHWID opt-out always wins. Preserve whatever
+		// the user typed verbatim.
 		return raw
 	}
 	if opt.HWID == "" {

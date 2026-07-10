@@ -274,11 +274,12 @@ func setDownloadHeaders(req *http.Request, opt DownloadOptions) {
 		ua = "PureWRT/0.1"
 	}
 	req.Header.Set("User-Agent", ua)
-	// HWID/device headers are panel-driven fingerprints. When the user has
-	// opted out (SuppressHWID), skip every header that carries router
-	// identity so the request is indistinguishable across devices that
-	// share the user-agent and any custom headers below.
-	if !opt.SuppressHWID {
+	// HWID/device headers are panel-driven fingerprints. Only downloads
+	// that opted in (IncludeHWID — subscriptions/proxy providers) carry
+	// them, and the user's SuppressHWID opt-out always wins, so every
+	// other request is indistinguishable across devices that share the
+	// user-agent and any custom headers below.
+	if opt.IncludeHWID && !opt.SuppressHWID {
 		hwid := opt.EffectiveHWID()
 		device := opt.EffectiveDeviceName()
 		req.Header.Set("x-hwid", hwid)

@@ -503,10 +503,6 @@ return view.extend({
     var pin = s.option(form.Value, 'pin_sha256', _('TLS pin (SPKI SHA-256)'));
     pin.placeholder = 'sha256/<64 hex chars>,sha256/...';
     pin.description = _('Comma-separated SubjectPublicKeyInfo SHA-256 hashes. The handshake fails unless one matches a cert in the peer chain.');
-    var supHWID = s.option(form.Flag, 'suppress_hwid', _('Suppress HWID fingerprint'));
-    supHWID.default = '0';
-    supHWID.description = _('Disable router-derived HWID/device-name injection (URL + headers) for this rule provider.');
-
     var lastSuccess = s.option(form.DummyValue, '_last_success', _('Last successful update'));
     lastSuccess.cfgvalue = function(sectionId) {
       var name = uci.get('purewrt', sectionId, 'name') || sectionId;

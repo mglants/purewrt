@@ -55,7 +55,6 @@ func redactConfig(c config.Config) config.Config {
 	for i := range rps {
 		rps[i].URL = provider.RedactURL(rps[i].URL)
 		rps[i].Mirrors = redactList(rps[i].Mirrors)
-		rps[i].HWID = ""
 	}
 	c.RuleProviders = rps
 	return c

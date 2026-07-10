@@ -152,17 +152,17 @@ func (m Manager) downloadOptionsForURL(raw string) provider.DownloadOptions {
 	fallback := fallbackProxyURL(c, updateProxyURL)
 	for _, s := range c.Subscriptions {
 		if s.URL == raw {
-			return provider.DownloadOptions{HWID: s.HWID, DeviceName: s.DeviceName, UserAgent: s.UserAgent, Headers: s.Headers, ProxyURL: updateProxyURL, Bootstrap: bootstrap, Mirrors: s.Mirrors, FallbackProxyURL: fallback, PinSHA256: s.PinSHA256, SuppressHWID: s.SuppressHWID}
+			return provider.DownloadOptions{IncludeHWID: true, HWID: s.HWID, DeviceName: s.DeviceName, UserAgent: s.UserAgent, Headers: s.Headers, ProxyURL: updateProxyURL, Bootstrap: bootstrap, Mirrors: s.Mirrors, FallbackProxyURL: fallback, PinSHA256: s.PinSHA256, SuppressHWID: s.SuppressHWID}
 		}
 	}
 	for _, p := range c.ProxyProviders {
 		if p.URL == raw {
-			return provider.DownloadOptions{HWID: p.HWID, DeviceName: p.DeviceName, UserAgent: p.UserAgent, Headers: p.Headers, ProxyURL: updateProxyURL, Bootstrap: bootstrap, Mirrors: p.Mirrors, FallbackProxyURL: fallback, PinSHA256: p.PinSHA256, SuppressHWID: p.SuppressHWID}
+			return provider.DownloadOptions{IncludeHWID: true, HWID: p.HWID, DeviceName: p.DeviceName, UserAgent: p.UserAgent, Headers: p.Headers, ProxyURL: updateProxyURL, Bootstrap: bootstrap, Mirrors: p.Mirrors, FallbackProxyURL: fallback, PinSHA256: p.PinSHA256, SuppressHWID: p.SuppressHWID}
 		}
 	}
 	for _, p := range c.RuleProviders {
 		if p.URL == raw {
-			return provider.DownloadOptions{ProxyURL: updateProxyURL, Bootstrap: bootstrap, Mirrors: p.Mirrors, FallbackProxyURL: fallback, PinSHA256: p.PinSHA256, SuppressHWID: p.SuppressHWID}
+			return provider.DownloadOptions{ProxyURL: updateProxyURL, Bootstrap: bootstrap, Mirrors: p.Mirrors, FallbackProxyURL: fallback, PinSHA256: p.PinSHA256}
 		}
 	}
 	// No matching subscription/provider yet (typical during the very first
@@ -406,7 +406,7 @@ func (m Manager) UpdateProxyProvider(name string) (UpdateResult, error) {
 		}
 		log.InfoFields("proxy-provider download start", "provider", pp.Name, "url", provider.RedactURL(pp.URL))
 		priorMeta, _ := provider.ReadMetadata(pp.Path)
-		d, err := provider.DownloadWithOptions(pp.URL, provider.DownloadOptions{HWID: pp.HWID, DeviceName: pp.DeviceName, UserAgent: pp.UserAgent, Headers: pp.Headers, ProxyURL: updateProxyURL, Bootstrap: bootstrapFromSettings(c.Settings), PriorETag: priorMeta.ETag, PriorLastModified: priorMeta.LastModified, Mirrors: pp.Mirrors, FallbackProxyURL: fallbackProxyURL(c, updateProxyURL), PinSHA256: pp.PinSHA256, SuppressHWID: pp.SuppressHWID})
+		d, err := provider.DownloadWithOptions(pp.URL, provider.DownloadOptions{IncludeHWID: true, HWID: pp.HWID, DeviceName: pp.DeviceName, UserAgent: pp.UserAgent, Headers: pp.Headers, ProxyURL: updateProxyURL, Bootstrap: bootstrapFromSettings(c.Settings), PriorETag: priorMeta.ETag, PriorLastModified: priorMeta.LastModified, Mirrors: pp.Mirrors, FallbackProxyURL: fallbackProxyURL(c, updateProxyURL), PinSHA256: pp.PinSHA256, SuppressHWID: pp.SuppressHWID})
 		meta := provider.Metadata{URLRedacted: d.URLRedacted, LastUpdate: now, SubExpire: d.SubscriptionInfo.Expire, SubUsedBytes: d.SubscriptionInfo.UploadBytes + d.SubscriptionInfo.DownloadBytes, SubTotalBytes: d.SubscriptionInfo.TotalBytes}
 		if err != nil {
 			meta.ErrorMessage = err.Error()
@@ -539,7 +539,7 @@ func (m Manager) UpdateDetailedWithOptions(force bool) (UpdateResult, error) {
 		}
 		log.Info("proxy-provider: %s download start", pp.Name)
 		priorMeta, _ := provider.ReadMetadata(pp.Path)
-		d, err := provider.DownloadWithOptions(pp.URL, provider.DownloadOptions{HWID: pp.HWID, DeviceName: pp.DeviceName, UserAgent: pp.UserAgent, Headers: pp.Headers, ProxyURL: updateProxyURL, Bootstrap: bootstrapFromSettings(c.Settings), PriorETag: priorMeta.ETag, PriorLastModified: priorMeta.LastModified, Mirrors: pp.Mirrors, FallbackProxyURL: fallbackProxyURL(c, updateProxyURL), PinSHA256: pp.PinSHA256, SuppressHWID: pp.SuppressHWID})
+		d, err := provider.DownloadWithOptions(pp.URL, provider.DownloadOptions{IncludeHWID: true, HWID: pp.HWID, DeviceName: pp.DeviceName, UserAgent: pp.UserAgent, Headers: pp.Headers, ProxyURL: updateProxyURL, Bootstrap: bootstrapFromSettings(c.Settings), PriorETag: priorMeta.ETag, PriorLastModified: priorMeta.LastModified, Mirrors: pp.Mirrors, FallbackProxyURL: fallbackProxyURL(c, updateProxyURL), PinSHA256: pp.PinSHA256, SuppressHWID: pp.SuppressHWID})
 		meta := provider.Metadata{URLRedacted: d.URLRedacted, LastUpdate: now, LastSuccess: now, Checksum: d.Checksum, ETag: pickHeader(d.ETag, priorMeta.ETag), LastModified: pickHeader(d.LastModified, priorMeta.LastModified), SubExpire: d.SubscriptionInfo.Expire, SubUsedBytes: d.SubscriptionInfo.UploadBytes + d.SubscriptionInfo.DownloadBytes, SubTotalBytes: d.SubscriptionInfo.TotalBytes}
 		if d.NotModified {
 			meta.Checksum = priorMeta.Checksum
@@ -718,7 +718,7 @@ func (m Manager) updateRuleProvidersAsync(ctx context.Context, ruleProviders []c
 			}
 			log.Info("rule-provider: %s download start", rp.Name)
 			priorMeta, _ := provider.ReadMetadata(rp.Path)
-			d, err := provider.DownloadWithOptions(rp.URL, provider.DownloadOptions{HWID: rp.HWID, DeviceName: rp.DeviceName, UserAgent: rp.UserAgent, Headers: rp.Headers, ProxyURL: updateProxyURL, Bootstrap: bootstrap, PriorETag: priorMeta.ETag, PriorLastModified: priorMeta.LastModified, Mirrors: rp.Mirrors, FallbackProxyURL: fallbackProxy, PinSHA256: rp.PinSHA256, SuppressHWID: rp.SuppressHWID})
+			d, err := provider.DownloadWithOptions(rp.URL, provider.DownloadOptions{UserAgent: rp.UserAgent, Headers: rp.Headers, ProxyURL: updateProxyURL, Bootstrap: bootstrap, PriorETag: priorMeta.ETag, PriorLastModified: priorMeta.LastModified, Mirrors: rp.Mirrors, FallbackProxyURL: fallbackProxy, PinSHA256: rp.PinSHA256})
 			meta := provider.Metadata{URLRedacted: d.URLRedacted, LastUpdate: now, SubExpire: d.SubscriptionInfo.Expire, SubUsedBytes: d.SubscriptionInfo.UploadBytes + d.SubscriptionInfo.DownloadBytes, SubTotalBytes: d.SubscriptionInfo.TotalBytes}
 			if err != nil {
 				meta.ErrorMessage = err.Error()
