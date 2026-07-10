@@ -244,7 +244,8 @@ return view.extend({
     s.option(form.Flag, 'auto_apply', _('Auto apply'));
 
     var userAgent = s.option(form.Value, 'user_agent', _('User-Agent override'));
-    userAgent.default = 'mihomo-purewrt';
+    userAgent.placeholder = _('(empty = mihomo/<mihomo version> (purewrt/<version>))');
+    userAgent.description = _('Leave empty for the default, which reports the installed mihomo version — panels gate the response format on a mihomo-ish UA.');
     s.option(form.DynamicList, 'header', _('Extra HTTP header'));
     var mirror = s.option(form.DynamicList, 'mirror', _('Mirror URLs'));
     mirror.description = _('Alternate URLs tried after the primary fails. Each retry round cycles through primary + mirrors in order before backing off.');

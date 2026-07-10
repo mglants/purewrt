@@ -11,8 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/purewrt/purewrt/internal/version"
 )
 
 type DownloadResult struct {
@@ -273,7 +271,7 @@ func jitterFrac() float64 {
 func setDownloadHeaders(req *http.Request, opt DownloadOptions) {
 	ua := opt.UserAgent
 	if ua == "" {
-		ua = "PureWRT/" + version.Version
+		ua = DefaultUserAgent()
 	}
 	req.Header.Set("User-Agent", ua)
 	// HWID/device headers are panel-driven fingerprints. Only downloads

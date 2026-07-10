@@ -99,8 +99,11 @@ func TestDownloadIdentityHeaderConvention(t *testing.T) {
 	if _, err := DownloadWithOptions(srv.URL, DownloadOptions{IncludeHWID: true}); err != nil {
 		t.Fatalf("DownloadWithOptions: %v", err)
 	}
-	if want := "PureWRT/" + version.Version; gotUA != want {
+	if want := DefaultUserAgent(); gotUA != want {
 		t.Fatalf("default User-Agent = %q, want %q", gotUA, want)
+	}
+	if !strings.HasPrefix(gotUA, "mihomo") || !strings.Contains(gotUA, "purewrt/"+version.Version) {
+		t.Fatalf("default UA must be mihomo-prefixed with a purewrt/<version> comment (panel format gating, AGENTS.md), got %q", gotUA)
 	}
 	if gotDeviceOS != "OpenWrt" {
 		t.Fatalf("x-device-os = %q, want OpenWrt", gotDeviceOS)

@@ -107,14 +107,14 @@ error at the end is what fires the retry. Don't merge the two: soft-continue
 is for "do as much as we can"; non-zero exit is for "tell the operator + the
 retry layer we still have unfinished business".
 
-## Subscription import: User-Agent must default to `mihomo-purewrt`
+## Subscription downloads: the default User-Agent must stay mihomo-prefixed
 
 Some proxy panels (sub-store, v2bx, xboard, etc.) **gate the response
 format on the User-Agent**: default UAs get a base64-encoded URI list,
 "mihomo*" / "clash*" UAs get a Clash YAML profile. PureWRT's import flow
 calls Analyze **twice** — once during `Import()` (no subscription persisted
 yet) and again during `UpdateDetailedWithOptions` (using the persisted
-subscription's UA, defaulted to `mihomo-purewrt`).
+subscription's UA).
 
 If those two passes see different content types, the import creates **two
 proxy providers**: a `main` (type=http, URL=raw, content is base64 garbage
@@ -122,11 +122,15 @@ mihomo can't parse) and a `<sub_name>_nodes` (type=file with the YAML
 decoded by `DecomposeYAMLProfile`). Only the YAML one is actually usable;
 the http one fails silently in mihomo logs.
 
-`downloadOptionsForURL` in `internal/manager/manager.go` therefore defaults
-the UA to `mihomo-purewrt` when no subscription/provider matches the URL
-yet. **Don't change that fallback to `PureWRT/0.1` or empty** — the wizard's
-first-pass analyze will start returning base64 again and the redundant
-`main` provider will come back.
+The default UA for every download with no per-entity `user_agent` is
+`provider.DefaultUserAgent()`: `mihomo/<mihomo version> (purewrt/<version>)`
+(`internal/provider/useragent.go`, mihomo version from the updater's
+version marker or `mihomo -v`, purewrt version stamped by the package
+build). Both Analyze passes and the update path fall through to it, so
+they always agree. **Don't change the prefix away from "mihomo"** — the
+wizard's first-pass analyze will start returning base64 again and the
+redundant `main` provider will come back.
+`TestDownloadIdentityHeaderConvention` guards the prefix.
 
 ## Dnsmasq must be restarted, never reloaded
 

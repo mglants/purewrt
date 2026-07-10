@@ -103,7 +103,7 @@ func (m Manager) Import(url, name, mode, preset string) (provider.ImportPlan, er
 	}
 	plan := provider.PlanImportWithOptions(c, url, name, mode, preset, a, provider.ImportOptions{LowResource: c.LowResource()})
 	c = config.EnsureDefaults(c)
-	c = config.UpsertSubscription(c, config.Subscription{Name: plan.SubscriptionName, Enabled: true, URL: url, Mode: modeOrDefault(mode), PresetIfNoRules: presetOrDefault(preset), AutoApply: true, Interval: 86400, UserAgent: "mihomo-purewrt"})
+	c = config.UpsertSubscription(c, config.Subscription{Name: plan.SubscriptionName, Enabled: true, URL: url, Mode: modeOrDefault(mode), PresetIfNoRules: presetOrDefault(preset), AutoApply: true, Interval: 86400})
 	for _, pp := range plan.ProxyProviders {
 		c = config.UpsertProxyProvider(c, pp)
 	}
@@ -174,7 +174,7 @@ func (m Manager) downloadOptionsForURL(raw string) provider.DownloadOptions {
 	// on the update-time re-analyze, producing two redundant proxy
 	// providers (one type=http with raw bytes, one type=file with decoded
 	// proxies) where only one should exist.
-	return provider.DownloadOptions{UserAgent: "mihomo-purewrt", ProxyURL: updateProxyURL, Bootstrap: bootstrap, FallbackProxyURL: fallback}
+	return provider.DownloadOptions{ProxyURL: updateProxyURL, Bootstrap: bootstrap, FallbackProxyURL: fallback}
 }
 
 // effectiveUpdateProxyURL resolves the proxy used for provider downloads
@@ -485,11 +485,7 @@ func (m Manager) UpdateDetailedWithOptions(force bool) (UpdateResult, error) {
 		plan := provider.PlanImportWithOptions(c, s.URL, s.Name, s.Mode, s.PresetIfNoRules, a, provider.ImportOptions{LowResource: c.LowResource(), ImportRulesOnLowResource: s.ImportRulesOnLowResource})
 		log.Debug("subscription: %s parsed type=%s rules=%d proxy_nodes=%d", s.Name, a.Type, a.Rules, a.ProxyNodes)
 		log.Info("subscription: %s import planned proxy_providers=%d rule_providers=%d section_groups=%d files=%d", s.Name, len(plan.ProxyProviders), len(plan.RuleProviders), len(plan.SectionGroups), len(plan.Files))
-		userAgent := s.UserAgent
-		if userAgent == "" {
-			userAgent = "mihomo-purewrt"
-		}
-		c = config.UpsertSubscription(c, config.Subscription{Name: plan.SubscriptionName, Enabled: true, URL: s.URL, Mode: modeOrDefault(s.Mode), PresetIfNoRules: presetOrDefault(s.PresetIfNoRules), ImportRulesOnLowResource: s.ImportRulesOnLowResource, AutoApply: true, Interval: s.Interval, HWID: s.HWID, DeviceName: s.DeviceName, UserAgent: userAgent, Headers: s.Headers})
+		c = config.UpsertSubscription(c, config.Subscription{Name: plan.SubscriptionName, Enabled: true, URL: s.URL, Mode: modeOrDefault(s.Mode), PresetIfNoRules: presetOrDefault(s.PresetIfNoRules), ImportRulesOnLowResource: s.ImportRulesOnLowResource, AutoApply: true, Interval: s.Interval, HWID: s.HWID, DeviceName: s.DeviceName, UserAgent: s.UserAgent, Headers: s.Headers})
 		for _, pp := range plan.ProxyProviders {
 			c = config.UpsertProxyProvider(c, pp)
 		}
