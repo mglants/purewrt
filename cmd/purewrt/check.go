@@ -40,6 +40,14 @@ func checkMain() {
 			nftHit, _ = checker.NFTSetContains("dns_"+rm.NFTSet4, dns.A[0])
 		}
 	}
+	// Ground-truth route by IP: the kernel routes on destination IP (nft dest
+	// sets), so an IP in a section's IP/CIDR set is routed via that section even
+	// when the domain matches no rule. Classify the first resolved A so the
+	// report reflects what actually happens, not just the domain-rule verdict.
+	var ipRoute checker.IPRoute
+	if len(dns.A) > 0 {
+		ipRoute = checker.ClassifyIP(c, dns.A[0])
+	}
 	mw := checker.Mwan3(c)
 	v6 := checker.InspectIPv6(c)
 
@@ -49,8 +57,19 @@ func checkMain() {
 		c.DNS.Listen, dns.A, dns.AAAA, dns.Error)
 	fmt.Fprintf(&b, "Rule:\n  matched provider: %s\n  matched rule: %s,%s\n  section: %s\n  action: %s\n\n",
 		ruleProvider(ruleMatch), ruleType(ruleMatch, domain), domain, rm.Section, rm.Action)
-	fmt.Fprintf(&b, "OpenWrt:\n  nftset: %s\n  tproxy port: %d\n  fwmark: %s/%s\n  route table: %s\n  first A in nftset: %v\n\n",
+	fmt.Fprintf(&b, "OpenWrt:\n  nftset: %s\n  tproxy port: %d\n  fwmark: %s/%s\n  route table: %s\n  first A in nftset: %v\n",
 		rm.NFTSet4, rm.TPROXYPort, rm.Mark, rm.Mask, rm.RouteTable, nftHit)
+	if len(dns.A) > 0 {
+		fmt.Fprintf(&b, "  effective route by IP: %s → %s\n", dns.A[0], ipRouteDesc(ipRoute))
+		// Divergence: the domain matched no rule (would be direct) but the IP is
+		// in a routing set — the traffic is actually routed by IP/CIDR match, not
+		// the domain verdict. Call it out so "direct" isn't misread.
+		if !ruleMatch.Matched && ipRoute.Action != "" && ipRoute.Action != "default" && ipRoute.Action != "direct" && ipRoute.Action != "bypass" {
+			fmt.Fprintf(&b, "  note: domain matches no rule (domain verdict: direct), but %s is in %s → routed via section %q (%s) by IP/CIDR match\n",
+				dns.A[0], ipRoute.Set, ipRoute.Section, ipRoute.Action)
+		}
+	}
+	b.WriteString("\n")
 	fmt.Fprintf(&b, "IPv6:\n  mode: %s\n  global address: %v\n  default route: %v\n  warnings: %v\n\n",
 		v6.Mode, v6.GlobalAddress, v6.DefaultRoute, v6.Warnings)
 	fmt.Fprintf(&b, "Mwan3:\n  installed: %v\n  mode: %s\n  direct traffic: %s\n  proxy outbound: %s\n\n",
@@ -165,6 +184,18 @@ func orNA(s string) string {
 		return "n/a"
 	}
 	return s
+}
+
+// ipRouteDesc renders the effective IP route: the set + section/action, or a
+// plain "default route (kernel direct)" when the IP is in no routing set.
+func ipRouteDesc(r checker.IPRoute) string {
+	if r.Set == "" || r.Action == "default" {
+		return "default route (kernel direct)"
+	}
+	if r.Section == "bypass" || r.Section == "direct" || r.Section == "reject" {
+		return fmt.Sprintf("%s (%s)", r.Set, r.Action)
+	}
+	return fmt.Sprintf("%s → section %q (%s)", r.Set, r.Section, r.Action)
 }
 
 func ruleProvider(m checker.RuleProviderMatch) string {
