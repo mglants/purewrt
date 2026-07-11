@@ -4,6 +4,33 @@ All notable changes to PureWRT are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are the `purewrt`
 package version.
 
+## [0.3.1] - 2026-07-11
+
+### Added
+- **Global `suppress_hwid` privacy switch** — one setting to stop sending the
+  HWID identity headers on provider/subscription fetches.
+- **Version-stamped User-Agent** on provider downloads: default UA is now
+  `mihomo/<mihomo version> (purewrt/<version>)`, with split
+  `x-device-os` / `x-ver-os` headers.
+
+### Changed
+- **HWID identity sent only for subscriptions and proxy providers** (not
+  plain rule-list fetches) — narrows what leaks to third-party list hosts.
+- **Port-scoped zapret claims** — a zapret section only claims the ports its
+  enabled strategies actually cover, so it doesn't shadow other traffic.
+- **CLI GC target pinned**; `purewrt-check` / `purewrt-api` install as
+  multi-call symlinks of the single binary (CI builds one multi-call binary).
+
+### Fixed
+- **Site check reports the real IP/CIDR route.** `purewrt-check` only tested
+  the matched-domain-section's nftset, so a domain with no matching rule whose
+  resolved IP sits in another section's IP/CIDR set was reported as *direct*
+  while traffic is actually proxied by destination-IP match. It now scans the
+  resolved IP across all routing sets in prerouting precedence and reports the
+  ground-truth route, flagging domain-vs-IP divergence.
+- **Stale artifacts pruned / leaked stage dirs swept** on update; the
+  `.last_applied` marker is refreshed on every successful apply.
+
 ## [0.3.0] - 2026-07-09
 
 ### Added
@@ -183,6 +210,7 @@ package version.
 
 - Initial release.
 
+[0.3.1]: https://github.com/mglants/purewrt/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/mglants/purewrt/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/mglants/purewrt/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/mglants/purewrt/compare/v0.0.1...v0.1.0
