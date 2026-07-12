@@ -31,13 +31,19 @@ type GenerationGroups struct {
 	Zapret        bool
 	Policy        bool
 	Mesh          bool
+	// Easytier is a precision subset of Mesh: only the fields easytier.toml
+	// is rendered from. Peer discovery dirties Mesh every sync (mihomo needs
+	// the new friend IPs) but must NOT restart the overlay daemon — a
+	// restart renegotiates the DHCP overlay IP, which invalidates the very
+	// peer records the sync just wrote, and the next sync loops forever.
+	Easytier bool
 }
 
 func (g GenerationGroups) Any() bool {
-	return g.Mihomo || g.OpenWrtBundle || g.Firewall || g.Mwan3 || g.Zapret || g.Policy || g.Mesh
+	return g.Mihomo || g.OpenWrtBundle || g.Firewall || g.Mwan3 || g.Zapret || g.Policy || g.Mesh || g.Easytier
 }
 func (GenerationGroups) All() GenerationGroups {
-	return GenerationGroups{Mihomo: true, OpenWrtBundle: true, Firewall: true, Mwan3: true, Zapret: true, Policy: true, Mesh: true}
+	return GenerationGroups{Mihomo: true, OpenWrtBundle: true, Firewall: true, Mwan3: true, Zapret: true, Policy: true, Mesh: true, Easytier: true}
 }
 
 type generationGroupCacheStatus struct {
@@ -98,6 +104,24 @@ type meshNFTFPEntry struct {
 
 func meshNFTFP(m config.Mesh) meshNFTFPEntry {
 	return meshNFTFPEntry{Enabled: m.Enabled, NetworkName: m.NetworkName, ExitEnabled: m.ExitEnabled, ListenPort: m.ListenPort, DeviceName: m.DeviceName, ExitMaxMbit: m.ExitMaxMbit}
+}
+
+// easytierFPEntry is exactly the Mesh material easytier.toml is rendered
+// from — the restart gate for the overlay daemon (see GenerationGroups.
+// Easytier for why peers and mihomo-only fields must stay out).
+type easytierFPEntry struct {
+	Enabled        bool     `json:"enabled"`
+	NetworkName    string   `json:"network_name"`
+	NetworkSecret  string   `json:"network_secret"`
+	HWID           string   `json:"hwid"` // overlay hostname
+	RPCPortal      string   `json:"rpc_portal"`
+	DeviceName     string   `json:"device_name"`
+	CommunityPeers []string `json:"community_peers"`
+	ExtraPeers     []string `json:"extra_peers"`
+}
+
+func easytierFP(m config.Mesh) easytierFPEntry {
+	return easytierFPEntry{Enabled: m.Enabled, NetworkName: m.NetworkName, NetworkSecret: m.NetworkSecret, HWID: m.HWID, RPCPortal: m.RPCPortal, DeviceName: m.DeviceName, CommunityPeers: m.CommunityPeers, ExtraPeers: m.ExtraPeers}
 }
 
 type ruleProviderFPEntry struct {
@@ -193,6 +217,7 @@ func generationGroupHashes(c config.Config, in generationFingerprintInput) (map[
 		"zapret":         map[string]any{"zapret": in.Zapret, "sections": openWrtSections},
 		"policy":         map[string]any{"settings": in.Settings, "vpns": in.VPNs, "devices": in.Devices, "sections": openWrtSections},
 		"mesh":           map[string]any{"mesh": in.Mesh, "mesh_peers": in.MeshPeers},
+		"easytier":       map[string]any{"easytier": easytierFP(in.Mesh)},
 	}
 	out := map[string]string{}
 	for name, v := range groups {
@@ -245,6 +270,9 @@ func generationDirtyGroups(c config.Config, fp generationFingerprint, checkPaths
 	}
 	if old.Groups["mesh"] != fp.Groups["mesh"] || (c.MeshActive() && !pathComplete(checkPaths.EasytierConfig)) {
 		g.Mesh = true
+	}
+	if old.Groups["easytier"] != fp.Groups["easytier"] || (c.MeshActive() && !pathComplete(checkPaths.EasytierConfig)) {
+		g.Easytier = true
 	}
 	if !g.Any() {
 		return g, "all groups unchanged"
@@ -299,7 +327,7 @@ func allGenerationGroupCacheStatuses(status, reason string) []generationGroupCac
 }
 
 func generationGroupNames() []string {
-	return []string{"mihomo", "openwrt_bundle", "firewall", "mwan3", "zapret", "policy", "mesh"}
+	return []string{"mihomo", "openwrt_bundle", "firewall", "mwan3", "zapret", "policy", "mesh", "easytier"}
 }
 
 func generationGroupOutputMissingReason(c config.Config, paths GeneratedPaths, name string) string {
@@ -328,7 +356,7 @@ func generationGroupOutputMissingReason(c config.Config, paths GeneratedPaths, n
 		}
 	case "zapret":
 		return missingPathReason(paths.ZapretEnv, "zapret env missing")
-	case "mesh":
+	case "mesh", "easytier":
 		if c.MeshActive() {
 			return missingPathReason(paths.EasytierConfig, "easytier config missing")
 		}

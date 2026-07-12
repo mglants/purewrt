@@ -388,6 +388,45 @@ func TestMeshExitRateLimiterChains(t *testing.T) {
 	}
 }
 
+func TestEasytierFingerprintIgnoresPeerChurn(t *testing.T) {
+	// mesh-sync peer updates must never dirty the easytier group: an
+	// easytier restart renegotiates the DHCP overlay IP, invalidating the
+	// peer records the sync just wrote (sync→apply→restart loop).
+	hashes := func(c config.Config) map[string]string {
+		fp, err := currentGenerationFingerprint(c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fp.Groups
+	}
+	c := joinedMesh()
+	base := hashes(c)
+
+	peered := c
+	peered.MeshPeers = []config.MeshPeer{{HWID: "purewrt-bbbbbbbbbbbbbbbbbbbbbbbb", Name: "beta", Enabled: true, OverlayIP: "10.126.126.2", ListenPort: 7897, ExitOffered: true}}
+	got := hashes(peered)
+	if got["easytier"] != base["easytier"] {
+		t.Error("peer churn dirtied the easytier group (would restart the daemon)")
+	}
+	if got["mesh"] == base["mesh"] {
+		t.Error("peer churn did not dirty the mesh group")
+	}
+
+	// A rendezvous edit rewrites easytier.toml — it must dirty easytier.
+	rendezvous := c
+	rendezvous.Mesh.CommunityPeers = []string{"tcp://203.0.113.9:11010"}
+	if hashes(rendezvous)["easytier"] == base["easytier"] {
+		t.Error("community_peer change did not dirty the easytier group")
+	}
+
+	// exit_filter is mihomo-only — the daemon must not restart for it.
+	filtered := c
+	filtered.Mesh.ExitFilter = "(?i)NL"
+	if hashes(filtered)["easytier"] != base["easytier"] {
+		t.Error("exit_filter change dirtied the easytier group")
+	}
+}
+
 func TestMeshExitCapFingerprintSemantics(t *testing.T) {
 	hashes := func(c config.Config) map[string]string {
 		fp, err := currentGenerationFingerprint(c)

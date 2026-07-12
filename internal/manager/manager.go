@@ -2093,7 +2093,12 @@ func (m Manager) applyServiceRestarts(c config.Config, groups generator.Generati
 	// belongs to: a missing init script (easytier not installed) or a failed
 	// restart must not roll back the whole apply — mihomo/firewall state is
 	// already correct, the overlay just stays down until the package appears.
-	if groups.Mesh {
+	//
+	// Gated on the Easytier precision group, NOT Mesh: mesh-sync dirties the
+	// Mesh group on every peer change, and a daemon restart renegotiates the
+	// DHCP overlay IP — which invalidates the peer records just synced and
+	// loops sync→apply→restart→new IP forever.
+	if groups.Easytier {
 		if _, err := os.Stat(initEasytier); err != nil {
 			log.Debug("apply: easytier restart skipped (init script missing)")
 		} else if c.MeshActive() {
@@ -2110,9 +2115,14 @@ func (m Manager) applyServiceRestarts(c config.Config, groups generator.Generati
 			_ = m.runServiceRestart(c, r, initEasytier, "disable")
 			log.Info("apply: easytier stopped (mesh inactive)")
 		}
-		// purewrt-api reads the mesh config at startup only: without a
-		// restart, mesh-init leaves 8788 unbound and a binary upgrade leaves
-		// a stale-parser process answering 503. Best-effort like easytier.
+	}
+	// purewrt-api reads the mesh config at startup only: without a
+	// restart, mesh-init leaves 8788 unbound and a binary upgrade leaves
+	// a stale-parser process answering 503. Best-effort like easytier.
+	// Peer-only changes don't alter its responses, but restarting on the
+	// broad Mesh group is harmless (no overlay-IP churn) and keeps every
+	// self-field change (exit_enabled, node_name, ports) covered.
+	if groups.Mesh {
 		if _, err := os.Stat(initPurewrtAPI); err == nil {
 			if err := m.runServiceRestart(c, r, initPurewrtAPI, "restart"); err != nil {
 				log.Warn("apply: purewrt-api restart failed: %v", err)
