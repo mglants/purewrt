@@ -643,6 +643,12 @@ func writeMesh(b *bytes.Buffer, m Mesh) {
 	opt(b, "hwid", m.HWID)
 	opt(b, "node_name", m.NodeName)
 	optb(b, "exit_enabled", m.ExitEnabled)
+	if m.ExitFilter != d.ExitFilter {
+		opt(b, "exit_filter", m.ExitFilter)
+	}
+	if m.ExitExcludeFilter != d.ExitExcludeFilter {
+		opt(b, "exit_exclude_filter", m.ExitExcludeFilter)
+	}
 	if m.ListenPort != d.ListenPort {
 		opti(b, "listen_port", m.ListenPort)
 	}

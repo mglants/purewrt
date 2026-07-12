@@ -541,23 +541,25 @@ type OONI struct {
 // internal/mesh). The feature is fully dormant until mesh-init or mesh-join
 // stores a code.
 type Mesh struct {
-	Enabled        bool
-	Code           string   // sync-code verbatim — the ONLY stored secret
-	NetworkName    string   // decoded from Code at parse, never serialized
-	NetworkSecret  string   // decoded from Code at parse (base64), never serialized
-	PSK            string   // decoded from Code at parse (hex 32B), never serialized
-	HWID           string   // device identity (provider.AutomaticHWID, "purewrt-<hex24>"); write-once at init/join, never rewritten
-	NodeName       string   // display label only (hostname by default) — safe to rename
-	ExitEnabled    bool     // offer this router's proxies as an exit to friends
-	ListenPort     int      // mihomo ss mesh listener port
-	APIMeshPort    int      // purewrt-api mesh endpoint port (overlay-only via fw4 zone)
-	DeviceName     string   // easytier TUN device
-	CommunityPeers []string // rendezvous/relay servers this node dials; ships with a default, fully user-overridable
-	ExtraPeers     []string // extra peer URLs from sync-code TLVs (group-wide custom rendezvous)
-	EasytierBin    string   // easytier-core path; presence gates the feature like zapret's nfqws
-	RPCPortal      string   // easytier RPC portal easytier-cli talks to
-	SyncCron       string   // mesh-sync cron schedule; empty disables the cron block
-	PeerTTLDays    int      // GC: drop peers unseen for this many days (0 = never)
+	Enabled           bool
+	Code              string   // sync-code verbatim — the ONLY stored secret
+	NetworkName       string   // decoded from Code at parse, never serialized
+	NetworkSecret     string   // decoded from Code at parse (base64), never serialized
+	PSK               string   // decoded from Code at parse (hex 32B), never serialized
+	HWID              string   // device identity (provider.AutomaticHWID, "purewrt-<hex24>"); write-once at init/join, never rewritten
+	NodeName          string   // display label only (hostname by default) — safe to rename
+	ExitEnabled       bool     // offer this router's proxies as an exit to friends
+	ExitFilter        string   // mihomo regex include filter scoping which provider nodes MeshExit uses ("" = all)
+	ExitExcludeFilter string   // mihomo regex exclude filter for MeshExit, applied after ExitFilter
+	ListenPort        int      // mihomo ss mesh listener port
+	APIMeshPort       int      // purewrt-api mesh endpoint port (overlay-only via fw4 zone)
+	DeviceName        string   // easytier TUN device
+	CommunityPeers    []string // rendezvous/relay servers this node dials; ships with a default, fully user-overridable
+	ExtraPeers        []string // extra peer URLs from sync-code TLVs (group-wide custom rendezvous)
+	EasytierBin       string   // easytier-core path; presence gates the feature like zapret's nfqws
+	RPCPortal         string   // easytier RPC portal easytier-cli talks to
+	SyncCron          string   // mesh-sync cron schedule; empty disables the cron block
+	PeerTTLDays       int      // GC: drop peers unseen for this many days (0 = never)
 }
 
 // MeshPeer is a persisted friend router discovered by mesh-sync. Material

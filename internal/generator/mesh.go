@@ -110,12 +110,19 @@ func meshExitViable(c config.Config, enabledProviders []config.ProxyProvider) bo
 // Never DIRECT — friend traffic must not exit via this router's home IP.
 // Never friend_* — A⇄B mutual fallback would ping-pong. Never section
 // groups — after fallback wiring those may contain friend_* transitively.
+//
+// ExitFilter/ExitExcludeFilter scope which provider nodes friends may use —
+// mihomo applies them to `use:` provider nodes only; explicit vpn_* members
+// are always kept (same semantics as section groups). An over-narrow filter
+// can leave the group empty at runtime: meshExitViable checks provider
+// presence, not post-filter membership — the LuCI live preview is the
+// operator's guard against that.
 func writeMeshExitGroup(b *strings.Builder, c config.Config, providers []config.ProxyProvider) {
 	vpnMembers := []string{}
 	for _, v := range referencedVPNs(c) {
 		vpnMembers = append(vpnMembers, vpnProxyName(v.Name))
 	}
-	writeProxyGroup(b, "MeshExit", "url-test", "", "", "", "", 0, providers, vpnMembers)
+	writeProxyGroup(b, "MeshExit", "url-test", c.Mesh.ExitFilter, c.Mesh.ExitExcludeFilter, "", "", 0, providers, vpnMembers)
 }
 
 // writeSectionFallbackGroup wraps a section's local group with friend exits:

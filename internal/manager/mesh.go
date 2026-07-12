@@ -274,15 +274,17 @@ func (m Manager) MeshPeerRemove(name string) error {
 // config-only peer rows, never an error — the LuCI page must render either
 // way.
 type MeshStatusReport struct {
-	Active        bool             `json:"active"`
-	Installed     bool             `json:"installed"`
-	NetworkName   string           `json:"network_name,omitempty"`
-	NodeName      string           `json:"node_name,omitempty"`
-	ExitEnabled    bool             `json:"exit_enabled"`
-	DaemonRunning  bool             `json:"daemon_running"`
-	OverlayIP      string           `json:"overlay_ip,omitempty"`
-	CommunityPeers []string         `json:"community_peers"`
-	Peers          []MeshPeerStatus `json:"peers"`
+	Active            bool             `json:"active"`
+	Installed         bool             `json:"installed"`
+	NetworkName       string           `json:"network_name,omitempty"`
+	NodeName          string           `json:"node_name,omitempty"`
+	ExitEnabled       bool             `json:"exit_enabled"`
+	ExitFilter        string           `json:"exit_filter,omitempty"`
+	ExitExcludeFilter string           `json:"exit_exclude_filter,omitempty"`
+	DaemonRunning     bool             `json:"daemon_running"`
+	OverlayIP         string           `json:"overlay_ip,omitempty"`
+	CommunityPeers    []string         `json:"community_peers"`
+	Peers             []MeshPeerStatus `json:"peers"`
 }
 
 type MeshPeerStatus struct {
@@ -376,6 +378,8 @@ func (m Manager) MeshStatus() MeshStatusReport {
 	rep.NetworkName = c.Mesh.NetworkName
 	rep.NodeName = c.Mesh.NodeName
 	rep.ExitEnabled = c.Mesh.ExitEnabled
+	rep.ExitFilter = c.Mesh.ExitFilter
+	rep.ExitExcludeFilter = c.Mesh.ExitExcludeFilter
 	rep.CommunityPeers = c.Mesh.CommunityPeers
 	live := map[string]mesh.OverlayPeer{}
 	if rep.Active && rep.Installed {

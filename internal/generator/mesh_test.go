@@ -72,6 +72,25 @@ func TestMeshExitGroupNeverLeaksDirectOrFriendOrSection(t *testing.T) {
 	}
 }
 
+func TestMeshExitGroupFilters(t *testing.T) {
+	// Defaults: no filter keys at all.
+	block := meshExitBlock(t, string(Mihomo(joinedMesh())))
+	if strings.Contains(block, "filter:") {
+		t.Fatalf("default MeshExit emits filter keys:\n%s", block)
+	}
+	// Set: both keys pass through to the group verbatim (quoted).
+	c := joinedMesh()
+	c.Mesh.ExitFilter = "(?i)NL|DE"
+	c.Mesh.ExitExcludeFilter = "(?i)expire"
+	block = meshExitBlock(t, string(Mihomo(c)))
+	if !strings.Contains(block, `filter: "(?i)NL|DE"`) {
+		t.Fatalf("MeshExit missing include filter:\n%s", block)
+	}
+	if !strings.Contains(block, `exclude-filter: "(?i)expire"`) {
+		t.Fatalf("MeshExit missing exclude filter:\n%s", block)
+	}
+}
+
 func TestMeshExitNotEmittedWhenNotViable(t *testing.T) {
 	c := joinedMesh()
 	c.ProxyProviders = nil // no providers, no VPNs → exit could only fail

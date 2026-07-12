@@ -391,6 +391,8 @@ func applySection(c *Config, x struct {
 		c.Mesh.HWID = one(x.opts, "hwid", d.HWID)
 		c.Mesh.NodeName = one(x.opts, "node_name", d.NodeName)
 		c.Mesh.ExitEnabled = b(x.opts, "exit_enabled", d.ExitEnabled)
+		c.Mesh.ExitFilter = one(x.opts, "exit_filter", d.ExitFilter)
+		c.Mesh.ExitExcludeFilter = one(x.opts, "exit_exclude_filter", d.ExitExcludeFilter)
 		c.Mesh.ListenPort = i(x.opts, "listen_port", d.ListenPort)
 		c.Mesh.APIMeshPort = i(x.opts, "api_mesh_port", d.APIMeshPort)
 		c.Mesh.DeviceName = one(x.opts, "device_name", d.DeviceName)
