@@ -18,7 +18,21 @@ import (
 // The shared node runs easytier-core 2.6.4 with --no-tun
 // --relay-network-whitelist --relay-all-peer-rpc; NAT punch through it was
 // verified live between two CGNAT-free but firewalled RU routers.
+//
+// Order is preference: the wss entry is tried first. It rides the shared
+// node's nginx front on real 443 (SNI-routed to a localhost easytier ws
+// listener via a WebSocket-proxy location) so rendezvous traffic is
+// indistinguishable from ordinary HTTPS — the DPI-resistant path.
+//
+// pwmesh.glants.xyz is a DEDICATED A record → the rendezvous node(s) only,
+// NOT the round-robin fleet behind privatebing.glants.xyz (only nodes with
+// the /pwmesh nginx location + ws listener can serve wss). easytier does not
+// validate the wss TLS cert (overlay auth is the network_secret), so the
+// node's existing privatebing SAN cert is fine — no cert per subdomain.
+// The plain tcp:11010 entry (IP-pinned) stays as a fallback for networks
+// where 11010 is open but the wss front is unreachable.
 var defaultCommunityPeers = []string{
+	"wss://pwmesh.glants.xyz/pwmesh",
 	"tcp://150.241.85.145:11010",
 }
 
