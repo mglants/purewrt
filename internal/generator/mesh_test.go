@@ -162,7 +162,7 @@ func TestEasytierConfigGolden(t *testing.T) {
 		`hostname = "alpha"`,
 		`network_name = "pwmesh-0011223344556677"`,
 		`network_secret = "c2VjcmV0"`,
-		`uri = "tcp://public.easytier.top:11010"`,
+		`uri = "tcp://150.241.85.145:11010"`,
 		`uri = "tcp://relay.example.org:11010"`,
 		`dev_name = "pwmesh0"`,
 		"enable_kcp_proxy = false",

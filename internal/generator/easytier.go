@@ -7,12 +7,19 @@ import (
 	"github.com/purewrt/purewrt/internal/config"
 )
 
-// defaultCommunityPeers are the public easytier rendezvous nodes used for
-// hole-punching and relay when the sync-code carries no custom peers. Custom
-// peers from the sync-code TLVs (Mesh.ExtraPeers) are appended, so a group
-// can run entirely on its own infrastructure by embedding peers in the code.
+// defaultCommunityPeers are the rendezvous nodes used for hole-punching and
+// relay when the sync-code carries no custom peers. Custom peers from the
+// sync-code TLVs (Mesh.ExtraPeers) are appended, so a group can run entirely
+// on its own infrastructure by embedding peers in the code.
+//
+// The purewrt-operated shared node replaces upstream's public.easytier.top:
+// that hostname CNAMEs into .cn and NXDOMAINs under RU DNS — dead in exactly
+// the censored environments this feature targets (verified live 2026-07-12).
+// The shared node runs easytier-core 2.6.4 with --no-tun
+// --relay-network-whitelist --relay-all-peer-rpc; NAT punch through it was
+// verified live between two CGNAT-free but firewalled RU routers.
 var defaultCommunityPeers = []string{
-	"tcp://public.easytier.top:11010",
+	"tcp://150.241.85.145:11010",
 }
 
 // EasytierConfig renders the easytier-core TOML for this router's overlay
