@@ -171,6 +171,13 @@ tasks:
       - make package/feeds/packages/lua5.4/compile {{.MAKE_FLAGS}}
       - make package/zapret/compile {{.MAKE_FLAGS}}
 
+  build:easytier:
+    desc: Build only bundled easytier package in SDK (prebuilt upstream binaries)
+    deps: [sdk:config]
+    dir: '{{.SDK_DIR}}'
+    cmds:
+      - make package/easytier/compile {{.MAKE_FLAGS}}
+
   build:ooniprobe:
     desc: Build only bundled ooniprobe package in SDK (25.12 only — needs Go 1.24)
     deps: [sdk:config]
