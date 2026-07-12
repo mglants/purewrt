@@ -55,8 +55,11 @@ func EasytierConfig(c config.Config) []byte {
 	}
 	b.WriteString("\n[flags]\n")
 	fmt.Fprintf(&b, "dev_name = %q\n", m.DeviceName)
-	// KCP proxy: wraps TCP streams in KCP over the punched UDP path —
-	// dramatically better throughput than TCP-over-TCP relay on lossy links.
-	b.WriteString("enable_kcp_proxy = true\n")
+	// KCP proxy stays OFF: on easytier 2.6.4 the smoltcp TCP hijack it
+	// enables RSTs every TCP stream entering the TUN (observed live on both
+	// arm64 and x86_64 routers — SYN answered by a locally-generated RST in
+	// <1 ms), which kills the ss exit and the mesh API. Plain TCP over the
+	// punched UDP path works; revisit if upstream fixes the hijack.
+	b.WriteString("enable_kcp_proxy = false\n")
 	return []byte(b.String())
 }

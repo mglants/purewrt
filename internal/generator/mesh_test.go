@@ -165,7 +165,7 @@ func TestEasytierConfigGolden(t *testing.T) {
 		`uri = "tcp://public.easytier.top:11010"`,
 		`uri = "tcp://relay.example.org:11010"`,
 		`dev_name = "pwmesh0"`,
-		"enable_kcp_proxy = true",
+		"enable_kcp_proxy = false",
 		"dhcp = true",
 		`rpc_portal = "127.0.0.1:15888"`,
 	} {
