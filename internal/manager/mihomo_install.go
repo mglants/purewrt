@@ -154,8 +154,8 @@ type MihomoInstallReleaseResult struct {
 	AssetName     string `json:"asset_name"`
 	BytesWritten  int64  `json:"bytes_written"`
 	RestartedAt   string `json:"restarted_at"`
-	WarmedUp      bool   `json:"warmed_up"`      // true if /version responded within the post-restart wait
-	AutoReverted  bool   `json:"auto_reverted"`  // set when warmup failed and we fell back to the package binary
+	WarmedUp      bool   `json:"warmed_up"`     // true if /version responded within the post-restart wait
+	AutoReverted  bool   `json:"auto_reverted"` // set when warmup failed and we fell back to the package binary
 	RevertError   string `json:"revert_error,omitempty"`
 }
 

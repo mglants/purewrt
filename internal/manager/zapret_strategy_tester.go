@@ -65,10 +65,10 @@ type ZapretStrategyTestOptions struct {
 }
 
 type ZapretSiteResult struct {
-	Site         string `json:"site"`
-	IP           string `json:"ip"`
-	Baseline     string `json:"baseline"`      // ok | fail
-	WithStrategy string `json:"with_strategy"` // ok | fail
+	Site          string `json:"site"`
+	IP            string `json:"ip"`
+	Baseline      string `json:"baseline"`      // ok | fail
+	WithStrategy  string `json:"with_strategy"` // ok | fail
 	Verdict       string `json:"verdict"`       // fixed | already-ok | still-blocked | unresolved
 	AppconnectMs  int    `json:"appconnect_ms"`
 	DownloadBytes int    `json:"download_bytes"` // bytes pulled in download-probe mode (0 in handshake mode)

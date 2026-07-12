@@ -38,9 +38,9 @@ const (
 
 	netCheckProbeGroup = "NetCheckProbe"
 
-	defaultNetCheckBytes = 10 << 20 // 10 MiB interactive default
-	slowKbps             = 1000     // < 1 Mbps proxy throughput → "slow"
-	throttledKbps        = 500      // per-node: RTT-ok but < this → "throttled"
+	defaultNetCheckBytes = 10 << 20        // 10 MiB interactive default
+	slowKbps             = 1000            // < 1 Mbps proxy throughput → "slow"
+	throttledKbps        = 500             // per-node: RTT-ok but < this → "throttled"
 	foreignDirectTimeout = 5 * time.Second // informational censorship probe — short, never gates verdict
 )
 
@@ -71,20 +71,20 @@ type NodeResult struct {
 // NetCheckReport is the full structured result (JSON for rpcd/metrics; the
 // CLI also renders it via FormatNetCheck).
 type NetCheckReport struct {
-	Mode           string                  `json:"mode"` // proxy|vpn_only|zapret_only|direct
-	Warnings       []string                `json:"warnings,omitempty"`
-	Services       []ServiceStatus         `json:"services,omitempty"`
-	Layers         []LayerResult           `json:"layers"`
+	Mode           string                   `json:"mode"` // proxy|vpn_only|zapret_only|direct
+	Warnings       []string                 `json:"warnings,omitempty"`
+	Services       []ServiceStatus          `json:"services,omitempty"`
+	Layers         []LayerResult            `json:"layers"`
 	Download       checker.ThroughputResult `json:"download"`
 	Upload         checker.ThroughputResult `json:"upload"`
 	DirectDomestic checker.ThroughputResult `json:"direct_domestic"`
 	ForeignDirect  checker.ThroughputResult `json:"foreign_direct"`
-	DNS            checker.DNSResult       `json:"dns"`
-	Blocking       *checker.BlockingReport `json:"blocking,omitempty"`
-	Nodes          []NodeResult            `json:"nodes,omitempty"`
-	Verdict        string                  `json:"verdict"` // ok|degraded|broken
-	BrokenLayer    string                  `json:"broken_layer,omitempty"`
-	Diagnosis      string                  `json:"diagnosis"`
+	DNS            checker.DNSResult        `json:"dns"`
+	Blocking       *checker.BlockingReport  `json:"blocking,omitempty"`
+	Nodes          []NodeResult             `json:"nodes,omitempty"`
+	Verdict        string                   `json:"verdict"` // ok|degraded|broken
+	BrokenLayer    string                   `json:"broken_layer,omitempty"`
+	Diagnosis      string                   `json:"diagnosis"`
 }
 
 // NetCheck runs the diagnostic and records metrics. The caller (CLI/cron)

@@ -20,13 +20,13 @@ import (
 // target may succeed, fail, or be skipped independently — the call as a
 // whole returns no error if at least one target succeeded.
 type GeoRefreshResult struct {
-	Targets    []GeoRefreshTarget `json:"targets"`
-	ReloadOK   bool               `json:"reload_ok"`
-	ReloadErr  string             `json:"reload_error,omitempty"`
+	Targets   []GeoRefreshTarget `json:"targets"`
+	ReloadOK  bool               `json:"reload_ok"`
+	ReloadErr string             `json:"reload_error,omitempty"`
 }
 
 type GeoRefreshTarget struct {
-	Name    string `json:"name"`    // "geoip" | "geosite" | "mmdb"
+	Name    string `json:"name"` // "geoip" | "geosite" | "mmdb"
 	URL     string `json:"url"`
 	Path    string `json:"path"`
 	Bytes   int    `json:"bytes,omitempty"`

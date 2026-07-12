@@ -182,4 +182,3 @@ func splitNameVersion(s string) (string, string) {
 	}
 	return s, ""
 }
-

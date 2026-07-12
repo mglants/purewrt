@@ -117,9 +117,9 @@ func TestParseConntrack_Malformed(t *testing.T) {
 	for _, line := range []string{
 		"",
 		"garbage",
-		"ipv4 2 icmp 1 30",                  // wrong proto
-		"ipv4 2 tcp 6 53 src=incomplete",    // incomplete tuple
-		"# header line",                     // not a real entry
+		"ipv4 2 icmp 1 30",               // wrong proto
+		"ipv4 2 tcp 6 53 src=incomplete", // incomplete tuple
+		"# header line",                  // not a real entry
 	} {
 		if got := parseConntrackLine(line); got != nil {
 			t.Errorf("expected nil for %q; got %+v", line, got)
@@ -305,13 +305,13 @@ func TestIsBogonIPv4(t *testing.T) {
 		"104.18.37.127",
 		"142.250.147.188",
 		"18.140.32.7",
-		"100.63.255.255", // just below CGNAT
-		"100.128.0.0",    // just above CGNAT
-		"99.255.255.255", // public
-		"192.0.1.0",      // not 192.0.0/24 or 192.0.2/24
-		"192.1.0.0",      // not 192.0.x range
-		"203.0.114.1",    // not TEST-NET-3
-		"239.255.255.249",// still multicast → bogon; sanity-check the boundary
+		"100.63.255.255",  // just below CGNAT
+		"100.128.0.0",     // just above CGNAT
+		"99.255.255.255",  // public
+		"192.0.1.0",       // not 192.0.0/24 or 192.0.2/24
+		"192.1.0.0",       // not 192.0.x range
+		"203.0.114.1",     // not TEST-NET-3
+		"239.255.255.249", // still multicast → bogon; sanity-check the boundary
 	}
 	for _, ip := range publics {
 		want := false
@@ -355,7 +355,7 @@ func TestExtractTLSSNI_NoSNI(t *testing.T) {
 func TestExtractTLSSNI_BadInput(t *testing.T) {
 	for _, b := range [][]byte{
 		nil,
-		{0x16},                // too short
+		{0x16},                         // too short
 		{0x17, 0x03, 0x03, 0x00, 0x10}, // wrong content type
 		{0x16, 0x03, 0x03, 0x00, 0x01, 0x02 /* not ClientHello */},
 	} {
@@ -386,11 +386,11 @@ func buildClientHelloWithSNI(name string) []byte {
 	extLen := len(exts)
 
 	// ClientHello body
-	body := []byte{0x03, 0x03}                   // version
-	body = append(body, make([]byte, 32)...)     // random
-	body = append(body, 0x00)                    // sessionid len = 0
-	body = append(body, 0x00, 0x02, 0x00, 0x2f)  // cipher_suites: len=2, one suite
-	body = append(body, 0x01, 0x00)              // compression_methods: len=1, NULL
+	body := []byte{0x03, 0x03}                  // version
+	body = append(body, make([]byte, 32)...)    // random
+	body = append(body, 0x00)                   // sessionid len = 0
+	body = append(body, 0x00, 0x02, 0x00, 0x2f) // cipher_suites: len=2, one suite
+	body = append(body, 0x01, 0x00)             // compression_methods: len=1, NULL
 	body = append(body, byte(extLen>>8), byte(extLen))
 	body = append(body, exts...)
 
@@ -515,7 +515,7 @@ func TestParseICMP_SourceAttribution(t *testing.T) {
 		icmp[0] = 3  // type
 		icmp[1] = 13 // communication admin-prohibited — classic DPI signature
 		icmp[8] = 0x45
-		icmp[9+8] = 6                              // proto = tcp
+		icmp[9+8] = 6                             // proto = tcp
 		copy(icmp[24:28], []byte{18, 140, 32, 7}) // inner dest 18.140.32.7
 		return icmp
 	}

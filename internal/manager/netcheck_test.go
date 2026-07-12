@@ -134,9 +134,9 @@ func TestSynthesizeZapretVerdicts(t *testing.T) {
 func TestSlugify(t *testing.T) {
 	cases := map[string]string{
 		"🇵🇱 ♾️ grpc YTRU vpn5-frind2-pl-itdc": "grpc_ytru_vpn5-frind2-pl-itdc",
-		"plain":                                "plain",
-		"🇱🇻♾️THROTTL grpc vpn4-lv-veesp":       "throttl_grpc_vpn4-lv-veesp",
-		"":                                     "node",
+		"plain": "plain",
+		"🇱🇻♾️THROTTL grpc vpn4-lv-veesp": "throttl_grpc_vpn4-lv-veesp",
+		"": "node",
 	}
 	for in, want := range cases {
 		if got := slugify(in); got != want {

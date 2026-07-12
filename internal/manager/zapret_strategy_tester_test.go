@@ -40,8 +40,8 @@ func TestZapretVerdict(t *testing.T) {
 		verdict               string
 		wantPassed, wantFixed bool
 	}{
-		{false, true, "fixed", true, true},        // strategy unblocked a blocked site
-		{true, true, "already-ok", true, false},   // site worked direct anyway
+		{false, true, "fixed", true, true},      // strategy unblocked a blocked site
+		{true, true, "already-ok", true, false}, // site worked direct anyway
 		{false, false, "still-blocked", false, false},
 		{true, false, "still-blocked", false, false}, // regressed: worked direct, fails with strategy
 	}

@@ -25,16 +25,16 @@ import (
 type MihomoStatusResult struct {
 	Running            bool      `json:"running"`
 	PID                int       `json:"pid,omitempty"`
-	Version            string    `json:"version,omitempty"`         // mihomo's /version JSON `version` field
-	Meta               bool      `json:"meta,omitempty"`            // /version `meta` field — true for Mihomo Meta forks
-	StartedAt          time.Time `json:"started_at,omitempty"`      // parsed from /proc/<pid>/stat boot offset
+	Version            string    `json:"version,omitempty"`    // mihomo's /version JSON `version` field
+	Meta               bool      `json:"meta,omitempty"`       // /version `meta` field — true for Mihomo Meta forks
+	StartedAt          time.Time `json:"started_at,omitempty"` // parsed from /proc/<pid>/stat boot offset
 	UptimeSeconds      int64     `json:"uptime_seconds,omitempty"`
-	Connections        int       `json:"connections"`               // /connections snapshot length
-	DNSMode            string    `json:"dns_mode,omitempty"`        // from UCI, not the runtime — they should match after apply
+	Connections        int       `json:"connections"`        // /connections snapshot length
+	DNSMode            string    `json:"dns_mode,omitempty"` // from UCI, not the runtime — they should match after apply
 	ExternalController string    `json:"external_controller,omitempty"`
-	MihomoBin          string    `json:"mihomo_bin,omitempty"`      // currently-configured binary path (UCI)
-	BinarySource       string    `json:"binary_source,omitempty"`   // "package" | "github" — derived from MihomoBin location
-	Error              string    `json:"error,omitempty"`           // top-level error message, e.g. when /version is unreachable
+	MihomoBin          string    `json:"mihomo_bin,omitempty"`    // currently-configured binary path (UCI)
+	BinarySource       string    `json:"binary_source,omitempty"` // "package" | "github" — derived from MihomoBin location
+	Error              string    `json:"error,omitempty"`         // top-level error message, e.g. when /version is unreachable
 }
 
 // MihomoStatus collects the status from /proc + the external controller.

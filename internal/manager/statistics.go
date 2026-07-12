@@ -86,10 +86,10 @@ type DNSMasqSetStatistics struct {
 	Error   string              `json:"error,omitempty"`
 	// HitPackets / HitBytes — same shape as NFTSetStatistics; dynamic (dns_*)
 	// sets each get their own counter via the consumer rules that match them.
-	HitPackets uint64 `json:"hit_packets"`
-	HitBytes   uint64 `json:"hit_bytes"`
-	Sample  []string            `json:"sample,omitempty"`
-	Limited bool                `json:"limited,omitempty"`
+	HitPackets uint64   `json:"hit_packets"`
+	HitBytes   uint64   `json:"hit_bytes"`
+	Sample     []string `json:"sample,omitempty"`
+	Limited    bool     `json:"limited,omitempty"`
 }
 
 type DNSMasqSetElement struct {

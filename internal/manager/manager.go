@@ -37,6 +37,7 @@ const (
 	initDnsmasq    = "/etc/init.d/dnsmasq"
 	initMihomo     = "/etc/init.d/mihomo"
 	initMwan3      = "/etc/init.d/mwan3"
+	initEasytier   = "/etc/init.d/purewrt-easytier"
 	libexecPeerDNS = "/usr/libexec/purewrt-peerdns"
 )
 
@@ -2071,6 +2072,28 @@ func (m Manager) applyServiceRestarts(c config.Config, groups generator.Generati
 		log.Debug("apply: mwan3 reload skipped mode=%s integrated_rules=%v", c.Mwan3.Mode, c.Mwan3.IntegratedRules)
 	} else {
 		log.Debug("apply: mwan3 reload skipped mwan3 group unchanged")
+	}
+	// Friend-mesh overlay daemon. Best-effort like the companion package it
+	// belongs to: a missing init script (easytier not installed) or a failed
+	// restart must not roll back the whole apply — mihomo/firewall state is
+	// already correct, the overlay just stays down until the package appears.
+	if groups.Mesh {
+		if _, err := os.Stat(initEasytier); err != nil {
+			log.Debug("apply: easytier restart skipped (init script missing)")
+		} else if c.MeshActive() {
+			if err := m.runServiceRestart(c, r, initEasytier, "enable"); err != nil {
+				log.Warn("apply: easytier enable failed: %v", err)
+			}
+			if err := m.runServiceRestart(c, r, initEasytier, "restart"); err != nil {
+				log.Warn("apply: easytier restart failed: %v", err)
+			} else {
+				log.Info("apply: easytier restart complete")
+			}
+		} else {
+			_ = m.runServiceRestart(c, r, initEasytier, "stop")
+			_ = m.runServiceRestart(c, r, initEasytier, "disable")
+			log.Info("apply: easytier stopped (mesh inactive)")
+		}
 	}
 	return nil
 }

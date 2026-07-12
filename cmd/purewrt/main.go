@@ -227,6 +227,7 @@ var groupOrder = []string{
 	"Geo & IP databases",
 	"Config import/export",
 	"OONI",
+	"Friend mesh",
 	"System",
 }
 
@@ -1000,6 +1001,81 @@ var commands = []command{
 		run: func(m manager.Manager) {
 			printJSON(m.ZapretStatus())
 		}},
+	{name: "mesh-init", group: "Friend mesh",
+		args: "[--name <node>]",
+		desc: "Create a new friend-mesh group and print its sync-code",
+		run: func(m manager.Manager) {
+			withOperationLockCoalesce(func() {
+				res, err := m.MeshInit(flagValue("--name"))
+				fatal(err)
+				printJSON(res)
+			})
+		}},
+	{name: "mesh-join", group: "Friend mesh",
+		args: "<sync-code> [--name <node>]",
+		desc: "Join a friend-mesh group from a pasted sync-code",
+		run: func(m manager.Manager) {
+			need(3)
+			withOperationLockCoalesce(func() {
+				res, err := m.MeshJoin(os.Args[2], flagValue("--name"))
+				fatal(err)
+				printJSON(res)
+			})
+		}},
+	{name: "mesh-leave", group: "Friend mesh",
+		args: "",
+		desc: "Leave the mesh: clear membership + peers, tear down the overlay",
+		run: func(m manager.Manager) {
+			withOperationLockCoalesce(func() {
+				fatal(m.MeshLeave())
+				printJSON(map[string]bool{"left": true})
+			})
+		}},
+	{name: "mesh-code", group: "Friend mesh",
+		args: "",
+		desc: "Reprint the group sync-code (contains the group secrets)",
+		run: func(m manager.Manager) {
+			res, err := m.MeshCode()
+			fatal(err)
+			printJSON(res)
+		}},
+	{name: "mesh-rotate", group: "Friend mesh",
+		args: "",
+		desc: "Rotate group secrets (kicks anyone without the new code) and print it",
+		run: func(m manager.Manager) {
+			withOperationLockCoalesce(func() {
+				res, err := m.MeshRotate()
+				fatal(err)
+				printJSON(res)
+			})
+		}},
+	{name: "mesh-status", group: "Friend mesh",
+		args: "",
+		desc: "Mesh status: daemon, overlay IP, persisted peers + liveness (JSON)",
+		run: func(m manager.Manager) {
+			printJSON(m.MeshStatus())
+		}},
+	{name: "mesh-installed", group: "Friend mesh",
+		args: "",
+		desc: "Report whether easytier is installed (JSON)",
+		run: func(m manager.Manager) {
+			// Stat-based gate for the LuCI mesh page — zapret_installed twin.
+			printJSON(map[string]bool{"installed": m.MeshInstalled()})
+		}},
+	{name: "mesh-peer-set", group: "Friend mesh",
+		args: "<name> enabled=0|1",
+		desc: "Enable/disable consuming one friend's exit",
+		run: func(m manager.Manager) {
+			need(4)
+			v := os.Args[3]
+			if v != "enabled=0" && v != "enabled=1" {
+				fatal(fmt.Errorf("expected enabled=0 or enabled=1, got %q", v))
+			}
+			withOperationLockCoalesce(func() {
+				fatal(m.MeshPeerSet(os.Args[2], v == "enabled=1"))
+				printJSON(map[string]bool{"saved": true})
+			})
+		}},
 	{name: "ooni-installed", group: "OONI",
 		args: "",
 		desc: "Report whether ooniprobe is installed (JSON)",
@@ -1556,6 +1632,21 @@ func writeFlowSection(b *strings.Builder, title string, flows []manager.FlowSumm
 	}
 	b.WriteString("\n")
 }
+
+// flagValue scans os.Args for `<flag> <value>` or `<flag>=<value>` and
+// returns the value, or "" when absent.
+func flagValue(flag string) string {
+	for i, a := range os.Args {
+		if a == flag && i+1 < len(os.Args) {
+			return os.Args[i+1]
+		}
+		if strings.HasPrefix(a, flag+"=") {
+			return a[len(flag)+1:]
+		}
+	}
+	return ""
+}
+
 func need(n int) {
 	if len(os.Args) < n {
 		usage()
