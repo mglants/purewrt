@@ -1144,6 +1144,11 @@ func validateConfigHardening(c config.Config) error {
 			return err
 		}
 	}
+	// The mesh TUN name is emitted into raw nftables (quoted), fw4 config
+	// and easytier TOML — keep it to plain interface characters.
+	if c.MeshActive() && c.Mesh.DeviceName != "" && !safeIfaceRE.MatchString(c.Mesh.DeviceName) {
+		return fmt.Errorf("mesh has unsafe device name %q", c.Mesh.DeviceName)
+	}
 	if err := validateZapretStrategies(c); err != nil {
 		return err
 	}

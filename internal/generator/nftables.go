@@ -278,8 +278,36 @@ func NFTablesWithNative(c config.Config, native map[string][]string) []byte {
 	if c.Settings.RouterOutputProxy {
 		writeOutputChain(&b, c, includeIPv6)
 	}
+	writeMeshLimiterChains(&b, c)
 	b.WriteString("}\n")
 	return []byte(b.String())
+}
+
+// writeMeshLimiterChains polices friend exit traffic when exit_max_mbit is
+// set: two filter-hook chains cap the mesh listener's throughput on the
+// overlay TUN, one per direction. tcp AND udp are matched — the ss listener
+// is udp-enabled, so a tcp-only cap would be trivially bypassed. Deliberately
+// NOT gated on meshExitViable (that needs the enabled-provider list): if the
+// mihomo listener isn't emitted the rules are inert, and nftables stays
+// decoupled from provider state. fw4's zone stays the reachability gate —
+// this table only rate-limits; a drop in any hooked chain wins. The re-add-
+// table prologue resets the limiter's token bucket on every apply, which
+// just grants a momentary burst allowance.
+//
+// A burstless byte policer makes TCP goodput settle ~10-20% under the
+// nominal cap; `burst` is the tuning knob if that ever matters.
+func writeMeshLimiterChains(b *strings.Builder, c config.Config) {
+	if !c.MeshActive() || !c.Mesh.ExitEnabled || c.Mesh.ListenPort <= 0 || c.Mesh.ExitMaxMbit <= 0 {
+		return
+	}
+	// 1 Mbit/s = 125000 bytes/s — exact, avoids nft's 1024-based units.
+	rate := itoa(c.Mesh.ExitMaxMbit * 125000)
+	port := itoa(c.Mesh.ListenPort)
+	dev := c.Mesh.DeviceName
+	b.WriteString("\n  chain mesh_limit_in {\n    type filter hook input priority filter; policy accept;\n")
+	b.WriteString("    iifname \"" + dev + "\" meta l4proto { tcp, udp } th dport " + port + " limit rate over " + rate + " bytes/second counter drop\n  }\n")
+	b.WriteString("\n  chain mesh_limit_out {\n    type filter hook output priority filter; policy accept;\n")
+	b.WriteString("    oifname \"" + dev + "\" meta l4proto { tcp, udp } th sport " + port + " limit rate over " + rate + " bytes/second counter drop\n  }\n")
 }
 
 // writeOutputChain emits the OUTPUT-side chain that proxies router-originated

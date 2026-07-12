@@ -297,15 +297,91 @@ func TestMeshFingerprintGroupSemantics(t *testing.T) {
 	}
 }
 
-// The overlay is invisible to nftables: mesh inbound terminates at the local
-// mihomo listener (fw4 input path), and overlay egress rides the friend ss
-// proxies — TPROXY must not see any of it.
+// The overlay is invisible to nftables while no throughput cap is set: mesh
+// inbound terminates at the local mihomo listener (fw4 input path), and
+// overlay egress rides the friend ss proxies — TPROXY must not see any of it.
 func TestMeshLeavesNFTablesUntouched(t *testing.T) {
 	off := NFTables(config.Default())
 	on := joinedMesh()
 	on.MeshPeers = []config.MeshPeer{{HWID: "purewrt-bbbbbbbbbbbbbbbbbbbbbbbb", Name: "beta", Enabled: true, OverlayIP: "10.126.126.2", ListenPort: 7897, ExitOffered: true}}
 	got := NFTables(on)
 	if string(off) != string(got) {
-		t.Error("mesh config altered nftables output")
+		t.Error("capless mesh config altered nftables output")
+	}
+}
+
+func TestMeshExitRateLimiterChains(t *testing.T) {
+	capped := joinedMesh()
+	capped.Mesh.ExitMaxMbit = 100
+
+	cases := []struct {
+		name string
+		c    config.Config
+		want bool
+	}{
+		{"capped", capped, true},
+		{"no cap", joinedMesh(), false},
+		{"exit disabled", func() config.Config { c := capped; c.Mesh.ExitEnabled = false; return c }(), false},
+		{"mesh inactive", func() config.Config { c := capped; c.Mesh.NetworkName = ""; return c }(), false},
+	}
+	for _, tc := range cases {
+		out := string(NFTables(tc.c))
+		has := strings.Contains(out, "chain mesh_limit_in")
+		if has != tc.want {
+			t.Errorf("%s: limiter chains present=%v want=%v:\n%s", tc.name, has, tc.want, out)
+		}
+	}
+
+	out := string(NFTables(capped))
+	for _, want := range []string{
+		"chain mesh_limit_in {\n    type filter hook input priority filter; policy accept;",
+		"chain mesh_limit_out {\n    type filter hook output priority filter; policy accept;",
+		// 100 Mbit/s = 12_500_000 bytes/s, decimal — not nft's 1024-based mbytes.
+		`iifname "pwmesh0" meta l4proto { tcp, udp } th dport 7897 limit rate over 12500000 bytes/second counter drop`,
+		`oifname "pwmesh0" meta l4proto { tcp, udp } th sport 7897 limit rate over 12500000 bytes/second counter drop`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("limiter output missing %q:\n%s", want, out)
+		}
+	}
+
+	custom := capped
+	custom.Mesh.DeviceName = "pwx1"
+	custom.Mesh.ListenPort = 7911
+	custom.Mesh.ExitMaxMbit = 8
+	out = string(NFTables(custom))
+	if !strings.Contains(out, `iifname "pwx1" meta l4proto { tcp, udp } th dport 7911 limit rate over 1000000 bytes/second counter drop`) {
+		t.Errorf("custom device/port/cap not honoured:\n%s", out)
+	}
+}
+
+func TestMeshExitCapFingerprintSemantics(t *testing.T) {
+	hashes := func(c config.Config) map[string]string {
+		fp, err := currentGenerationFingerprint(c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fp.Groups
+	}
+	base := hashes(joinedMesh())
+
+	// exit_max_mbit shapes purewrt.nft — it must dirty openwrt_bundle.
+	capped := joinedMesh()
+	capped.Mesh.ExitMaxMbit = 50
+	got := hashes(capped)
+	if got["openwrt_bundle"] == base["openwrt_bundle"] {
+		t.Error("exit_max_mbit change did not dirty openwrt_bundle")
+	}
+
+	// exit_filter is mihomo-only — it must dirty mihomo but NOT the
+	// expensive openwrt_bundle (dnsmasq fragments) regeneration.
+	filtered := joinedMesh()
+	filtered.Mesh.ExitFilter = "(?i)NL"
+	got = hashes(filtered)
+	if got["mihomo"] == base["mihomo"] {
+		t.Error("exit_filter change did not dirty mihomo")
+	}
+	if got["openwrt_bundle"] != base["openwrt_bundle"] {
+		t.Error("exit_filter change dirtied openwrt_bundle")
 	}
 }

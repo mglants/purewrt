@@ -83,6 +83,23 @@ func meshPeerFPEntries(c config.Config) []meshPeerFPEntry {
 	return out
 }
 
+// meshNFTFPEntry is the subset of Mesh fields that shape the nftables output
+// (the exit_max_mbit limiter chains). A precision subset — like
+// meshPeerFPEntry — so mihomo-only mesh edits (exit_filter, node_name, …)
+// can't dirty the expensive openwrt_bundle regeneration.
+type meshNFTFPEntry struct {
+	Enabled     bool   `json:"enabled"`
+	NetworkName string `json:"network_name"`
+	ExitEnabled bool   `json:"exit_enabled"`
+	ListenPort  int    `json:"listen_port"`
+	DeviceName  string `json:"device_name"`
+	ExitMaxMbit int    `json:"exit_max_mbit"`
+}
+
+func meshNFTFP(m config.Mesh) meshNFTFPEntry {
+	return meshNFTFPEntry{Enabled: m.Enabled, NetworkName: m.NetworkName, ExitEnabled: m.ExitEnabled, ListenPort: m.ListenPort, DeviceName: m.DeviceName, ExitMaxMbit: m.ExitMaxMbit}
+}
+
 type ruleProviderFPEntry struct {
 	Name        string `json:"name"`
 	Enabled     bool   `json:"enabled"`
@@ -170,7 +187,7 @@ func generationGroupHashes(c config.Config, in generationFingerprintInput) (map[
 	proxyProviders := c.ProxyProviders
 	groups := map[string]any{
 		"mihomo":         map[string]any{"settings": in.Settings, "dns": in.DNS, "sections": in.Sections, "proxy_providers": proxyProviders, "rule_providers": in.RuleProvider, "vpns": in.VPNs, "mesh": in.Mesh, "mesh_peers": in.MeshPeers},
-		"openwrt_bundle": map[string]any{"settings": in.Settings, "dns": in.DNS, "sections": openWrtSections, "rule_providers": in.RuleProvider, "bypass": in.Bypass, "vpns": in.VPNs, "devices": in.Devices, "zapret": in.Zapret, "ooni": in.OONI},
+		"openwrt_bundle": map[string]any{"settings": in.Settings, "dns": in.DNS, "sections": openWrtSections, "rule_providers": in.RuleProvider, "bypass": in.Bypass, "vpns": in.VPNs, "devices": in.Devices, "zapret": in.Zapret, "ooni": in.OONI, "mesh_nft": meshNFTFP(in.Mesh)},
 		"firewall":       map[string]any{"dns_hijack": c.DNS.HijackLANDNS, "lan_source_zones": c.Settings.LANSourceZones, "fwmark": c.Settings.FwMark, "fwmark_mask": c.Settings.FwMarkMask, "mesh": in.Mesh},
 		"mwan3":          map[string]any{"mwan3": in.Mwan3, "proxy_providers": proxyProviders},
 		"zapret":         map[string]any{"zapret": in.Zapret, "sections": openWrtSections},

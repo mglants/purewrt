@@ -34,6 +34,7 @@ func TestMeshConfigRoundTrip(t *testing.T) {
 	// sections' proxy_filter.
 	c.Mesh.ExitFilter = `^(?i)(NL|DE).*prem`
 	c.Mesh.ExitExcludeFilter = "(?i)expire|traffic"
+	c.Mesh.ExitMaxMbit = 50
 	c.Mesh.ListenPort = 7899 // non-default, must survive
 	c.MeshPeers = []MeshPeer{
 		{HWID: "purewrt-bbbbbbbbbbbbbbbbbbbbbbbb", Name: "router-beta", Enabled: true, OverlayIP: "10.126.126.2", ListenPort: 7897, ExitOffered: true, LastSeen: "2026-07-12T10:00:00Z"},
@@ -55,7 +56,8 @@ func TestMeshConfigRoundTrip(t *testing.T) {
 	if got.Mesh.Code != want.Code || got.Mesh.NetworkName != want.NetworkName ||
 		got.Mesh.PSK == "" || got.Mesh.NetworkSecret == "" ||
 		got.Mesh.NodeName != want.NodeName || got.Mesh.ListenPort != 7899 ||
-		got.Mesh.ExitFilter != want.ExitFilter || got.Mesh.ExitExcludeFilter != want.ExitExcludeFilter {
+		got.Mesh.ExitFilter != want.ExitFilter || got.Mesh.ExitExcludeFilter != want.ExitExcludeFilter ||
+		got.Mesh.ExitMaxMbit != want.ExitMaxMbit {
 		t.Fatalf("mesh mismatch\ngot:  %#v\nwant: %#v", got.Mesh, want)
 	}
 	if !reflect.DeepEqual(got.Mesh.ExtraPeers, want.ExtraPeers) {
@@ -80,7 +82,7 @@ func TestMeshSerializeMinimal(t *testing.T) {
 	c.MeshPeers = []MeshPeer{{HWID: "purewrt-bbbbbbbbbbbbbbbbbbbbbbbb", Name: "beta", Enabled: true, OverlayIP: "10.126.126.2", ListenPort: 7897, ExitOffered: true}}
 
 	out := string(Serialize(c))
-	for _, banned := range []string{"psk", "network_secret", "network_name", "cred_salt", "listen_port", "api_mesh_port", "device_name", "easytier_bin", "rpc_portal", "sync_cron", "extra_peer", "exit_filter", "exit_exclude_filter"} {
+	for _, banned := range []string{"psk", "network_secret", "network_name", "cred_salt", "listen_port", "api_mesh_port", "device_name", "easytier_bin", "rpc_portal", "sync_cron", "extra_peer", "exit_filter", "exit_exclude_filter", "exit_max_mbit"} {
 		if strings.Contains(out, "option "+banned) || strings.Contains(out, "list "+banned) {
 			t.Errorf("minimal mesh config still writes %q:\n%s", banned, out)
 		}

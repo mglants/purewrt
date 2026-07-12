@@ -649,6 +649,9 @@ func writeMesh(b *bytes.Buffer, m Mesh) {
 	if m.ExitExcludeFilter != d.ExitExcludeFilter {
 		opt(b, "exit_exclude_filter", m.ExitExcludeFilter)
 	}
+	if m.ExitMaxMbit != d.ExitMaxMbit {
+		opti(b, "exit_max_mbit", m.ExitMaxMbit)
+	}
 	if m.ListenPort != d.ListenPort {
 		opti(b, "listen_port", m.ListenPort)
 	}

@@ -189,6 +189,21 @@ func TestValidateRejectsReservedProxyGroupNames(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsUnsafeMeshDeviceName(t *testing.T) {
+	c := config.Default()
+	c.Mesh.Enabled = true
+	c.Mesh.NetworkName = "pwmesh-x" // MeshActive
+	c.Mesh.DeviceName = `pw"m0`     // would break the quoted nft iifname
+	err := validateConfigHardening(c)
+	if err == nil || !strings.Contains(err.Error(), "unsafe device name") {
+		t.Fatalf("expected unsafe mesh device name error, got %v", err)
+	}
+	c.Mesh.DeviceName = "pwmesh0"
+	if err := validateConfigHardening(c); err != nil {
+		t.Fatalf("safe mesh device name rejected: %v", err)
+	}
+}
+
 func TestValidateRejectsDuplicateProxyGroupNames(t *testing.T) {
 	c := config.Default()
 	c.Sections = []config.Section{

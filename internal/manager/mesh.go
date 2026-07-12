@@ -281,6 +281,7 @@ type MeshStatusReport struct {
 	ExitEnabled       bool             `json:"exit_enabled"`
 	ExitFilter        string           `json:"exit_filter,omitempty"`
 	ExitExcludeFilter string           `json:"exit_exclude_filter,omitempty"`
+	ExitMaxMbit       int              `json:"exit_max_mbit"`
 	DaemonRunning     bool             `json:"daemon_running"`
 	OverlayIP         string           `json:"overlay_ip,omitempty"`
 	CommunityPeers    []string         `json:"community_peers"`
@@ -380,6 +381,7 @@ func (m Manager) MeshStatus() MeshStatusReport {
 	rep.ExitEnabled = c.Mesh.ExitEnabled
 	rep.ExitFilter = c.Mesh.ExitFilter
 	rep.ExitExcludeFilter = c.Mesh.ExitExcludeFilter
+	rep.ExitMaxMbit = c.Mesh.ExitMaxMbit
 	rep.CommunityPeers = c.Mesh.CommunityPeers
 	live := map[string]mesh.OverlayPeer{}
 	if rep.Active && rep.Installed {
