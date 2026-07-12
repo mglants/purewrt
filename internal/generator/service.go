@@ -17,14 +17,15 @@ import (
 )
 
 type GeneratedPaths struct {
-	MihomoConfig         string
-	DNSMasqFile          string
-	DNSMasqFragmentDir   string
-	NFTFile              string
-	NFTSetsFile          string
-	FirewallFile         string
-	Mwan3File            string
-	ZapretEnv            string
+	MihomoConfig       string
+	DNSMasqFile        string
+	DNSMasqFragmentDir string
+	NFTFile            string
+	NFTSetsFile        string
+	FirewallFile       string
+	Mwan3File          string
+	ZapretEnv          string
+	EasytierConfig     string
 }
 
 // uciConfigDir is the directory holding fw4/mwan3 UCI config files that
@@ -55,20 +56,24 @@ func DefaultGeneratedPaths(c config.Config) GeneratedPaths {
 	dnsmasqFile := filepath.Join(runtimeGeneratedDir, "purewrt.conf")
 	nftFile := filepath.Join(persistentGeneratedDir, "purewrt.nft")
 	nftSetsFile := filepath.Join(runtimeGeneratedDir, "purewrt-sets.nft")
-	return GeneratedPaths{MihomoConfig: mihomoConfig, DNSMasqFile: dnsmasqFile, DNSMasqFragmentDir: c.Settings.DNSMasqIncludeDir, NFTFile: nftFile, NFTSetsFile: nftSetsFile, FirewallFile: filepath.Join(uciConfigDir(), "purewrt-firewall.generated"), Mwan3File: filepath.Join(uciConfigDir(), "purewrt-mwan3.generated"), ZapretEnv: filepath.Join(persistentGeneratedDir, "zapret.env")}
+	// EasytierConfig lives in the persistent generated dir (not tmpfs): the
+	// easytier init script's procd file-watch needs it present at boot
+	// before the first apply runs.
+	return GeneratedPaths{MihomoConfig: mihomoConfig, DNSMasqFile: dnsmasqFile, DNSMasqFragmentDir: c.Settings.DNSMasqIncludeDir, NFTFile: nftFile, NFTSetsFile: nftSetsFile, FirewallFile: filepath.Join(uciConfigDir(), "purewrt-firewall.generated"), Mwan3File: filepath.Join(uciConfigDir(), "purewrt-mwan3.generated"), ZapretEnv: filepath.Join(persistentGeneratedDir, "zapret.env"), EasytierConfig: filepath.Join(persistentGeneratedDir, "easytier.toml")}
 }
 
 func StagedGeneratedPaths(c config.Config, stageDir string) GeneratedPaths {
 	live := DefaultGeneratedPaths(c)
 	return GeneratedPaths{
-		MihomoConfig:         filepath.Join(stageDir, "mihomo.yaml"),
-		DNSMasqFile:          filepath.Join(stageDir, filepath.Base(live.DNSMasqFile)),
-		DNSMasqFragmentDir:   filepath.Join(stageDir, "dnsmasq.d"),
-		NFTFile:              filepath.Join(stageDir, filepath.Base(live.NFTFile)),
-		NFTSetsFile:          filepath.Join(stageDir, filepath.Base(live.NFTSetsFile)),
-		FirewallFile:         filepath.Join(stageDir, filepath.Base(live.FirewallFile)),
-		Mwan3File:            filepath.Join(stageDir, filepath.Base(live.Mwan3File)),
-		ZapretEnv:            filepath.Join(stageDir, filepath.Base(live.ZapretEnv)),
+		MihomoConfig:       filepath.Join(stageDir, "mihomo.yaml"),
+		DNSMasqFile:        filepath.Join(stageDir, filepath.Base(live.DNSMasqFile)),
+		DNSMasqFragmentDir: filepath.Join(stageDir, "dnsmasq.d"),
+		NFTFile:            filepath.Join(stageDir, filepath.Base(live.NFTFile)),
+		NFTSetsFile:        filepath.Join(stageDir, filepath.Base(live.NFTSetsFile)),
+		FirewallFile:       filepath.Join(stageDir, filepath.Base(live.FirewallFile)),
+		Mwan3File:          filepath.Join(stageDir, filepath.Base(live.Mwan3File)),
+		ZapretEnv:          filepath.Join(stageDir, filepath.Base(live.ZapretEnv)),
+		EasytierConfig:     filepath.Join(stageDir, filepath.Base(live.EasytierConfig)),
 	}
 }
 
@@ -89,6 +94,7 @@ func PromoteGeneratedPathsForGroups(staged, live GeneratedPaths, groups Generati
 		{staged.FirewallFile, live.FirewallFile, 0600, groups.Firewall},
 		{staged.Mwan3File, live.Mwan3File, 0600, groups.Mwan3},
 		{staged.ZapretEnv, live.ZapretEnv, 0644, groups.Zapret},
+		{staged.EasytierConfig, live.EasytierConfig, 0600, groups.Mesh},
 	} {
 		if !f.ok {
 			continue
@@ -100,7 +106,7 @@ func PromoteGeneratedPathsForGroups(staged, live GeneratedPaths, groups Generati
 		}
 		data, err := os.ReadFile(f.from)
 		if err != nil {
-			if os.IsNotExist(err) && (f.from == staged.FirewallFile || f.from == staged.Mwan3File) {
+			if os.IsNotExist(err) && (f.from == staged.FirewallFile || f.from == staged.Mwan3File || f.from == staged.EasytierConfig) {
 				continue
 			}
 			return err
@@ -302,6 +308,20 @@ func WriteAllToResult(c config.Config, paths GeneratedPaths, opt WriteOptions) (
 			res.Changed["zapret"] = changed
 			logWrite(log, "generate: zapret env", paths.ZapretEnv, changed, len(zapret), time.Since(t))
 			metrics.GenerateDurationMS.Observe(float64(time.Since(t).Milliseconds()), "zapret")
+		}
+	}
+	if groups.Mesh {
+		if data := EasytierConfig(c); len(data) > 0 {
+			t := time.Now()
+			if changed, err := system.WriteIfChanged(paths.EasytierConfig, data, 0600); err != nil {
+				return res, err
+			} else {
+				res.Changed["easytier"] = changed
+				logWrite(log, "generate: easytier config", paths.EasytierConfig, changed, len(data), time.Since(t))
+				metrics.GenerateDurationMS.Observe(float64(time.Since(t).Milliseconds()), "easytier")
+			}
+		} else {
+			log.Debug("generate: easytier config skipped mesh inactive")
 		}
 	}
 	if err == nil && !opt.SkipFingerprint {

@@ -71,8 +71,44 @@ func FirewallRules(c config.Config) []byte {
 		b.WriteString("    option dest_port '53'\n")
 		b.WriteString("    option target 'DNAT'\n\n")
 	}
+	writeMeshFirewall(&b, c)
 	if b.Len() == 0 {
 		return nil
 	}
 	return []byte(b.String())
+}
+
+// writeMeshFirewall emits the fw4 zone + rules for the easytier overlay
+// device. Default posture REJECT: forward REJECT means the kernel can never
+// transit packets between the overlay and LAN/WAN (friend traffic terminates
+// at local listeners only — structural loop/abuse prevention), input REJECT
+// means only the explicitly-accepted mesh ports are reachable from friends.
+// Self-cleaning: purewrt_* sections are wholesale-reconciled on apply.
+func writeMeshFirewall(b *strings.Builder, c config.Config) {
+	if !c.MeshActive() {
+		return
+	}
+	m := c.Mesh
+	b.WriteString("config zone 'purewrt_mesh'\n")
+	b.WriteString("    option name 'pwmesh'\n")
+	b.WriteString("    list device '" + m.DeviceName + "'\n")
+	b.WriteString("    option input 'REJECT'\n")
+	b.WriteString("    option forward 'REJECT'\n")
+	b.WriteString("    option output 'ACCEPT'\n\n")
+	if m.ExitEnabled && m.ListenPort > 0 {
+		b.WriteString("config rule 'purewrt_mesh_ss'\n")
+		b.WriteString("    option name 'PureWRT mesh exit (ss)'\n")
+		b.WriteString("    option src 'pwmesh'\n")
+		b.WriteString("    option proto 'tcp udp'\n")
+		b.WriteString("    option dest_port '" + itoa(m.ListenPort) + "'\n")
+		b.WriteString("    option target 'ACCEPT'\n\n")
+	}
+	if m.APIMeshPort > 0 {
+		b.WriteString("config rule 'purewrt_mesh_api'\n")
+		b.WriteString("    option name 'PureWRT mesh api'\n")
+		b.WriteString("    option src 'pwmesh'\n")
+		b.WriteString("    option proto 'tcp'\n")
+		b.WriteString("    option dest_port '" + itoa(m.APIMeshPort) + "'\n")
+		b.WriteString("    option target 'ACCEPT'\n\n")
+	}
 }

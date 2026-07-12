@@ -136,15 +136,28 @@ func renderMihomoBase(c config.Config) []byte {
 	if hasProxySection {
 		b.WriteString("  - name: netcheck-probe\n    type: mixed\n    port: " + itoa(config.DefaultNetCheckProbePort) + "\n    listen: 127.0.0.1\n")
 	}
+	friends := meshFriends(c)
+	meshExit := meshExitViable(c, enabledProviders)
+	// Friend-mesh inbound: a shadowsocks listener friends reach over the
+	// easytier overlay. listen 0.0.0.0 because the overlay IP is
+	// DHCP-dynamic and mihomo may start before pwmesh0 exists — the fw4
+	// mesh zone limits reachability to the overlay device.
+	if meshExit {
+		b.WriteString("  - name: mesh-in\n    type: shadowsocks\n    port: " + itoa(c.Mesh.ListenPort) + "\n    listen: 0.0.0.0\n    cipher: aes-128-gcm\n    password: \"" + meshListenerPassword(c) + "\"\n    udp: true\n")
+	}
 	// VPN interfaces as `direct` outbounds (interface-name binds the socket to
 	// the tunnel). Emitted for every VPN referenced by a section or DNS, so
 	// sections/DNS can pool them with subscription nodes under a proxy group.
-	if vpns := referencedVPNs(c); len(vpns) > 0 {
+	if vpns := referencedVPNs(c); len(vpns) > 0 || len(friends) > 0 {
 		b.WriteString("\nproxies:\n")
 		for _, v := range vpns {
 			// tfo: TCP Fast Open — saves a round trip where the destination
 			// supports it; mihomo falls back to plain TCP otherwise.
 			b.WriteString("  - name: " + vpnProxyName(v.Name) + "\n    type: direct\n    interface-name: " + v.Interface + "\n    tfo: true\n")
+		}
+		// Friend exits: ss outbounds over the easytier overlay.
+		for _, f := range friends {
+			b.WriteString("  - name: " + f.Name + "\n    type: ss\n    server: " + f.IP + "\n    port: " + itoa(f.Port) + "\n    cipher: aes-128-gcm\n    password: \"" + f.Password + "\"\n    udp: true\n")
 		}
 	}
 	b.WriteString("\nproxy-providers:\n")
@@ -177,8 +190,20 @@ func renderMihomoBase(c config.Config) []byte {
 	writeProxyGroup(&b, "DNSProxy", c.DNS.ProxyGroupType, c.DNS.ProxyFilter, c.DNS.ProxyExcludeFilter, c.DNS.ProxyStrategy, "", 0, enabledProviders, resolveVPNMembers(c, c.DNS.VPNs))
 	for _, sec := range c.Sections {
 		if sec.Enabled && sec.Action == "proxy" {
-			writeProxyGroup(&b, sec.ProxyGroup, sec.ProxyGroupType, sec.ProxyFilter, sec.ProxyExcludeFilter, sec.ProxyStrategy, sec.ProxyHealthCheckURL, sec.ProxyHealthCheckInterval, enabledProviders, resolveVPNMembers(c, sec.VPNs))
+			if len(friends) > 0 {
+				// Friends present: the section's own pool moves to
+				// <Group>_local and the public name becomes a fallback
+				// preferring it — IN-NAME rules, LuCI group-select and
+				// NetCheckProbe keep the unchanged public name.
+				writeProxyGroup(&b, sec.ProxyGroup+"_local", sec.ProxyGroupType, sec.ProxyFilter, sec.ProxyExcludeFilter, sec.ProxyStrategy, sec.ProxyHealthCheckURL, sec.ProxyHealthCheckInterval, enabledProviders, resolveVPNMembers(c, sec.VPNs))
+				writeSectionFallbackGroup(&b, sec.ProxyGroup, sec.ProxyHealthCheckURL, sec.ProxyHealthCheckInterval, friends)
+			} else {
+				writeProxyGroup(&b, sec.ProxyGroup, sec.ProxyGroupType, sec.ProxyFilter, sec.ProxyExcludeFilter, sec.ProxyStrategy, sec.ProxyHealthCheckURL, sec.ProxyHealthCheckInterval, enabledProviders, resolveVPNMembers(c, sec.VPNs))
+			}
 		}
+	}
+	if meshExit {
+		writeMeshExitGroup(&b, c, enabledProviders)
 	}
 	if hasProxySection {
 		writeNetCheckProbeGroup(&b, c, enabledProviders)
@@ -191,6 +216,9 @@ func renderMihomoBase(c config.Config) []byte {
 	}
 	if hasProxySection {
 		b.WriteString("  - IN-NAME,netcheck-probe,NetCheckProbe\n")
+	}
+	if meshExit {
+		b.WriteString("  - IN-NAME,mesh-in,MeshExit\n")
 	}
 	catchAll := "DIRECT"
 	if hasCommonGroup(c) {

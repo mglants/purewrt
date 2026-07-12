@@ -48,7 +48,10 @@ func TestMixinMerge_NestedMapMerge(t *testing.T) {
 	if !ok {
 		t.Fatalf("dns is %T, want map", got["dns"])
 	}
-	for _, kv := range []struct{ k string; v any }{
+	for _, kv := range []struct {
+		k string
+		v any
+	}{
 		{"enable", true},
 		{"listen", "127.0.0.1:7874"},
 		{"ipv6", false},

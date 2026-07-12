@@ -30,13 +30,14 @@ type GenerationGroups struct {
 	Mwan3         bool
 	Zapret        bool
 	Policy        bool
+	Mesh          bool
 }
 
 func (g GenerationGroups) Any() bool {
-	return g.Mihomo || g.OpenWrtBundle || g.Firewall || g.Mwan3 || g.Zapret || g.Policy
+	return g.Mihomo || g.OpenWrtBundle || g.Firewall || g.Mwan3 || g.Zapret || g.Policy || g.Mesh
 }
 func (GenerationGroups) All() GenerationGroups {
-	return GenerationGroups{Mihomo: true, OpenWrtBundle: true, Firewall: true, Mwan3: true, Zapret: true, Policy: true}
+	return GenerationGroups{Mihomo: true, OpenWrtBundle: true, Firewall: true, Mwan3: true, Zapret: true, Policy: true, Mesh: true}
 }
 
 type generationGroupCacheStatus struct {
@@ -58,6 +59,28 @@ type generationFingerprintInput struct {
 	Zapret           []config.ZapretProfile  `json:"zapret"`
 	ZapretStrategies []config.ZapretStrategy `json:"zapret_strategies"`
 	OONI             config.OONI             `json:"ooni"`
+	Mesh             config.Mesh             `json:"mesh"`
+	MeshPeers        []meshPeerFPEntry       `json:"mesh_peers"`
+}
+
+// meshPeerFPEntry is the fingerprint-material subset of a MeshPeer:
+// liveness fields (LastSeen/LastError) are deliberately excluded so a
+// mesh-sync heartbeat can't dirty the generation cache.
+type meshPeerFPEntry struct {
+	Name        string `json:"name"`
+	Enabled     bool   `json:"enabled"`
+	OverlayIP   string `json:"overlay_ip"`
+	ListenPort  int    `json:"listen_port"`
+	CredSalt    string `json:"cred_salt"`
+	ExitOffered bool   `json:"exit_offered"`
+}
+
+func meshPeerFPEntries(c config.Config) []meshPeerFPEntry {
+	out := make([]meshPeerFPEntry, 0, len(c.MeshPeers))
+	for _, p := range c.MeshPeers {
+		out = append(out, meshPeerFPEntry{Name: p.Name, Enabled: p.Enabled, OverlayIP: p.OverlayIP, ListenPort: p.ListenPort, CredSalt: p.CredSalt, ExitOffered: p.ExitOffered})
+	}
+	return out
 }
 
 type ruleProviderFPEntry struct {
@@ -112,7 +135,7 @@ func currentGenerationFingerprint(c config.Config) (generationFingerprint, error
 	c.Settings.RuntimeDir = ""
 	c.Settings.MihomoConfig = ""
 	c.Settings.DNSMasqIncludeDir = ""
-	in := generationFingerprintInput{CacheVersion: rules.ArtifactVersion, Settings: c.Settings, DNS: c.DNS, Mwan3: c.Mwan3, Sections: c.Sections, Bypass: c.Bypass, VPNs: c.VPNs, Devices: c.Devices, Zapret: c.ZapretProfiles, ZapretStrategies: c.ZapretStrategies, OONI: c.OONI}
+	in := generationFingerprintInput{CacheVersion: rules.ArtifactVersion, Settings: c.Settings, DNS: c.DNS, Mwan3: c.Mwan3, Sections: c.Sections, Bypass: c.Bypass, VPNs: c.VPNs, Devices: c.Devices, Zapret: c.ZapretProfiles, ZapretStrategies: c.ZapretStrategies, OONI: c.OONI, Mesh: c.Mesh, MeshPeers: meshPeerFPEntries(c)}
 	// Per-provider checksum reads are the most expensive part of fingerprint
 	// — each call reads the file and SHA-256s it. Track aggregate size +
 	// wall time so we can see if this stage alone explains a slow apply.
@@ -136,7 +159,7 @@ func currentGenerationFingerprint(c config.Config) (generationFingerprint, error
 	if err != nil {
 		return generationFingerprint{}, err
 	}
-	return generationFingerprint{Version: 2, Hash: fmt.Sprintf("%x", h[:]), Groups: groups, GeneratedAt: time.Now().UTC(), Inputs: in}, nil
+	return generationFingerprint{Version: 3, Hash: fmt.Sprintf("%x", h[:]), Groups: groups, GeneratedAt: time.Now().UTC(), Inputs: in}, nil
 }
 
 func generationGroupHashes(c config.Config, in generationFingerprintInput) (map[string]string, error) {
@@ -146,12 +169,13 @@ func generationGroupHashes(c config.Config, in generationFingerprintInput) (map[
 	}
 	proxyProviders := c.ProxyProviders
 	groups := map[string]any{
-		"mihomo":         map[string]any{"settings": in.Settings, "dns": in.DNS, "sections": in.Sections, "proxy_providers": proxyProviders, "rule_providers": in.RuleProvider, "vpns": in.VPNs},
+		"mihomo":         map[string]any{"settings": in.Settings, "dns": in.DNS, "sections": in.Sections, "proxy_providers": proxyProviders, "rule_providers": in.RuleProvider, "vpns": in.VPNs, "mesh": in.Mesh, "mesh_peers": in.MeshPeers},
 		"openwrt_bundle": map[string]any{"settings": in.Settings, "dns": in.DNS, "sections": openWrtSections, "rule_providers": in.RuleProvider, "bypass": in.Bypass, "vpns": in.VPNs, "devices": in.Devices, "zapret": in.Zapret, "ooni": in.OONI},
-		"firewall":       map[string]any{"dns_hijack": c.DNS.HijackLANDNS, "lan_source_zones": c.Settings.LANSourceZones, "fwmark": c.Settings.FwMark, "fwmark_mask": c.Settings.FwMarkMask},
+		"firewall":       map[string]any{"dns_hijack": c.DNS.HijackLANDNS, "lan_source_zones": c.Settings.LANSourceZones, "fwmark": c.Settings.FwMark, "fwmark_mask": c.Settings.FwMarkMask, "mesh": in.Mesh},
 		"mwan3":          map[string]any{"mwan3": in.Mwan3, "proxy_providers": proxyProviders},
 		"zapret":         map[string]any{"zapret": in.Zapret, "sections": openWrtSections},
 		"policy":         map[string]any{"settings": in.Settings, "vpns": in.VPNs, "devices": in.Devices, "sections": openWrtSections},
+		"mesh":           map[string]any{"mesh": in.Mesh, "mesh_peers": in.MeshPeers},
 	}
 	out := map[string]string{}
 	for name, v := range groups {
@@ -201,6 +225,9 @@ func generationDirtyGroups(c config.Config, fp generationFingerprint, checkPaths
 	}
 	if old.Groups["policy"] != fp.Groups["policy"] {
 		g.Policy = true
+	}
+	if old.Groups["mesh"] != fp.Groups["mesh"] || (c.MeshActive() && !pathComplete(checkPaths.EasytierConfig)) {
+		g.Mesh = true
 	}
 	if !g.Any() {
 		return g, "all groups unchanged"
@@ -255,7 +282,7 @@ func allGenerationGroupCacheStatuses(status, reason string) []generationGroupCac
 }
 
 func generationGroupNames() []string {
-	return []string{"mihomo", "openwrt_bundle", "firewall", "mwan3", "zapret", "policy"}
+	return []string{"mihomo", "openwrt_bundle", "firewall", "mwan3", "zapret", "policy", "mesh"}
 }
 
 func generationGroupOutputMissingReason(c config.Config, paths GeneratedPaths, name string) string {
@@ -284,6 +311,10 @@ func generationGroupOutputMissingReason(c config.Config, paths GeneratedPaths, n
 		}
 	case "zapret":
 		return missingPathReason(paths.ZapretEnv, "zapret env missing")
+	case "mesh":
+		if c.MeshActive() {
+			return missingPathReason(paths.EasytierConfig, "easytier config missing")
+		}
 	}
 	return ""
 }

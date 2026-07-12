@@ -1,0 +1,124 @@
+package generator
+
+import (
+	"encoding/hex"
+	"regexp"
+	"strings"
+
+	"github.com/purewrt/purewrt/internal/config"
+	"github.com/purewrt/purewrt/internal/mesh"
+)
+
+// friendProxy is a consumable friend exit: a mihomo shadowsocks outbound
+// pointing at the friend's mesh listener over the easytier overlay.
+type friendProxy struct {
+	Name     string // mihomo proxy name, "friend_<peer>"
+	IP       string // overlay IPv4
+	Port     int
+	Password string // derived from the group PSK + the peer's advertised salt
+}
+
+// friendNameRE guards peer names before they land in generated YAML — peer
+// names arrive over the network from mesh-sync, so anything outside the safe
+// set is skipped rather than emitted.
+var friendNameRE = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// meshFriends returns the mihomo proxies for every consumable friend exit:
+// enabled, exit offered, has an overlay IP, and credentials derive cleanly.
+// Bad material (unparseable hex, hostile name) skips the peer — one broken
+// peer must not stop the rest of the mesh from generating.
+func meshFriends(c config.Config) []friendProxy {
+	if !c.MeshActive() {
+		return nil
+	}
+	psk, err := hex.DecodeString(c.Mesh.PSK)
+	if err != nil || len(psk) == 0 {
+		return nil
+	}
+	var out []friendProxy
+	for _, p := range c.MeshPeers {
+		if !p.Enabled || !p.ExitOffered || p.OverlayIP == "" || !friendNameRE.MatchString(p.Name) {
+			continue
+		}
+		salt, err := hex.DecodeString(p.CredSalt)
+		if err != nil || len(salt) == 0 {
+			continue
+		}
+		port := p.ListenPort
+		if port <= 0 {
+			port = c.Mesh.ListenPort
+		}
+		out = append(out, friendProxy{
+			Name:     "friend_" + p.Name,
+			IP:       p.OverlayIP,
+			Port:     port,
+			Password: mesh.DeriveSSPassword(psk, salt),
+		})
+	}
+	return out
+}
+
+// meshListenerPassword derives this router's own mesh-in listener password.
+// Empty string means the material is unusable and the listener (and with it
+// the whole exit path) must not be emitted.
+func meshListenerPassword(c config.Config) string {
+	psk, err := hex.DecodeString(c.Mesh.PSK)
+	if err != nil || len(psk) == 0 {
+		return ""
+	}
+	salt, err := hex.DecodeString(c.Mesh.CredSalt)
+	if err != nil || len(salt) == 0 {
+		return ""
+	}
+	return mesh.DeriveSSPassword(psk, salt)
+}
+
+// meshExitViable reports whether this router can offer an exit at all:
+// mesh joined, exit enabled, credentials derivable, and at least one own
+// egress (provider nodes or referenced VPNs) for MeshExit to route through.
+// Without members the group would be invalid YAML-wise (or silently fall
+// back to `main`), so the listener isn't emitted either — friends fail fast
+// with a connection error instead of a black hole.
+func meshExitViable(c config.Config, enabledProviders []config.ProxyProvider) bool {
+	if !c.MeshActive() || !c.Mesh.ExitEnabled || c.Mesh.ListenPort <= 0 {
+		return false
+	}
+	if meshListenerPassword(c) == "" {
+		return false
+	}
+	return len(enabledProviders) > 0 || len(referencedVPNs(c)) > 0
+}
+
+// writeMeshExitGroup emits the MeshExit url-test group — the ONLY egress for
+// inbound friend traffic.
+//
+// INVARIANT (loop + liability prevention, tested): members are exclusively
+// this host's own providers (use:) and referenced vpn_* outbounds (proxies:).
+// Never DIRECT — friend traffic must not exit via this router's home IP.
+// Never friend_* — A⇄B mutual fallback would ping-pong. Never section
+// groups — after fallback wiring those may contain friend_* transitively.
+func writeMeshExitGroup(b *strings.Builder, c config.Config, providers []config.ProxyProvider) {
+	vpnMembers := []string{}
+	for _, v := range referencedVPNs(c) {
+		vpnMembers = append(vpnMembers, vpnProxyName(v.Name))
+	}
+	writeProxyGroup(b, "MeshExit", "url-test", "", "", "", "", 0, providers, vpnMembers)
+}
+
+// writeSectionFallbackGroup wraps a section's local group with friend exits:
+// the public group name becomes a `fallback` preferring <name>_local, so the
+// IN-NAME rule, LuCI group-select and NetCheckProbe keep working unchanged,
+// and friends only carry traffic when every local node is dead.
+func writeSectionFallbackGroup(b *strings.Builder, name, healthURL string, healthInterval int, friends []friendProxy) {
+	b.WriteString("  - name: " + name + "\n    type: fallback\n    proxies:\n      - " + name + "_local\n")
+	for _, f := range friends {
+		b.WriteString("      - " + f.Name + "\n")
+	}
+	if healthURL == "" {
+		healthURL = "https://cp.cloudflare.com/generate_204"
+	}
+	if healthInterval <= 0 {
+		healthInterval = 300
+	}
+	b.WriteString("    url: " + healthURL + "\n    interval: " + itoa(healthInterval) + "\n")
+}
