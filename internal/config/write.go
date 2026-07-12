@@ -43,7 +43,7 @@ func Serialize(c Config) []byte {
 	// Type prefixes make cross-type collisions structurally impossible; the
 	// map still guards same-type duplicates and the fixed singleton ids.
 	seen := map[string]bool{
-		"settings": true, "dns": true, "mwan3": true, "ooni": true, "bypass": true,
+		"settings": true, "dns": true, "mwan3": true, "ooni": true, "bypass": true, "mesh": true,
 	}
 	if c.Bypass.Name != "" {
 		seen[c.Bypass.Name] = true
