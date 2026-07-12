@@ -129,6 +129,18 @@ case, an rpcd dispatcher arm, an ACL entry, and the view. Menu entries live in
   (`update`, `dpi-check`, `zapret-check`, …) take `flock -nx` on dedicated
   lockfiles so check-and-launch can't race. New long-running rpcd methods must
   follow the same pattern.
+- **UCI section ids are type-prefixed** (`sec_`/`sub_`/`pp_`/`rp_`/`vpn_`/
+  `zp_`/`zs_`, devices `dev_<mac>`): libuci section ids share ONE namespace
+  per file across all types (duplicate id under another type = hard parse
+  error bricking every uci consumer; `uci set purewrt.<existing>=<othertype>`
+  silently *retypes*). Prefixes let the same display name exist on every
+  type. The prefix tables in `internal/config/write.go` and LuCI
+  `resources/purewrt/naming.js` MUST stay in sync; cross-references between
+  sections (a routing section's `zapret_strategy` list, a device's
+  `section`) always store display NAMES, never section ids — resolve with
+  `naming.nameOf`/`naming.sidOf` in views. Unsafe names (dashes/dots) fall
+  back to anonymous + `option name`; legacy unprefixed configs load
+  unchanged and normalize on the next save.
 
 ## OpenWrt packaging
 

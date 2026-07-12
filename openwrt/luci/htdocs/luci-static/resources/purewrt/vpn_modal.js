@@ -2,6 +2,7 @@
 'require baseclass';
 'require ui';
 'require uci';
+'require purewrt.naming as naming';
 'require network';
 
 // purewrt.vpn_modal — render the VPN editor (formerly the standalone VPN
@@ -46,7 +47,7 @@ function findVPNByName(name) {
   if (!name) return null;
   var sections = uci.sections('purewrt', 'vpn') || [];
   for (var i = 0; i < sections.length; i++) {
-    if (sections[i].name === name) return sections[i];
+    if (naming.nameOf(sections[i], 'vpn') === name) return sections[i];
   }
   return null;
 }
@@ -212,7 +213,7 @@ function openVPNModal(opts) {
         return uci.apply();
       }).then(function() {
         ui.addNotification(null, E('p', _('VPN %s deleted.').format(existing.name || '')), 'info');
-        closeWith({ deleted: existing.name || existing['.name'] });
+        closeWith({ deleted: naming.nameOf(existing, 'vpn') });
       }).catch(function(e) {
         btn.disabled = false;
         deletePending = false;
@@ -300,14 +301,15 @@ function openVPNManager(opts) {
 
   var rows = (uci.sections('purewrt', 'vpn') || []).map(function(v) {
     var sid = v['.name'];
-    var label = (v.name || sid) +
+    var vName = naming.nameOf(v, 'vpn');
+    var label = vName +
       (v.interface ? ' (' + v.interface + ')' : '') +
       (v.enabled === '0' ? ' — ' + _('disabled') : '');
 
     var editBtn = E('button', { 'class': 'btn cbi-button cbi-button-edit' }, _('Edit'));
     editBtn.addEventListener('click', function(ev) {
       ev.preventDefault();
-      openVPNModal({ name: v.name || sid, snapshotParent: true, onSave: reopen, onDelete: reopen });
+      openVPNModal({ name: vName, snapshotParent: true, onSave: reopen, onDelete: reopen });
     });
 
     // Two-click delete (no blocking window.confirm): first click arms, second
@@ -330,7 +332,7 @@ function openVPNManager(opts) {
       if (resetTimer) window.clearTimeout(resetTimer);
       delBtn.disabled = true;
       removeVPNSection(sid).then(function() {
-        ui.addNotification(null, E('p', _('VPN %s deleted.').format(v.name || sid)), 'info');
+        ui.addNotification(null, E('p', _('VPN %s deleted.').format(vName)), 'info');
         reopen();
       }).catch(function(e) {
         delBtn.disabled = false; pending = false;

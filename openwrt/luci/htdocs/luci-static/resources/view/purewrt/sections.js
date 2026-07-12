@@ -7,6 +7,7 @@
 'require purewrt.table_section as tableSection';
 'require purewrt.vpn_modal as vpnModal';
 'require purewrt.format as fmt';
+'require purewrt.naming as naming';
 
 var callReload = rpc.declare({ object: 'purewrt', method: 'reload' });
 var callLeases = rpc.declare({ object: 'luci-rpc', method: 'getDHCPLeases' });
@@ -39,7 +40,8 @@ function targetChoices() {
   var out = [];
   uci.sections('purewrt', 'section').forEach(function(s) {
     if ((s.enabled || '1') !== '1') return;
-    out.push([ s['.name'], s['.name'] + (s.action ? ' (' + s.action + ')' : '') ]);
+    var n = naming.nameOf(s, 'section');
+    out.push([ n, n + (s.action ? ' (' + s.action + ')' : '') ]);
   });
   out.push([ EXCLUDE, _('Exclude from purewrt (bypass)') ]);
   return out;
@@ -209,7 +211,7 @@ function buildDevicesSection(leases) {
 // cidrKey / cidrTargetSID map a mapping row to the UCI list it lives in.
 function cidrKey(family) { return family === 6 ? 'source_cidr6' : 'source_cidr4'; }
 function cidrTargetSID(target) {
-  if (target !== EXCLUDE) return target;
+  if (target !== EXCLUDE) return naming.sidOf('section', target) || target;
   var id = bypassSID();
   if (!uci.get('purewrt', id)) uci.add('purewrt', 'bypass', id); // ensure the bypass section exists
   return id;
@@ -237,8 +239,9 @@ function buildCIDRSection() {
     var rows = [];
     uci.sections('purewrt', 'section').forEach(function(s) {
       if ((s.enabled || '1') !== '1') return;
-      (s.source_cidr4 || []).forEach(function(c) { rows.push({ cidr: c, family: 4, target: s['.name'] }); });
-      (s.source_cidr6 || []).forEach(function(c) { rows.push({ cidr: c, family: 6, target: s['.name'] }); });
+      var n = naming.nameOf(s, 'section');
+      (s.source_cidr4 || []).forEach(function(c) { rows.push({ cidr: c, family: 4, target: n }); });
+      (s.source_cidr6 || []).forEach(function(c) { rows.push({ cidr: c, family: 6, target: n }); });
     });
     var bsid = bypassSID();
     (uci.get('purewrt', bsid, 'source_cidr4') || []).forEach(function(c) { rows.push({ cidr: c, family: 4, target: EXCLUDE }); });
@@ -312,11 +315,11 @@ function buildCIDRSection() {
 }
 
 function sectionTitle(sid) {
-  return uci.get('purewrt', sid, 'proxy_group') || sid || _('New routing section');
+  return uci.get('purewrt', sid, 'proxy_group') || naming.displayName(sid, 'section') || _('New routing section');
 }
 
 function vpnTitle(section) {
-  return section.name || section['.name'];
+  return naming.nameOf(section, 'vpn');
 }
 
 function routingSummary(sid) {
@@ -365,6 +368,7 @@ return view.extend({
     s.addremove = true;
     s.anonymous = false;
     s.sectiontitle = sectionTitle;
+    naming.installPrefixedAdd(s, 'section');
 
     // Soft warning before removing the catch-all section. The `common` section
     // provides the `Common` proxy group that the generated `MATCH,Common`
@@ -523,7 +527,7 @@ return view.extend({
     zapretStrategies.depends('action', 'zapret');
     zapretStrategies.description = _('One or more Zapret strategies applied to this routing section. Configure strategy details on the Zapret page.');
     uci.sections('purewrt', 'zapret_strategy').forEach(function(section) {
-      var name = section.name || section['.name'];
+      var name = naming.nameOf(section, 'zapret_strategy');
 
       if (name)
         zapretStrategies.value(name, name);

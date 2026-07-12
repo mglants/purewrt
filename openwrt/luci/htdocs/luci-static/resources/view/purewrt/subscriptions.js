@@ -8,6 +8,7 @@
 'require purewrt.update_async as updateAsync';
 'require purewrt.save_chain as saveChain';
 'require purewrt.format as fmt';
+'require purewrt.naming as naming';
 
 var callReload = rpc.declare({ object: 'purewrt', method: 'reload' });
 var callSubscriptionExpiry = rpc.declare({ object: 'purewrt', method: 'subscription_expiry' });
@@ -114,7 +115,7 @@ function expiryCellFor(entry) {
 }
 
 function sectionTitle(sid) {
-  return uci.get('purewrt', sid, 'name') || sid || _('New subscription');
+  return naming.displayName(sid, 'subscription') || _('New subscription');
 }
 
 function updateSubscriptions() {

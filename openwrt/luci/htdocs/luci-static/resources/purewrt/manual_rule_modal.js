@@ -2,6 +2,7 @@
 'require baseclass';
 'require ui';
 'require uci';
+'require purewrt.naming as naming';
 'require rpc';
 'require fs';
 
@@ -43,7 +44,7 @@ function listManualProviders() {
   (uci.sections('purewrt', 'rule_provider') || []).forEach(function(s) {
     if (!isManualProvider(s)) return;
     out.push({
-      name: s.name || s['.name'],
+      name: naming.nameOf(s, 'rule_provider'),
       sid: s['.name'],
       section: s.section || '',
       path: s.path || ''
@@ -64,7 +65,7 @@ function manualPathFor(name) {
 function pathForName(name) {
   var sections = uci.sections('purewrt', 'rule_provider') || [];
   for (var i = 0; i < sections.length; i++) {
-    if (sections[i].name === name) {
+    if (naming.nameOf(sections[i], 'rule_provider') === name) {
       var p = sections[i].path || '';
       if (p) return p;
       break;
@@ -210,7 +211,7 @@ function renderManualForm(opts, existing, body) {
   sectionSel.appendChild(E('option', { 'value': '' }, _('(no override)')));
   var sectionNames = ['direct', 'reject'];
   (uci.sections('purewrt', 'section') || []).forEach(function(s) {
-    var n = s.name || s['.name'];
+    var n = naming.nameOf(s, 'section');
     if (n && sectionNames.indexOf(n) < 0) sectionNames.push(n);
   });
   sectionNames.forEach(function(n) {

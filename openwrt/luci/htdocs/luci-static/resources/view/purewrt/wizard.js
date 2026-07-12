@@ -5,6 +5,7 @@
 'require uci';
 'require network';
 'require purewrt.styles';
+'require purewrt.naming as naming';
 
 // PureWRT setup wizard — 8-step linear flow. Replaces the old Quick Start
 // page (which mixed subscription input with global settings) and serves as
@@ -163,16 +164,18 @@ function previewSectionGroup(name) {
 function ensureSectionRouting(name) {
   if (state.sectionRouting[name]) return state.sectionRouting[name];
   var grp = previewSectionGroup(name);
-  var z = uci.get('purewrt', name, 'zapret_strategy');
+  // Sections carry a sec_ id prefix — resolve the display name to the sid.
+  var sid = naming.sidOf('section', name) || name;
+  var z = uci.get('purewrt', sid, 'zapret_strategy');
   var r = {
-    action: uci.get('purewrt', name, 'action') || (name === 'direct' ? 'direct' : name === 'reject' ? 'reject' : 'proxy'),
+    action: uci.get('purewrt', sid, 'action') || (name === 'direct' ? 'direct' : name === 'reject' ? 'reject' : 'proxy'),
     proxy: {
-      type:     (grp && (grp.ProxyGroupType || grp.proxy_group_type)) || uci.get('purewrt', name, 'proxy_group_type') || 'url-test',
-      filter:   (grp && (grp.ProxyFilter || grp.proxy_filter)) || uci.get('purewrt', name, 'proxy_filter') || '',
-      exclude:  (grp && (grp.ProxyExcludeFilter || grp.proxy_exclude_filter)) || uci.get('purewrt', name, 'proxy_exclude_filter') || '',
-      strategy: (grp && (grp.ProxyStrategy || grp.proxy_strategy)) || uci.get('purewrt', name, 'proxy_strategy') || 'sticky-sessions'
+      type:     (grp && (grp.ProxyGroupType || grp.proxy_group_type)) || uci.get('purewrt', sid, 'proxy_group_type') || 'url-test',
+      filter:   (grp && (grp.ProxyFilter || grp.proxy_filter)) || uci.get('purewrt', sid, 'proxy_filter') || '',
+      exclude:  (grp && (grp.ProxyExcludeFilter || grp.proxy_exclude_filter)) || uci.get('purewrt', sid, 'proxy_exclude_filter') || '',
+      strategy: (grp && (grp.ProxyStrategy || grp.proxy_strategy)) || uci.get('purewrt', sid, 'proxy_strategy') || 'sticky-sessions'
     },
-    vpn: uci.get('purewrt', name, 'vpn') || '',
+    vpn: uci.get('purewrt', sid, 'vpn') || '',
     zapret: Array.isArray(z) ? z.slice() : (z ? [ String(z) ] : [])
   };
   state.sectionRouting[name] = r;
@@ -214,7 +217,7 @@ function ensureProxyPreview() {
 function availableZapretStrategies() {
   var out = [];
   (uci.sections('purewrt', 'zapret_strategy') || []).forEach(function(z) {
-    var name = z.name || z['.name'];
+    var name = naming.nameOf(z, 'zapret_strategy');
     if (name) out.push(name);
   });
   return out;
@@ -613,7 +616,7 @@ function enabledVPNs() {
   var out = [];
   (uci.sections('purewrt', 'vpn') || []).forEach(function(v) {
     if (v.enabled === '0' || v.enabled === 0 || v.enabled === false) return;
-    var name = v.name || v['.name'];
+    var name = naming.nameOf(v, 'vpn');
     if (!name) return;
     out.push({ name: name, label: name + (v.interface ? ' (' + v.interface + ')' : '') });
   });
@@ -1302,31 +1305,32 @@ function applySectionRouting() {
   if (names.length === 0) return null;
   if (typeof uci.unload === 'function') uci.unload('purewrt');
   return uci.load('purewrt').then(function() {
-    var existing = {};
-    (uci.sections('purewrt', 'section') || []).forEach(function(s) { existing[s['.name']] = true; });
+    var sidByName = {};
+    (uci.sections('purewrt', 'section') || []).forEach(function(s) { sidByName[naming.nameOf(s, 'section')] = s['.name']; });
     var mutated = 0;
     names.forEach(function(name) {
-      if (!existing[name]) return; // import/reset didn't create this section — skip
+      var sid = sidByName[name];
+      if (!sid) return; // import/reset didn't create this section — skip
       var r = state.sectionRouting[name];
-      uci.set('purewrt', name, 'action', r.action);
+      uci.set('purewrt', sid, 'action', r.action);
       if (r.action === 'proxy') {
-        uci.set('purewrt', name, 'proxy_group_type', r.proxy.type);
-        uci.set('purewrt', name, 'proxy_filter', r.proxy.filter);
-        uci.set('purewrt', name, 'proxy_exclude_filter', r.proxy.exclude);
-        uci.set('purewrt', name, 'proxy_strategy', r.proxy.strategy);
-        uci.set('purewrt', name, 'user_overridden_proxy_group', '1');
-        uci.unset('purewrt', name, 'vpn');
-        uci.unset('purewrt', name, 'zapret_strategy');
+        uci.set('purewrt', sid, 'proxy_group_type', r.proxy.type);
+        uci.set('purewrt', sid, 'proxy_filter', r.proxy.filter);
+        uci.set('purewrt', sid, 'proxy_exclude_filter', r.proxy.exclude);
+        uci.set('purewrt', sid, 'proxy_strategy', r.proxy.strategy);
+        uci.set('purewrt', sid, 'user_overridden_proxy_group', '1');
+        uci.unset('purewrt', sid, 'vpn');
+        uci.unset('purewrt', sid, 'zapret_strategy');
       } else if (r.action === 'vpn') {
-        uci.set('purewrt', name, 'vpn', r.vpn || '');
-        uci.unset('purewrt', name, 'zapret_strategy');
+        uci.set('purewrt', sid, 'vpn', r.vpn || '');
+        uci.unset('purewrt', sid, 'zapret_strategy');
       } else if (r.action === 'zapret') {
-        uci.set('purewrt', name, 'zapret_strategy', r.zapret || []);
-        uci.unset('purewrt', name, 'vpn');
+        uci.set('purewrt', sid, 'zapret_strategy', r.zapret || []);
+        uci.unset('purewrt', sid, 'vpn');
       } else {
         // direct / reject — clear protocol-specific options.
-        uci.unset('purewrt', name, 'vpn');
-        uci.unset('purewrt', name, 'zapret_strategy');
+        uci.unset('purewrt', sid, 'vpn');
+        uci.unset('purewrt', sid, 'zapret_strategy');
       }
       mutated++;
     });

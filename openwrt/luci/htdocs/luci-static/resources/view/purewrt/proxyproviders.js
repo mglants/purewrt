@@ -8,20 +8,17 @@
 'require purewrt.update_async as updateAsync';
 'require purewrt.save_chain as saveChain';
 'require purewrt.format as fmt';
+'require purewrt.naming as naming';
 
 var callUpdateProxyProvider = rpc.declare({ object: 'purewrt', method: 'update_proxy_provider', params: [ 'name' ] });
 var callReload = rpc.declare({ object: 'purewrt', method: 'reload' });
 
 function sectionTitle(sid) {
-  var name = uci.get('purewrt', sid, 'name');
-  if (name) return name;
-  // Anonymous sections get generated cfgXXXXXX ids — meaningless to show.
-  if (!sid || /^cfg[0-9a-f]{6}/.test(sid)) return _('New proxy provider');
-  return sid;
+  return naming.displayName(sid, 'proxy_provider') || _('New proxy provider');
 }
 
 function updateProxyProvider(sid) {
-  var name = uci.get('purewrt', sid, 'name') || sid;
+  var name = sectionTitle(sid);
   return callUpdateProxyProvider(name).then(function() {
     ui.addNotification(null, E('p', _('Proxy provider updated and mihomo restarted')), 'info');
   });
@@ -46,19 +43,15 @@ return view.extend({
     var m = new form.Map('purewrt', _('PureWRT Proxy Providers'));
     var s = m.section(form.TypedSection, 'proxy_provider', _('Proxy providers'));
     s.addremove = true;
-    // Named sections: the section id IS the provider name (the Go parser
-    // falls back to it when no `name` option is present), same as routing
-    // sections — one name, no separate field to drift.
+    // Named sections: the id is the type-prefixed name (pp_<name>); the Go
+    // parser strips the prefix. One name, no separate field to drift.
     s.anonymous = false;
     s.sectiontitle = sectionTitle;
-    var origHandleAdd = s.handleAdd;
-    s.handleAdd = function(ev, name) {
-      if (name === 'default') {
-        ui.addNotification(null, E('p', _('"default" is reserved by mihomo; pick another name')), 'warning');
-        return Promise.resolve();
-      }
-      return origHandleAdd.call(this, ev, name);
-    };
+    naming.installPrefixedAdd(s, 'proxy_provider', function(name) {
+      if (name === 'default')
+        return _('"default" is reserved by mihomo; pick another name');
+      return null;
+    });
 
     var enabled = s.option(form.Flag, 'enabled', _('Enabled'));
     enabled.default = '1'; // Go side treats an absent option as enabled

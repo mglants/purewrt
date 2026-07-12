@@ -9,6 +9,7 @@
 'require purewrt.table_section as tableSection';
 'require purewrt.save_chain as saveChain';
 'require purewrt.format as fmt';
+'require purewrt.naming as naming';
 
 // callZapretInstalled tells us whether the optional Zapret package is on
 // the box. The view's load() runs this; render() short-circuits to a
@@ -130,17 +131,11 @@ function profileTitle(sid) {
   var ifaces = uci.get('purewrt', sid, 'interface');
   if (Array.isArray(ifaces)) ifaces = ifaces[0];
   if (ifaces) return ifaces;
-  // Anonymous sections get generated cfgXXXXXX ids — meaningless to show.
-  if (!sid || /^cfg[0-9a-f]{6}/.test(sid)) return _('New profile');
-  return sid;
+  return naming.displayName(sid, 'zapret_profile') || _('New profile');
 }
 
 function strategyTitle(sid) {
-  var name = uci.get('purewrt', sid, 'name');
-  if (name) return name;
-  // Anonymous sections get generated cfgXXXXXX ids — meaningless to show.
-  if (!sid || /^cfg[0-9a-f]{6}/.test(sid)) return _('New strategy');
-  return sid;
+  return naming.displayName(sid, 'zapret_strategy') || _('New strategy');
 }
 
 function strategyProtocols(sid) {
@@ -356,7 +351,7 @@ function stageStrategyFromParams(params, common, hostsLabel, protoDefaults) {
   base = base.replace(/[^A-Za-z0-9_]+/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '') || 'bc';
   var existing = {};
   uci.sections('purewrt', 'zapret_strategy').forEach(function(s) {
-    var n = s.name || s['.name']; if (n) existing[n] = true;
+    var n = naming.nameOf(s, 'zapret_strategy'); if (n) existing[n] = true;
   });
   var name = base, i = 2;
   while (existing[name]) { name = base + '_' + i; i++; }
@@ -386,7 +381,7 @@ function stageStrategyFromParams(params, common, hostsLabel, protoDefaults) {
 function stageCandidate(cand) {
   var sid = uci.add('purewrt', 'zapret_strategy');
   var existing = {};
-  uci.sections('purewrt', 'zapret_strategy').forEach(function(s) { var n = s.name || s['.name']; if (n) existing[n] = true; });
+  uci.sections('purewrt', 'zapret_strategy').forEach(function(s) { var n = naming.nameOf(s, 'zapret_strategy'); if (n) existing[n] = true; });
   var name = cand.name, i = 2;
   while (existing[name]) { name = cand.name + '_' + i; i++; }
   uci.set('purewrt', sid, 'name', name);
@@ -402,7 +397,7 @@ function stageCandidate(cand) {
     var decl = b.name + ':@/usr/libexec/zapret/files/fake/' + b.file;
     uci.sections('purewrt', 'zapret_profile').forEach(function(p) {
       var psid = p['.name'];
-      if ((p.name || psid) !== 'wan') return;
+      if (naming.nameOf(p, 'zapret_profile') !== 'wan') return;
       var cur = uci.get('purewrt', psid, 'blob') || [];
       if (!Array.isArray(cur)) cur = cur ? [cur] : [];
       if (cur.indexOf(decl) < 0) { cur.push(decl); uci.set('purewrt', psid, 'blob', cur); }
@@ -422,20 +417,18 @@ function renderZapretStatusBlock() {
   var strategies = uci.sections('purewrt', 'zapret_strategy').filter(flagOn);
   var sections = uci.sections('purewrt', 'section');
   var zapretSections = sections.filter(function(s) { return s.enabled !== '0' && s.action === 'zapret'; });
-  var nameOf = function(s) { return s.name || s['.name']; };
-
   var rows = [];
   rows.push(E('div', {}, [
     E('strong', {}, _('Enabled profiles: ')),
-    profiles.length ? profiles.map(nameOf).join(', ') : _('none')
+    profiles.length ? profiles.map(function(s) { return naming.nameOf(s, 'zapret_profile'); }).join(', ') : _('none')
   ]));
   rows.push(E('div', {}, [
     E('strong', {}, _('Enabled strategies: ')),
-    strategies.length ? strategies.map(nameOf).join(', ') : _('none')
+    strategies.length ? strategies.map(function(s) { return naming.nameOf(s, 'zapret_strategy'); }).join(', ') : _('none')
   ]));
   rows.push(E('div', {}, [
     E('strong', {}, _('Routing sections using Zapret: ')),
-    zapretSections.length ? zapretSections.map(nameOf).join(', ') : _('none')
+    zapretSections.length ? zapretSections.map(function(s) { return naming.nameOf(s, 'section'); }).join(', ') : _('none')
   ]));
   if (strategies.length > 0 && zapretSections.length === 0) {
     rows.push(E('div', { 'class': 'alert-message warning', 'style': 'margin-top:.5em' },
@@ -978,11 +971,11 @@ return view.extend({
     // ---- Runtime profiles (folded into a table after m.render) ----
     var p = m.section(form.TypedSection, 'zapret_profile', _('Zapret runtime profiles'));
     p.addremove = true;
-    // Named sections: the section id IS the profile name (the Go parser
-    // falls back to it when no `name` option is present), same as routing
-    // sections — one name, no separate field to drift.
+    // Named sections: the id is the type-prefixed name (zp_<name>); the Go
+    // parser strips the prefix. One name, no separate field to drift.
     p.anonymous = false;
     p.sectiontitle = profileTitle;
+    naming.installPrefixedAdd(p, 'zapret_profile');
     var profEnabled = p.option(form.Flag, 'enabled', _('Enabled'));
     profEnabled.default = '1'; // Go side treats an absent option as enabled
     var mode = p.option(form.ListValue, 'interface_mode', _('Interface matching mode'));
@@ -1056,9 +1049,10 @@ return view.extend({
     // ---- Strategies (folded into a table after m.render) ----
     var zs = m.section(form.TypedSection, 'zapret_strategy', _('Zapret strategies'));
     zs.addremove = true;
-    // Named for the same reason as profiles above: section id is the name.
+    // Named for the same reason as profiles above: zs_<name> id.
     zs.anonymous = false;
     zs.sectiontitle = strategyTitle;
+    naming.installPrefixedAdd(zs, 'zapret_strategy');
     var stratEnabled = zs.option(form.Flag, 'enabled', _('Enabled'));
     stratEnabled.default = '1'; // Go side treats an absent option as enabled
     var preset = zs.option(form.ListValue, 'preset', _('Preset'));
@@ -1072,7 +1066,7 @@ return view.extend({
     var profileValues = { wan: true };
     profile.value('wan', 'wan');
     uci.sections('purewrt', 'zapret_profile').forEach(function(sec) {
-      var name = sec.name || sec['.name'];
+      var name = naming.nameOf(sec, 'zapret_profile');
       if (name && !profileValues[name]) {
         profile.value(name, name);
         profileValues[name] = true;

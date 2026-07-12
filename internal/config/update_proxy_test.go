@@ -61,7 +61,7 @@ func TestUpdateProxyURLLoadAndSave(t *testing.T) {
 func TestZapretProfilesLoadAndSave(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "purewrt")
-	data := "config zapret 'zapret'\n    option enabled '1'\n    option mode 'nfqws'\n    option queue_num '200'\n    option params '--legacy-ignored'\n\nconfig zapret_profile 'wan_a'\n    option enabled '1'\n    list interface 'wan_a'\n    option mode 'nfqws'\n    option queue_num '201'\n    option fwmark '0x40000001'\n    option params '--strategy-a'\n\nconfig zapret_profile 'wan_b'\n    option enabled '1'\n    list interface 'wan_b'\n    option mode 'tpws'\n    option tpws_port '989'\n    option params '--strategy-b'\n"
+	data := "config zapret 'zapret'\n    option enabled '1'\n    option mode 'nfqws'\n    option queue_num '200'\n    option params '--legacy-ignored'\n\nconfig zapret_profile 'zp_wan_a'\n    option enabled '1'\n    list interface 'wan_a'\n    option mode 'nfqws'\n    option queue_num '201'\n    option fwmark '0x40000001'\n    option params '--strategy-a'\n\nconfig zapret_profile 'zp_wan_b'\n    option enabled '1'\n    list interface 'wan_b'\n    option mode 'tpws'\n    option tpws_port '989'\n    option params '--strategy-b'\n"
 	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestZapretProfilesLoadAndSave(t *testing.T) {
 	if strings.Contains(string(written), "config zapret 'zapret'") || strings.Contains(string(written), "--legacy-ignored") {
 		t.Fatalf("saved config must drop legacy single zapret config:\n%s", string(written))
 	}
-	if !strings.Contains(string(written), "config zapret_profile 'wan_a'") || !strings.Contains(string(written), "config zapret_profile 'wan_b'") || !strings.Contains(string(written), "list interface 'wan_b'") || strings.Contains(string(written), "option interface '") {
+	if !strings.Contains(string(written), "config zapret_profile 'zp_wan_a'") || !strings.Contains(string(written), "config zapret_profile 'zp_wan_b'") || !strings.Contains(string(written), "list interface 'wan_b'") || strings.Contains(string(written), "option interface '") {
 		t.Fatalf("saved config missing zapret profiles:\n%s", string(written))
 	}
 }

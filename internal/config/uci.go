@@ -94,6 +94,21 @@ func Load(path string) (Config, error) {
 	return c, s.Err()
 }
 
+// idName derives a display name from a section: `option name` wins when
+// present; otherwise the type prefix Serialize adds (sec_, rp_, ...) is
+// stripped from the section id. Bare legacy ids (`config section 'common'`)
+// pass through unchanged, so pre-prefix configs load with identical names
+// and normalize on the next save.
+func idName(m map[string][]string, id, prefix string) string {
+	if n := one(m, "name", ""); n != "" {
+		return n
+	}
+	if rest, ok := strings.CutPrefix(id, prefix); ok && rest != "" {
+		return rest
+	}
+	return id
+}
+
 func unq(v string) string {
 	v = strings.TrimSpace(v)
 	v = strings.Trim(v, "'")
@@ -277,7 +292,7 @@ func applySection(c *Config, x struct {
 		c.Mwan3.RulePriority = one(x.opts, "rule_priority", c.Mwan3.RulePriority)
 		c.Mwan3.IntegratedRules = b(x.opts, "integrated_rules", c.Mwan3.IntegratedRules)
 	case "zapret_profile":
-		name := one(x.opts, "name", x.name)
+		name := idName(x.opts, x.name, "zp_")
 		if name == "" {
 			name = "wan"
 		}
@@ -298,7 +313,7 @@ func applySection(c *Config, x struct {
 		p.Blobs = list(x.opts, "blob", nil)
 		c.ZapretProfiles = append(c.ZapretProfiles, p)
 	case "zapret_strategy":
-		zs := ZapretStrategy{Name: one(x.opts, "name", x.name), Enabled: b(x.opts, "enabled", true)}
+		zs := ZapretStrategy{Name: idName(x.opts, x.name, "zs_"), Enabled: b(x.opts, "enabled", true)}
 		zs.Profile = one(x.opts, "profile", "wan")
 		zs.QueueNum = i(x.opts, "queue_num", 0)
 		zs.Protocols = list(x.opts, "protocols", list(x.opts, "protocol", nil))
@@ -312,7 +327,7 @@ func applySection(c *Config, x struct {
 		zs.Params = one(x.opts, "params", "")
 		c.ZapretStrategies = append(c.ZapretStrategies, zs)
 	case "vpn":
-		v := VPN{Name: one(x.opts, "name", x.name), Interface: "wg0"}
+		v := VPN{Name: idName(x.opts, x.name, "vpn_"), Interface: "wg0"}
 		if v.Name == "" {
 			v.Name = "vpn"
 		}
@@ -345,13 +360,15 @@ func applySection(c *Config, x struct {
 			}
 		}
 	case "section":
-		c.Sections = append(c.Sections, Section{Name: x.name, Enabled: b(x.opts, "enabled", true), Action: one(x.opts, "action", "proxy"), TPROXYPort: i(x.opts, "tproxy_port", 7893), ProxyGroup: one(x.opts, "proxy_group", TitleASCII(x.name)), ProxyGroupType: one(x.opts, "proxy_group_type", "url-test"), ProxyFilter: one(x.opts, "proxy_filter", ""), ProxyExcludeFilter: one(x.opts, "proxy_exclude_filter", ""), ProxyStrategy: one(x.opts, "proxy_strategy", "sticky-sessions"), ProxyHealthCheckURL: one(x.opts, "proxy_health_check_url", ""), ProxyHealthCheckInterval: i(x.opts, "proxy_health_check_interval", 0), UserOverriddenProxyGroup: b(x.opts, "user_overridden_proxy_group", false), IPv4Enabled: b(x.opts, "ipv4_enabled", true), IPv6Enabled: b(x.opts, "ipv6_enabled", true), UDPMode: one(x.opts, "udp_mode", "proxy"), Priority: i(x.opts, "priority", 100), Mwan3Policy: one(x.opts, "mwan3_policy", ""), VPNs: list(x.opts, "vpns", nil), ZapretStrategies: list(x.opts, "zapret_strategy", nil), SourceCIDR4: list(x.opts, "source_cidr4", nil), SourceCIDR6: list(x.opts, "source_cidr6", nil)})
+		name := idName(x.opts, x.name, "sec_")
+		c.Sections = append(c.Sections, Section{Name: name, Enabled: b(x.opts, "enabled", true), Action: one(x.opts, "action", "proxy"), TPROXYPort: i(x.opts, "tproxy_port", 7893), ProxyGroup: one(x.opts, "proxy_group", TitleASCII(name)), ProxyGroupType: one(x.opts, "proxy_group_type", "url-test"), ProxyFilter: one(x.opts, "proxy_filter", ""), ProxyExcludeFilter: one(x.opts, "proxy_exclude_filter", ""), ProxyStrategy: one(x.opts, "proxy_strategy", "sticky-sessions"), ProxyHealthCheckURL: one(x.opts, "proxy_health_check_url", ""), ProxyHealthCheckInterval: i(x.opts, "proxy_health_check_interval", 0), UserOverriddenProxyGroup: b(x.opts, "user_overridden_proxy_group", false), IPv4Enabled: b(x.opts, "ipv4_enabled", true), IPv6Enabled: b(x.opts, "ipv6_enabled", true), UDPMode: one(x.opts, "udp_mode", "proxy"), Priority: i(x.opts, "priority", 100), Mwan3Policy: one(x.opts, "mwan3_policy", ""), VPNs: list(x.opts, "vpns", nil), ZapretStrategies: list(x.opts, "zapret_strategy", nil), SourceCIDR4: list(x.opts, "source_cidr4", nil), SourceCIDR6: list(x.opts, "source_cidr6", nil)})
 	case "subscription":
-		c.Subscriptions = append(c.Subscriptions, Subscription{Name: one(x.opts, "name", x.name), Enabled: b(x.opts, "enabled", true), URL: one(x.opts, "url", ""), Mode: one(x.opts, "mode", "auto"), PresetIfNoRules: one(x.opts, "preset_if_no_rules", "minimal"), ImportRulesOnLowResource: b(x.opts, "import_rules_on_low_resource", false), AutoApply: b(x.opts, "auto_apply", false), Interval: i(x.opts, "interval", 86400), HWID: one(x.opts, "hwid", ""), DeviceName: one(x.opts, "device_name", ""), UserAgent: one(x.opts, "user_agent", ""), Headers: list(x.opts, "header", nil), Mirrors: list(x.opts, "mirror", nil), PinSHA256: one(x.opts, "pin_sha256", ""), SuppressHWID: b(x.opts, "suppress_hwid", false)})
+		c.Subscriptions = append(c.Subscriptions, Subscription{Name: idName(x.opts, x.name, "sub_"), Enabled: b(x.opts, "enabled", true), URL: one(x.opts, "url", ""), Mode: one(x.opts, "mode", "auto"), PresetIfNoRules: one(x.opts, "preset_if_no_rules", "minimal"), ImportRulesOnLowResource: b(x.opts, "import_rules_on_low_resource", false), AutoApply: b(x.opts, "auto_apply", false), Interval: i(x.opts, "interval", 86400), HWID: one(x.opts, "hwid", ""), DeviceName: one(x.opts, "device_name", ""), UserAgent: one(x.opts, "user_agent", ""), Headers: list(x.opts, "header", nil), Mirrors: list(x.opts, "mirror", nil), PinSHA256: one(x.opts, "pin_sha256", ""), SuppressHWID: b(x.opts, "suppress_hwid", false)})
 	case "proxy_provider":
-		c.ProxyProviders = append(c.ProxyProviders, ProxyProvider{Name: one(x.opts, "name", x.name), Enabled: b(x.opts, "enabled", true), Type: one(x.opts, "type", "http"), URL: one(x.opts, "url", ""), Interval: i(x.opts, "interval", 86400), Path: one(x.opts, "path", "/etc/purewrt/providers/"+x.name+".yaml"), HealthCheck: b(x.opts, "health_check", true), HealthCheckURL: one(x.opts, "health_check_url", "https://cp.cloudflare.com/generate_204"), HealthCheckInterval: i(x.opts, "health_check_interval", 300), Mwan3Policy: one(x.opts, "mwan3_policy", ""), HWID: one(x.opts, "hwid", ""), DeviceName: one(x.opts, "device_name", ""), UserAgent: one(x.opts, "user_agent", ""), Headers: list(x.opts, "header", nil), Mirrors: list(x.opts, "mirror", nil), PinSHA256: one(x.opts, "pin_sha256", ""), SuppressHWID: b(x.opts, "suppress_hwid", false)})
+		name := idName(x.opts, x.name, "pp_")
+		c.ProxyProviders = append(c.ProxyProviders, ProxyProvider{Name: name, Enabled: b(x.opts, "enabled", true), Type: one(x.opts, "type", "http"), URL: one(x.opts, "url", ""), Interval: i(x.opts, "interval", 86400), Path: one(x.opts, "path", "/etc/purewrt/providers/"+name+".yaml"), HealthCheck: b(x.opts, "health_check", true), HealthCheckURL: one(x.opts, "health_check_url", "https://cp.cloudflare.com/generate_204"), HealthCheckInterval: i(x.opts, "health_check_interval", 300), Mwan3Policy: one(x.opts, "mwan3_policy", ""), HWID: one(x.opts, "hwid", ""), DeviceName: one(x.opts, "device_name", ""), UserAgent: one(x.opts, "user_agent", ""), Headers: list(x.opts, "header", nil), Mirrors: list(x.opts, "mirror", nil), PinSHA256: one(x.opts, "pin_sha256", ""), SuppressHWID: b(x.opts, "suppress_hwid", false)})
 	case "rule_provider":
-		name := one(x.opts, "name", x.name)
+		name := idName(x.opts, x.name, "rp_")
 		format := one(x.opts, "format", "text")
 		c.RuleProviders = append(c.RuleProviders, RuleProvider{Name: name, Enabled: b(x.opts, "enabled", true), Behavior: one(x.opts, "behavior", "domain"), Format: format, ParseMode: one(x.opts, "parse_mode", "auto"), URL: one(x.opts, "url", ""), Interval: i(x.opts, "interval", 86400), Path: one(x.opts, "path", ruleProviderPath(c.Settings.Workdir, name, format)), Section: one(x.opts, "section", "common"), Category: one(x.opts, "category", ""), SourceKind: one(x.opts, "source_kind", ""), RouteAction: one(x.opts, "route_action", ""), Priority: i(x.opts, "priority", 0), SourceSubscription: one(x.opts, "source_subscription", ""), DetectedCategory: one(x.opts, "detected_category", ""), UserOverriddenSection: b(x.opts, "user_overridden_section", false), UserOverriddenAction: b(x.opts, "user_overridden_action", false), UserAgent: one(x.opts, "user_agent", ""), Headers: list(x.opts, "header", nil), Mirrors: list(x.opts, "mirror", nil), PinSHA256: one(x.opts, "pin_sha256", ""), LastError: one(x.opts, "last_error", ""), GeoTarget: one(x.opts, "geo_target", "")})
 	case "bypass":

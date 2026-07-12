@@ -7,6 +7,7 @@
 'require ui';
 'require purewrt.table_section as tableSection';
 'require purewrt.format as fmt';
+'require purewrt.naming as naming';
 
 // Manual rule providers (format = "manual") live as plain text files under
 // /etc/purewrt/rulesets/<name>.txt, owned by the user, no `url`. The
@@ -52,11 +53,7 @@ function providerStatus(stats, name) {
 }
 
 function sectionTitle(sid) {
-  var name = uci.get('purewrt', sid, 'name');
-  if (name) return name;
-  // Anonymous sections get generated cfgXXXXXX ids — meaningless to show.
-  if (!sid || /^cfg[0-9a-f]{6}/.test(sid)) return _('New rule provider');
-  return sid;
+  return naming.displayName(sid, 'rule_provider') || _('New rule provider');
 }
 
 function preserveExistingOption(opt) {
@@ -147,7 +144,7 @@ function nativeListNameFor(file) {
 function existingRuleProviderNames() {
   var set = {};
   uci.sections('purewrt', 'rule_provider', function(sec) {
-    var n = sec.name || sec['.name'];
+    var n = naming.nameOf(sec, 'rule_provider');
     if (n) set[n] = true;
   });
   return set;
@@ -279,7 +276,7 @@ return view.extend({
     ]).then(function(data) {
       var sections = [];
       uci.sections('purewrt', 'section', function(s) {
-        var name = s['.name'] || s.name;
+        var name = naming.nameOf(s, 'section');
         if (name)
           sections.push({ name: name, action: s.action || 'proxy' });
       });
@@ -327,11 +324,11 @@ return view.extend({
 
     var s = m.section(form.TypedSection, 'rule_provider', _('Rule providers'));
     s.addremove = true;
-    // Named sections: the section id IS the provider name (the Go parser
-    // falls back to it when no `name` option is present), same as routing
-    // sections — one name, no separate field to drift.
+    // Named sections: the id is the type-prefixed name (rp_<name>); the Go
+    // parser strips the prefix. One name, no separate field to drift.
     s.anonymous = false;
     s.sectiontitle = sectionTitle;
+    naming.installPrefixedAdd(s, 'rule_provider');
 
     var rpEnabled = s.option(form.Flag, 'enabled', _('Enabled'));
     rpEnabled.default = '1'; // Go side treats an absent option as enabled

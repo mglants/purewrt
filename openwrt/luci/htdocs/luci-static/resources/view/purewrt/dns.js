@@ -5,6 +5,7 @@
 'require ui';
 'require uci';
 'require purewrt.vpn_modal as vpnModal';
+'require purewrt.naming as naming';
 
 var callResolversProbe = rpc.declare({ object: 'purewrt', method: 'resolvers_probe' });
 
@@ -62,7 +63,7 @@ return view.extend({
     // resolvers with no subscription. Multiple VPNs = url-test failover.
     var dnsVpns = s.option(form.DynamicList, 'vpns', _('DNS upstream via VPN'));
     (uci.sections('purewrt', 'vpn') || []).forEach(function(v) {
-      var n = v.name || v['.name'];
+      var n = naming.nameOf(v, 'vpn');
       if (n) dnsVpns.value(n, n + (v.interface ? ' (' + v.interface + ')' : ''));
     });
     dnsVpns.description = _('VPN interfaces added to the DNSProxy pool, so DNS-upstream queries egress via VPN — reach censored DoH/DoT resolvers with no subscription. Empty = DNS via proxy/direct. Define VPNs with "Manage VPNs".');

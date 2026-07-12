@@ -40,17 +40,13 @@ func Serialize(c Config) []byte {
 	// reads the id only, device sections), then let sectionHeader hand out
 	// the rest first-come-first-served with anonymous + `option name`
 	// fallback for the losers.
+	// Type prefixes make cross-type collisions structurally impossible; the
+	// map still guards same-type duplicates and the fixed singleton ids.
 	seen := map[string]bool{
-		"settings": true, "dns": true, "mwan3": true, "ooni": true,
+		"settings": true, "dns": true, "mwan3": true, "ooni": true, "bypass": true,
 	}
 	if c.Bypass.Name != "" {
 		seen[c.Bypass.Name] = true
-	}
-	for _, d := range c.Devices {
-		seen[deviceSectionName(d.MAC)] = true
-	}
-	for _, s := range c.Sections {
-		seen[s.Name] = true
 	}
 	writeMain(&b, c.Settings)
 	writeDNS(&b, c.DNS)
@@ -62,16 +58,16 @@ func Serialize(c Config) []byte {
 		writeZapretStrategy(&b, s, seen)
 	}
 	for _, v := range c.VPNs {
-		writeVPN(&b, v)
+		writeVPN(&b, v, seen)
 	}
 	for _, d := range c.Devices {
 		writeDevice(&b, d)
 	}
 	for _, s := range c.Sections {
-		writeSection(&b, s)
+		writeSection(&b, s, seen)
 	}
 	for _, s := range c.Subscriptions {
-		writeSubscription(&b, s)
+		writeSubscription(&b, s, seen)
 	}
 	for _, p := range c.ProxyProviders {
 		writeProxyProvider(&b, p, seen)
@@ -256,22 +252,38 @@ func q(v string) string { return "'" + strings.ReplaceAll(v, "'", "'\\''") + "'"
 // anything outside [A-Za-z0-9_]).
 var uciIDRE = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
 
-// sectionHeader writes `config <typ> '<name>'` when the name is a valid UCI
-// identifier — the section id then carries the name, the same way routing
-// sections (`config section 'ai'`) work — and reports false: no name option
-// needed, the parser falls back to the section id. Names with dots/dashes
-// can't be section ids, so those keep the legacy anonymous header and report
-// true so the caller emits `option name`. Repeated names also fall back to
-// anonymous: libuci merges duplicate section ids last-wins, which would
-// silently drop all but one entry (our validate rejects duplicates, but
-// Serialize must never lose data on its own).
-func sectionHeader(b *bytes.Buffer, typ, name string, seen map[string]bool) (needNameOpt bool) {
-	if !seen[name] && uciIDRE.MatchString(name) {
-		seen[name] = true
-		fmt.Fprintf(b, "config %s %s\n", typ, q(name))
+// Per-type section-id prefixes. libuci section ids share ONE namespace per
+// config file across all types, so the display name is carved into a
+// type-scoped id (`rp_youtube`, `sec_youtube`, `zs_youtube` can coexist —
+// all displaying as "youtube"). The parser strips the prefix back off
+// (idName in uci.go); devices already follow this pattern with dev_.
+const (
+	prefixSection       = "sec_"
+	prefixSubscription  = "sub_"
+	prefixProxyProvider = "pp_"
+	prefixRuleProvider  = "rp_"
+	prefixVPN           = "vpn_"
+	prefixZapretProfile = "zp_"
+	prefixZapretStrat   = "zs_"
+)
+
+// sectionHeader writes `config <typ> '<prefix><name>'` when the name is a
+// valid UCI identifier — the type-prefixed section id carries the name and
+// the parser recovers it by stripping the prefix — and reports false: no
+// name option needed. Names with dots/dashes can't be section ids, so those
+// keep the legacy anonymous header and report true so the caller emits
+// `option name`. Repeated same-type names also fall back to anonymous:
+// libuci merges duplicate section ids last-wins, which would silently drop
+// all but one entry (our validate rejects duplicates, but Serialize must
+// never lose data on its own).
+func sectionHeader(b *bytes.Buffer, typ, prefix, name string, seen map[string]bool) (needNameOpt bool) {
+	id := prefix + name
+	if !seen[id] && uciIDRE.MatchString(name) {
+		seen[id] = true
+		fmt.Fprintf(b, "config %s %s\n", typ, q(id))
 		return false
 	}
-	seen[name] = true
+	seen[id] = true
 	fmt.Fprintln(b, "config "+typ)
 	return true
 }
@@ -436,7 +448,7 @@ func writeMwan3(b *bytes.Buffer, m Mwan3) {
 }
 
 func writeZapretProfile(b *bytes.Buffer, p ZapretProfile, seen map[string]bool) {
-	if sectionHeader(b, "zapret_profile", p.Name, seen) {
+	if sectionHeader(b, "zapret_profile", prefixZapretProfile, p.Name, seen) {
 		opt(b, "name", p.Name)
 	}
 	optb(b, "enabled", p.Enabled)
@@ -453,7 +465,7 @@ func writeZapretProfile(b *bytes.Buffer, p ZapretProfile, seen map[string]bool) 
 }
 
 func writeZapretStrategy(b *bytes.Buffer, s ZapretStrategy, seen map[string]bool) {
-	if sectionHeader(b, "zapret_strategy", s.Name, seen) {
+	if sectionHeader(b, "zapret_strategy", prefixZapretStrat, s.Name, seen) {
 		opt(b, "name", s.Name)
 	}
 	optb(b, "enabled", s.Enabled)
@@ -471,13 +483,15 @@ func writeZapretStrategy(b *bytes.Buffer, s ZapretStrategy, seen map[string]bool
 	fmt.Fprintln(b)
 }
 
-func writeVPN(b *bytes.Buffer, v VPN) {
-	fmt.Fprintln(b, "config vpn")
-	opt(b, "name", v.Name)
+func writeVPN(b *bytes.Buffer, v VPN, seen map[string]bool) {
+	if sectionHeader(b, "vpn", prefixVPN, v.Name, seen) {
+		opt(b, "name", v.Name)
+	}
 	optb(b, "enabled", v.Enabled)
 	opt(b, "interface", v.Interface)
 	fmt.Fprintln(b)
 }
+
 // deviceSectionName mirrors the LuCI Devices page's id convention
 // (`dev_<mac-without-colons>`) so the Go serializer and LuCI write the SAME
 // named section per device instead of Go emitting an anonymous one that
@@ -500,8 +514,10 @@ func writeDevice(b *bytes.Buffer, d Device) {
 	}
 	fmt.Fprintln(b)
 }
-func writeSection(b *bytes.Buffer, s Section) {
-	fmt.Fprintf(b, "config section %s\n", q(s.Name))
+func writeSection(b *bytes.Buffer, s Section, seen map[string]bool) {
+	if sectionHeader(b, "section", prefixSection, s.Name, seen) {
+		opt(b, "name", s.Name)
+	}
 	optb(b, "enabled", s.Enabled)
 	opt(b, "action", s.Action)
 	opti(b, "tproxy_port", s.TPROXYPort)
@@ -524,9 +540,10 @@ func writeSection(b *bytes.Buffer, s Section) {
 	listv(b, "source_cidr6", s.SourceCIDR6)
 	fmt.Fprintln(b)
 }
-func writeSubscription(b *bytes.Buffer, s Subscription) {
-	fmt.Fprintln(b, "config subscription")
-	opt(b, "name", s.Name)
+func writeSubscription(b *bytes.Buffer, s Subscription, seen map[string]bool) {
+	if sectionHeader(b, "subscription", prefixSubscription, s.Name, seen) {
+		opt(b, "name", s.Name)
+	}
 	optb(b, "enabled", s.Enabled)
 	opt(b, "url", s.URL)
 	opt(b, "mode", s.Mode)
@@ -544,7 +561,7 @@ func writeSubscription(b *bytes.Buffer, s Subscription) {
 	fmt.Fprintln(b)
 }
 func writeProxyProvider(b *bytes.Buffer, p ProxyProvider, seen map[string]bool) {
-	if sectionHeader(b, "proxy_provider", p.Name, seen) {
+	if sectionHeader(b, "proxy_provider", prefixProxyProvider, p.Name, seen) {
 		opt(b, "name", p.Name)
 	}
 	optb(b, "enabled", p.Enabled)
@@ -566,7 +583,7 @@ func writeProxyProvider(b *bytes.Buffer, p ProxyProvider, seen map[string]bool) 
 	fmt.Fprintln(b)
 }
 func writeRuleProvider(b *bytes.Buffer, p RuleProvider, seen map[string]bool) {
-	if sectionHeader(b, "rule_provider", p.Name, seen) {
+	if sectionHeader(b, "rule_provider", prefixRuleProvider, p.Name, seen) {
 		opt(b, "name", p.Name)
 	}
 	optb(b, "enabled", p.Enabled)
