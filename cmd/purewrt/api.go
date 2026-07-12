@@ -33,6 +33,19 @@ func apiMain() {
 			errs <- http.ListenAndServe(a, handler)
 		}(addr)
 	}
+	// Overlay-only mesh endpoint on its own listener + mux: the LAN mux
+	// (8787) never gains mesh routes and the mesh mux exposes nothing else.
+	// Bind failure logs and continues — a broken overlay port must not take
+	// the LAN API down with it.
+	if c, err := m.Load(); err == nil && c.MeshActive() && c.Mesh.APIMeshPort > 0 {
+		go func(port int) {
+			addr := fmt.Sprintf("0.0.0.0:%d", port)
+			fmt.Fprintln(os.Stderr, "purewrt-api: mesh listener on", addr)
+			if err := http.ListenAndServe(addr, m.MeshInfoHandler()); err != nil {
+				fmt.Fprintln(os.Stderr, "purewrt-api: mesh listener failed (continuing without mesh api):", err)
+			}
+		}(c.Mesh.APIMeshPort)
+	}
 	// Any listener failing (port taken, bad address) takes the daemon
 	// down — procd's respawn handles retries, and a partially-bound
 	// daemon would silently hide the misconfiguration otherwise.

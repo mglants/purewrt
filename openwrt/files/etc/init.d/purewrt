@@ -10,6 +10,8 @@ OONI_CRON_START="# PureWRT ooni run start"
 OONI_CRON_END="# PureWRT ooni run end"
 NETCHECK_CRON_START="# PureWRT net-check start"
 NETCHECK_CRON_END="# PureWRT net-check end"
+MESH_CRON_START="# PureWRT mesh sync start"
+MESH_CRON_END="# PureWRT mesh sync end"
 log_level_num() {
     case "$(uci -q get purewrt.settings.log_level)" in
         error|err) echo 0 ;;
@@ -326,6 +328,7 @@ install_cron() {
     remove_mihomo_cron_entry quiet
     remove_ooni_cron_entry quiet
     remove_netcheck_cron_entry quiet
+    remove_mesh_cron_entry quiet
     nicev="$(uci -q get purewrt.settings.update_nice)"; [ -n "$nicev" ] || nicev=19
     ioc="$(uci -q get purewrt.settings.update_ionice_class)"; [ -n "$ioc" ] || ioc=3
     ion="$(uci -q get purewrt.settings.update_ionice_level)"; [ -n "$ion" ] || ion=7
@@ -418,6 +421,23 @@ install_cron() {
         log_msg info "cron: net-check disabled"
     fi
 
+    # Friend-mesh peer discovery — reconciles persisted peers against the
+    # live overlay. Gated on mesh membership; schedule from mesh.sync_cron.
+    mesh_enabled="$(uci -q get purewrt.mesh.enabled)"
+    if [ "$mesh_enabled" = "1" ]; then
+        mesh_schedule="$(uci -q get purewrt.mesh.sync_cron)"
+        [ -n "$mesh_schedule" ] || mesh_schedule='*/5 * * * *'
+        mesh_cmd="$prefix /usr/bin/purewrt mesh-sync 2>&1 | logger -t purewrt-cron"
+        log_msg info "cron: installing mesh-sync schedule='$mesh_schedule'"
+        {
+            echo "$MESH_CRON_START"
+            echo "$mesh_schedule $mesh_cmd"
+            echo "$MESH_CRON_END"
+        } >> /etc/crontabs/root
+    else
+        log_msg info "cron: mesh sync disabled"
+    fi
+
     reload_cron
 }
 reload_cron() {
@@ -472,12 +492,24 @@ remove_netcheck_cron_entry() {
     [ "$mode" = "quiet" ] || log_msg info "disable: PureWRT net-check cron entry already absent"
     return 1
 }
+remove_mesh_cron_entry() {
+    mode="$1"
+    [ -f /etc/crontabs/root ] || return 1
+    if grep -qF "$MESH_CRON_START" /etc/crontabs/root 2>/dev/null; then
+        [ "$mode" = "quiet" ] || log_msg warn "disable: removing PureWRT mesh-sync cron entry"
+        sed -i "\|$MESH_CRON_START|,\|$MESH_CRON_END|d" /etc/crontabs/root 2>/dev/null || true
+        return 0
+    fi
+    [ "$mode" = "quiet" ] || log_msg info "disable: PureWRT mesh-sync cron entry already absent"
+    return 1
+}
 disable() {
     removed=0
     remove_cron_entry          && removed=1
     remove_mihomo_cron_entry   && removed=1
     remove_ooni_cron_entry     && removed=1
     remove_netcheck_cron_entry && removed=1
+    remove_mesh_cron_entry     && removed=1
     [ "$removed" = "1" ] && reload_cron
     name="$(basename "$initscript")"
     name="${name##[SK][0-9][0-9]}"

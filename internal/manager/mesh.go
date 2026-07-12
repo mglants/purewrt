@@ -283,7 +283,7 @@ func (m Manager) meshCLI(c config.Config) mesh.CLI {
 	if portal == "" {
 		portal = config.DefaultMesh().RPCPortal
 	}
-	return mesh.CLI{Bin: cli, Portal: portal}
+	return mesh.CLI{Bin: cli, Portal: portal, Run: m.meshRunner}
 }
 
 func (m Manager) MeshStatus() MeshStatusReport {

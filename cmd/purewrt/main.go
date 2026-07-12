@@ -1062,6 +1062,21 @@ var commands = []command{
 			// Stat-based gate for the LuCI mesh page — zapret_installed twin.
 			printJSON(map[string]bool{"installed": m.MeshInstalled()})
 		}},
+	{name: "mesh-sync", group: "Friend mesh",
+		args: "",
+		desc: "Discover friends on the overlay and persist their exit material",
+		run: func(m manager.Manager) {
+			withOperationLockCoalesce(func() {
+				rep, err := m.MeshSync()
+				fatal(err)
+				printJSON(rep)
+				// Soft-continue semantics: partial failure still printed the
+				// report, but exit non-zero so cron/init retry logic notices.
+				if len(rep.Errors) > 0 {
+					os.Exit(1)
+				}
+			})
+		}},
 	{name: "mesh-peer-set", group: "Friend mesh",
 		args: "<name> enabled=0|1",
 		desc: "Enable/disable consuming one friend's exit",

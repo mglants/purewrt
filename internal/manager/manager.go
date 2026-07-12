@@ -20,6 +20,7 @@ import (
 	"github.com/purewrt/purewrt/internal/config"
 	"github.com/purewrt/purewrt/internal/generator"
 	"github.com/purewrt/purewrt/internal/logging"
+	"github.com/purewrt/purewrt/internal/mesh"
 	"github.com/purewrt/purewrt/internal/metrics"
 	"github.com/purewrt/purewrt/internal/mihomoapi"
 	"github.com/purewrt/purewrt/internal/provider"
@@ -50,6 +51,11 @@ type Manager struct {
 	// They drive the hot-reload-instead-of-restart path in reloadOrRestartMihomo.
 	mihomoReachable func(config.Config) bool
 	mihomoReload    func(config.Config) error
+
+	// meshRunner / meshProbeBase are mesh test seams: fake easytier-cli
+	// output and redirect peer-info probes at an httptest server.
+	meshRunner    mesh.Runner
+	meshProbeBase func(ip string, port int) string
 }
 
 type commandRunner interface {
