@@ -37,6 +37,10 @@
           "ipdb_asn",
           "zapret_installed",
           "zapret_status",
+          "mesh_installed",
+          "mesh_status",
+          "mesh_join_status",
+          "mesh_sync_status",
           "ooni_installed",
           "ooni_status",
           "ooni_run_status",
@@ -96,7 +100,14 @@
           "proxy_delay_test",
           "native_list_add",
           "wizard_reset",
-          "flush_dns_sets"
+          "flush_dns_sets",
+          "mesh_init",
+          "mesh_join_start",
+          "mesh_leave",
+          "mesh_code",
+          "mesh_rotate",
+          "mesh_sync_start",
+          "mesh_peer_set"
         ]
       },
       "uci": ["purewrt"],

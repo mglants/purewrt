@@ -65,6 +65,12 @@
     "action": { "type": "view", "path": "purewrt/zapret" },
     "depends": { "acl": [ "luci-app-purewrt" ] }
   },
+  "admin/services/purewrt/mesh": {
+    "title": "Friend Mesh",
+    "order": 87,
+    "action": { "type": "view", "path": "purewrt/mesh" },
+    "depends": { "acl": [ "luci-app-purewrt" ] }
+  },
   "admin/services/purewrt/ooni": {
     "title": "OONI Probe",
     "order": 90,
