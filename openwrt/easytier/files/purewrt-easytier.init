@@ -22,6 +22,14 @@ start_service() {
     # Restart when purewrt regenerates the TOML (procd config trigger).
     procd_set_param file "$CONF"
     procd_set_param respawn 3600 5 5
+    # INFO logs go to a tmpfs file for the LuCI Friend Mesh log panel.
+    # Via environment because easytier 2.6.4 ignores a [file_logger]
+    # section in the TOML. Console stays at warn and stdout is deliberately
+    # NOT captured: the INFO startup banner echoes the full config
+    # including network_secret, which must not reach syslog. Rolling files
+    # capped well below the 100 MB default: /tmp is RAM.
+    mkdir -p /tmp/purewrt/log
+    procd_set_param env ET_FILE_LOG_LEVEL=info ET_FILE_LOG_DIR=/tmp/purewrt/log ET_FILE_LOG_SIZE=5 ET_FILE_LOG_COUNT=2
     procd_set_param stderr 1
     procd_close_instance
 }

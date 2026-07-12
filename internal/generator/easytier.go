@@ -60,5 +60,11 @@ func EasytierConfig(c config.Config) []byte {
 	// <1 ms), which kills the ss exit and the mesh API. Plain TCP over the
 	// punched UDP path works; revisit if upstream fixes the hijack.
 	b.WriteString("enable_kcp_proxy = false\n")
+	// Log config deliberately absent from the TOML: easytier 2.6.4 ignores
+	// a [file_logger] section here (verified live — no file appears), so
+	// the init script configures INFO file logging via the ET_FILE_LOG_*
+	// environment instead. Console stays at the default warn: easytier's
+	// INFO startup banner echoes the full TOML including network_secret,
+	// and stdout capture would land it in syslog.
 	return []byte(b.String())
 }
