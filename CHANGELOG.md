@@ -4,6 +4,36 @@ All notable changes to PureWRT are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are the `purewrt`
 package version.
 
+## [0.3.2] - 2026-07-12
+
+### Added
+- **Named UCI sections for providers and zapret.** Serialize emits
+  `config <type> '<name>'` when the name is a valid UCI identifier — the
+  section id carries the name, like routing sections. Unsafe names keep the
+  legacy anonymous + `option name` form. LuCI creates named sections and no
+  longer shows `cfgXXXXXX` ids in titles.
+- **Pre-apply validation** for reserved mihomo group names (`GLOBAL`,
+  `DIRECT`, …, `DNSProxy`, `NetCheckProbe`), duplicate `proxy_group` across
+  enabled sections, the mihomo-reserved provider name `default`, and
+  duplicate provider names — clear errors instead of post-apply rollback.
+
+### Fixed
+- **Config-bricking UCI section-id collisions.** libuci section ids share one
+  namespace per file across *all* section types; a duplicate id under a
+  different type (e.g. `zapret_strategy 'youtube'` + `rule_provider
+  'youtube'`) is a hard parse error that breaks every uci consumer — LuCI
+  shows "ubus code 9" on every page. Serialize now reserves all
+  unconditionally-named ids up front and falls back to anonymous +
+  `option name` for later claimants. Also covers the latent 0.3.1 variant
+  where a zapret strategy named after a routing section (or with a dash in
+  the name) produced the same unparseable config.
+- `internal/version` default synced to the VERSION file (0.3.1 release
+  missed it).
+
+### Changed
+- **Generated provider names use underscores** instead of dashes so imported
+  names double as UCI section ids.
+
 ## [0.3.1] - 2026-07-11
 
 ### Added
