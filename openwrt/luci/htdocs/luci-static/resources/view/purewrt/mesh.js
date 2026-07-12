@@ -22,6 +22,14 @@ var callCode = rpc.declare({ object: 'purewrt', method: 'mesh_code' });
 var callRotate = rpc.declare({ object: 'purewrt', method: 'mesh_rotate' });
 var callPeerSet = rpc.declare({ object: 'purewrt', method: 'mesh_peer_set', params: [ 'name', 'enabled' ] });
 var callPeerRemove = rpc.declare({ object: 'purewrt', method: 'mesh_peer_remove', params: [ 'name' ] });
+var callProxyGroups = rpc.declare({ object: 'purewrt', method: 'proxy_groups', expect: { items: [] } });
+
+// proxyMemberLabel mirrors the mihomo/sections pages: name (Nms) / name (dead) / name.
+function proxyMemberLabel(mem) {
+  if (!mem.alive && mem.delay === 0) return mem.name + ' (' + _('dead') + ')';
+  if (mem.delay > 0) return mem.name + ' (' + mem.delay + ' ms)';
+  return mem.name;
+}
 
 var joinJob = bgJob.make({
   startMethod: 'mesh_join_start',
@@ -99,6 +107,12 @@ return view.extend({
     root.appendChild(body);
     self.renderBody(body, status);
     poll.add(function() {
+      // renderBody rebuilds the whole card tree — skip the refresh while the
+      // user is typing in any of our inputs (exit filters, rendezvous list,
+      // sync-code) or the rebuild wipes their edit mid-keystroke.
+      var ae = document.activeElement;
+      if (ae && body.contains(ae) && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA'))
+        return Promise.resolve();
       return callStatus().then(function(st) {
         self.renderBody(body, st || {});
       });
@@ -114,8 +128,91 @@ return view.extend({
       return;
     }
     body.appendChild(self.renderStatusCard(st));
+    body.appendChild(self.renderExitCard(st));
     body.appendChild(self.renderRendezvousCard(st));
     body.appendChild(self.renderPeerTable(st));
+  },
+
+  // --- joined: exit settings -------------------------------------------------
+  renderExitCard: function(st) {
+    // Exit settings are plain UCI plumbing on the mesh section — edited via
+    // the native uci rpc + apply, same as the rendezvous list (no bespoke
+    // rpcd methods). Apply regenerates mihomo/nftables and friends learn a
+    // flipped exit_enabled on their next mesh-sync.
+    var enToggle = E('input', { 'type': 'checkbox' });
+    enToggle.checked = !!st.exit_enabled;
+    var filterIn = E('input', { 'class': 'cbi-input-text', 'style': 'width:22em', 'placeholder': _('include regex — empty matches all') });
+    filterIn.value = st.exit_filter || '';
+    var excludeIn = E('input', { 'class': 'cbi-input-text', 'style': 'width:22em', 'placeholder': _('exclude regex — empty excludes none') });
+    excludeIn.value = st.exit_exclude_filter || '';
+    var capIn = E('input', { 'class': 'cbi-input-text', 'type': 'number', 'min': '0', 'style': 'width:8em', 'placeholder': '0' });
+    capIn.value = st.exit_max_mbit ? String(st.exit_max_mbit) : '';
+
+    var saveBtn = E('button', { 'class': 'btn cbi-button cbi-button-action' }, _('Save exit settings'));
+    saveBtn.addEventListener('click', function(ev) {
+      ev.preventDefault();
+      var cap = parseInt(capIn.value, 10);
+      saveBtn.disabled = true;
+      // Empty / zero → drop the option so defaults reapply.
+      uci.set('purewrt', 'mesh', 'exit_enabled', enToggle.checked ? '1' : '0');
+      uci.set('purewrt', 'mesh', 'exit_filter', filterIn.value.trim() || null);
+      uci.set('purewrt', 'mesh', 'exit_exclude_filter', excludeIn.value.trim() || null);
+      uci.set('purewrt', 'mesh', 'exit_max_mbit', (cap > 0) ? String(cap) : null);
+      uci.save()
+        .then(function() { return uci.apply(); })
+        .then(function() {
+          saveBtn.disabled = false;
+          ui.addNotification(null, E('p', _('Exit settings saved. Friends pick up an offer change on their next sync (~5 min).')), 'info');
+        })
+        .catch(function(e) { saveBtn.disabled = false; ui.addNotification(null, E('p', e.message), 'error'); });
+    });
+
+    // Live view of the applied MeshExit pool — what friends can actually
+    // exit through right now (reflects the applied config, not unsaved
+    // edits). Reuses the proxy_groups rpc the sections page uses.
+    var preview = E('div', { 'style': 'margin-top:.5em' }, E('em', {}, _('Loading exit pool…')));
+    callProxyGroups().then(function(groups) {
+      var g = (groups || []).filter(function(x) { return x && x.name === 'MeshExit'; })[0];
+      preview.innerHTML = '';
+      if (!g || !g.members || !g.members.length) {
+        preview.appendChild(E('em', { 'class': 'cbi-section-note' },
+          st.exit_enabled
+            ? _('Exit pool unavailable — apply the config and ensure mihomo is running.')
+            : _('Exit disabled — no MeshExit group is generated.')));
+        return;
+      }
+      var chips = g.members.map(function(mem) {
+        return E('span', {
+          'style': 'display:inline-block;margin:0 .4em .3em 0;padding:.1em .45em;border-radius:.3em;background:rgba(127,127,127,.15)'
+        }, proxyMemberLabel(mem));
+      });
+      preview.appendChild(E('div', {}, chips));
+      preview.appendChild(E('div', { 'class': 'cbi-section-note' },
+        _('%d node(s) friends can exit through — reflects the applied config (edits show after Save).').format(g.members.length)));
+    }).catch(function() {
+      preview.innerHTML = '';
+      preview.appendChild(E('em', { 'class': 'cbi-section-note' }, _('Exit pool unavailable — mihomo not reachable.')));
+    });
+
+    var row = function(label, ctl, hint) {
+      return E('div', { 'style': 'margin-top:.5em' }, [
+        E('label', {}, [ E('strong', {}, label + ' '), ctl ]),
+        hint ? E('div', { 'class': 'cbi-section-descr' }, hint) : ''
+      ]);
+    };
+    return E('div', { 'class': 'cbi-section' }, [
+      E('h3', {}, _('Exit settings')),
+      row(_('Offer exit to friends'), enToggle,
+        _('When off, this router stops being an exit: the mesh listener and firewall rule disappear and friends drop it on their next sync. You still use friends\' exits; you remain in the mesh.')),
+      row(_('Exit node filter'), filterIn,
+        _('Mihomo regex include filter scoping which of your provider nodes friends may exit through. Empty offers all nodes. VPN outbounds are always offered.')),
+      row(_('Exit node exclude-filter'), excludeIn,
+        _('Mihomo regex exclude filter applied after the include filter.')),
+      row(_('Max throughput (Mbit/s)'), capIn,
+        _('Per-direction cap on friend traffic, enforced in nftables. 0 or empty = unlimited.')),
+      E('div', { 'style': 'margin-top:.7em' }, [ saveBtn ]),
+      preview
+    ]);
   },
 
   // --- joined: rendezvous servers editor -----------------------------------
@@ -273,11 +370,7 @@ return view.extend({
       E('div', { 'style': 'margin-top:.3em' }, [
         E('strong', {}, _('Overlay: ')),
         fmt.pill(st.daemon_running ? _('running') : _('down'), st.daemon_running ? 'ok' : 'danger'),
-        st.overlay_ip ? E('span', { 'style': 'margin-left:.6em;font-family:monospace' }, st.overlay_ip) : '',
-        E('span', { 'style': 'margin-left:1.5em' }, [
-          E('strong', {}, _('Exit offered: ')),
-          fmt.pill(st.exit_enabled ? _('yes') : _('no'), st.exit_enabled ? 'ok' : 'muted')
-        ])
+        st.overlay_ip ? E('span', { 'style': 'margin-left:.6em;font-family:monospace' }, st.overlay_ip) : ''
       ]),
       E('div', { 'style': 'margin-top:.7em' }, [ showCodeBtn, ' ', syncBtn, ' ', diagBtn, ' ', rotateBtn, ' ', leaveBtn ]),
       diagBox
