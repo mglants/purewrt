@@ -184,8 +184,11 @@ call)
         update) read_logread 'purewrt-bg|purewrt-cron|update-rule-provider|update-proxy-provider|providers.*updated|provider.*updated' ;;
         mihomo) read_logread 'mihomo|clash' ;;
         zapret) read_logread 'purewrt-zapret|zapret|nfqws|tpws' ;;
+        # Covers the overlay daemon (procd tags stderr easytier-core) and
+        # the init script's own logger lines (purewrt-easytier).
+        easytier) read_logread 'easytier' ;;
         ooni) read_logread 'ooniprobe' ;;
-        *) read_logread 'purewrt|purewrt-bg|purewrt-cron|mihomo|clash|zapret|nfqws|tpws' ;;
+        *) read_logread 'purewrt|purewrt-bg|purewrt-cron|mihomo|clash|zapret|nfqws|tpws|easytier' ;;
       esac ;;
     mihomo_config) read_file /etc/purewrt/generated/mihomo.yaml ;;
     update) run_rpc_verbose purewrt-rpc "" /usr/bin/purewrt update ;;

@@ -33,10 +33,18 @@ var callZapretInstalled = rpc.declare({
   expect: { installed: false }
 });
 
+// mesh_installed gates the Friend Mesh panel the same way — easytier is an
+// optional companion package.
+var callMeshInstalled = rpc.declare({
+  object: 'purewrt',
+  method: 'mesh_installed',
+  expect: { installed: false }
+});
+
 // Each source is one logread-pattern on the backend. Title goes in the
 // panel heading; hint is the cbi-section-note below it so the user knows
 // what they're looking at without checking the rpcd file.
-// Three panels by daemon. Previous incarnations had separate RPC / Manager
+// One panel per daemon. Previous incarnations had separate RPC / Manager
 // / Update panels but every refresh/apply event in those streams is
 // tagged purewrt-bg / purewrt-cron / purewrt-rpc — all matched by the
 // bare `purewrt` keyword in the merged panel. Users who want just the
@@ -48,7 +56,10 @@ var SOURCES = [
   // mirrors the Zapret config page (also keeps its tab visible). The
   // panel body is replaced by a "not installed" notice at render time,
   // computed once from the rpcd check.
-  { key: 'zapret',  title: 'Zapret',          hint: 'nfqws / tpws DPI-bypass daemon and its scripted runners', requiresZapret: true }
+  { key: 'zapret',  title: 'Zapret',          hint: 'nfqws / tpws DPI-bypass daemon and its scripted runners', requiresZapret: true },
+  // Friend Mesh panel mirrors Zapret: visible always, frozen with a "not
+  // installed" notice when the optional easytier package is absent.
+  { key: 'easytier', title: 'Friend Mesh',    hint: 'easytier overlay daemon — rendezvous dials, hole punching, peer links', requiresMesh: true }
 ];
 
 var DEFAULT_TAIL_LINES   = 200;
@@ -309,7 +320,11 @@ return view.extend({
     // to "show the panel" (callZapretInstalled's expect defaults to
     // false, which would HIDE the panel — but the page degrades on
     // failure to show too little rather than too much).
-    return callZapretInstalled().then(function(zapretInstalled) {
+    return Promise.all([
+      callZapretInstalled().catch(function() { return false; }),
+      callMeshInstalled().catch(function() { return false; })
+    ]).then(function(inst) {
+      var zapretInstalled = inst[0], meshInstalled = inst[1];
       var panels = SOURCES.map(makePanel);
       // For sources whose backend feature is optional and not present,
       // freeze the panel: skip the poll loop and replace the body with a
@@ -321,6 +336,11 @@ return view.extend({
           p.paused = true;
           p.disabled = true;
           p.disabledMsg = _('Zapret is not installed. Install the optional `zapret` (or `purewrt-zapret`) package to enable this daemon and its log feed.');
+        }
+        if (spec.requiresMesh && !meshInstalled) {
+          p.paused = true;
+          p.disabled = true;
+          p.disabledMsg = _('Friend Mesh is not set up. Install the optional `easytier` package from the PureWRT feed to enable the overlay daemon and its log feed.');
         }
       });
       var panelNodes = panels.map(renderPanel);
