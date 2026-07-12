@@ -39,6 +39,7 @@ const (
 	initMihomo     = "/etc/init.d/mihomo"
 	initMwan3      = "/etc/init.d/mwan3"
 	initEasytier   = "/etc/init.d/purewrt-easytier"
+	initPurewrtAPI = "/etc/init.d/purewrt-api"
 	libexecPeerDNS = "/usr/libexec/purewrt-peerdns"
 )
 
@@ -2099,6 +2100,16 @@ func (m Manager) applyServiceRestarts(c config.Config, groups generator.Generati
 			_ = m.runServiceRestart(c, r, initEasytier, "stop")
 			_ = m.runServiceRestart(c, r, initEasytier, "disable")
 			log.Info("apply: easytier stopped (mesh inactive)")
+		}
+		// purewrt-api reads the mesh config at startup only: without a
+		// restart, mesh-init leaves 8788 unbound and a binary upgrade leaves
+		// a stale-parser process answering 503. Best-effort like easytier.
+		if _, err := os.Stat(initPurewrtAPI); err == nil {
+			if err := m.runServiceRestart(c, r, initPurewrtAPI, "restart"); err != nil {
+				log.Warn("apply: purewrt-api restart failed: %v", err)
+			} else {
+				log.Info("apply: purewrt-api restart complete")
+			}
 		}
 	}
 	return nil
