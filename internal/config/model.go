@@ -556,6 +556,7 @@ type Mesh struct {
 	EasytierBin   string   // easytier-core path; presence gates the feature like zapret's nfqws
 	RPCPortal     string   // easytier RPC portal easytier-cli talks to
 	SyncCron      string   // mesh-sync cron schedule; empty disables the cron block
+	PeerTTLDays   int      // GC: drop peers unseen for this many days (0 = never)
 }
 
 // MeshPeer is a persisted friend router discovered by mesh-sync. Material
@@ -625,6 +626,7 @@ func DefaultMesh() Mesh {
 		EasytierBin: "/usr/bin/easytier-core",
 		RPCPortal:   "127.0.0.1:15888",
 		SyncCron:    "*/5 * * * *",
+		PeerTTLDays: 30,
 	}
 }
 

@@ -397,6 +397,7 @@ func applySection(c *Config, x struct {
 		c.Mesh.EasytierBin = one(x.opts, "easytier_bin", d.EasytierBin)
 		c.Mesh.RPCPortal = one(x.opts, "rpc_portal", d.RPCPortal)
 		c.Mesh.SyncCron = one(x.opts, "sync_cron", d.SyncCron)
+		c.Mesh.PeerTTLDays = i(x.opts, "peer_ttl_days", d.PeerTTLDays)
 		// The sync-code is the single stored secret; network identity + PSK
 		// decode from it here. An undecodable code leaves the mesh dormant
 		// (never a parse abort) — the warning surfaces the corruption.

@@ -37,6 +37,7 @@ type MeshSyncReport struct {
 	Probed  int      `json:"probed"`
 	Updated int      `json:"updated"`
 	Added   int      `json:"added"`
+	Removed int      `json:"removed"`
 	Applied bool     `json:"applied"`
 	Errors  []string `json:"errors,omitempty"`
 }
@@ -102,10 +103,15 @@ func (m Manager) MeshSync() (MeshSyncReport, error) {
 	for i, p := range c.MeshPeers {
 		byHWID[p.HWID] = i
 	}
+	// aliveIPs marks overlay-level presence: a peer whose API probe fails is
+	// still alive on the overlay and must not be stamped absent for GC.
+	aliveIPs := map[string]bool{}
+	seenHWID := map[string]bool{}
 	for _, op := range overlay {
 		if op.IPv4 == "" {
 			continue
 		}
+		aliveIPs[op.IPv4] = true
 		rep.Probed++
 		info, err := m.meshProbe(c, key, op.IPv4)
 		if err != nil {
@@ -127,6 +133,7 @@ func (m Manager) MeshSync() (MeshSyncReport, error) {
 			continue
 		}
 		status.Peers[info.NodeName] = meshRuntimePeerState{LastSeen: now.Format(time.RFC3339)}
+		seenHWID[info.HWID] = true
 		if i, ok := byHWID[info.HWID]; ok {
 			p := &c.MeshPeers[i]
 			if p.Name != info.NodeName || p.OverlayIP != op.IPv4 || p.ListenPort != info.ListenPort || p.ExitOffered != info.ExitOffered {
@@ -142,6 +149,10 @@ func (m Manager) MeshSync() (MeshSyncReport, error) {
 		changed = true
 	}
 
+	if meshGCPeers(&c, &rep, seenHWID, aliveIPs, now) {
+		changed = true
+	}
+
 	if b, err := json.Marshal(status); err == nil {
 		_ = os.MkdirAll(filepath.Dir(meshStatusPath(c)), 0755)
 		_, _ = system.WriteIfChanged(meshStatusPath(c), b, 0644)
@@ -153,6 +164,54 @@ func (m Manager) MeshSync() (MeshSyncReport, error) {
 		rep.Applied = true
 	}
 	return rep, nil
+}
+
+// meshDay is the UCI last_seen granularity: one calendar day, so the stamp
+// costs at most one flash write per day per peer while still giving GC a
+// reboot-proof absence clock (the tmpfs liveness file resets on reboot and
+// can't drive deletion decisions).
+const meshDay = "2006-01-02"
+
+// meshGCPeers stamps day-granular last_seen on present peers and drops peers
+// unseen for more than Mesh.PeerTTLDays days (0 disables GC). "Present"
+// means either a successful API probe (hwid match) or bare overlay presence
+// (its IP answers easytier even if the purewrt API is down) — only full
+// absence ages a peer. Peers without a stamp yet are stamped now, so the TTL
+// clock always starts from a recorded day, never from a guess.
+func meshGCPeers(c *config.Config, rep *MeshSyncReport, seenHWID map[string]bool, aliveIPs map[string]bool, now time.Time) bool {
+	today := now.Format(meshDay)
+	changed := false
+	kept := c.MeshPeers[:0]
+	for _, p := range c.MeshPeers {
+		present := seenHWID[p.HWID] || (p.OverlayIP != "" && aliveIPs[p.OverlayIP])
+		if present || p.LastSeen == "" {
+			if stampDay(p.LastSeen) != today {
+				p.LastSeen = today
+				changed = true
+			}
+			kept = append(kept, p)
+			continue
+		}
+		if ttl := c.Mesh.PeerTTLDays; ttl > 0 {
+			if last, err := time.Parse(meshDay, stampDay(p.LastSeen)); err == nil && now.Sub(last) > time.Duration(ttl)*24*time.Hour {
+				rep.Removed++
+				changed = true
+				continue // dropped; rediscovery re-adds it if it ever returns
+			}
+		}
+		kept = append(kept, p)
+	}
+	c.MeshPeers = kept
+	return changed
+}
+
+// stampDay normalizes a stored last_seen to day granularity, accepting the
+// RFC3339 stamps older builds wrote.
+func stampDay(s string) string {
+	if len(s) >= len(meshDay) {
+		return s[:len(meshDay)]
+	}
+	return s
 }
 
 // meshProbe fetches and authenticates one peer's /mesh/v1/info.

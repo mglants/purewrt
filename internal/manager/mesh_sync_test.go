@@ -86,9 +86,10 @@ func TestMeshSyncDiscoversAndPersistsPeer(t *testing.T) {
 	if p.Name != "beta" || p.OverlayIP != "10.126.126.2" || !p.Enabled || !p.ExitOffered {
 		t.Fatalf("peer material wrong: %+v", p)
 	}
-	// Liveness landed in the runtime file, not UCI.
-	if p.LastSeen != "" {
-		t.Fatalf("LastSeen leaked into UCI: %+v", p)
+	// The GC clock: a day-granular stamp lands in UCI (one flash write per
+	// day at most); fine-grained liveness stays in the runtime file.
+	if p.LastSeen != time.Now().UTC().Format(meshDay) {
+		t.Fatalf("day stamp missing/wrong in UCI: %+v", p)
 	}
 	b, err := os.ReadFile(meshStatusPath(c))
 	if err != nil {
@@ -210,5 +211,119 @@ func TestMeshInfoHandlerAuth(t *testing.T) {
 	oldMac := mesh.SignRequest(key, old, "nonce-2", http.MethodGet, "/mesh/v1/info")
 	if resp := get(old, "nonce-2", oldMac); resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("stale timestamp got %d", resp.StatusCode)
+	}
+}
+
+func TestMeshPeerGC(t *testing.T) {
+	m, srv, _ := meshSyncPair(t)
+	m.meshRunner = fakePeersRunner("10.126.126.2")
+	m.meshProbeBase = func(ip string, port int) string { return srv.URL }
+
+	old := time.Now().UTC().AddDate(0, 0, -40).Format(meshDay)
+	fresh := time.Now().UTC().AddDate(0, 0, -3).Format(meshDay)
+	c, _ := m.Load()
+	c.MeshPeers = []config.MeshPeer{
+		// Absent + stamped 40d ago → GC'd (default TTL 30d).
+		{HWID: "purewrt-cccccccccccccccccccccccc", Name: "gamma", Enabled: true, OverlayIP: "10.126.126.7", ExitOffered: true, LastSeen: old},
+		// Absent + stamped 3d ago → kept.
+		{HWID: "purewrt-dddddddddddddddddddddddd", Name: "delta", Enabled: true, OverlayIP: "10.126.126.8", ExitOffered: true, LastSeen: fresh},
+		// Absent + never stamped (pre-GC entry) → grace-stamped, kept.
+		{HWID: "purewrt-eeeeeeeeeeeeeeeeeeeeeeee", Name: "eps", Enabled: true, OverlayIP: "10.126.126.9", ExitOffered: true},
+	}
+	if err := config.Save(m.ConfigPath, c); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := m.MeshSync()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Removed != 1 {
+		t.Fatalf("expected 1 GC'd peer: %+v", rep)
+	}
+	c, _ = m.Load()
+	byName := map[string]config.MeshPeer{}
+	for _, p := range c.MeshPeers {
+		byName[p.Name] = p
+	}
+	if _, ok := byName["gamma"]; ok {
+		t.Fatal("expired peer survived GC")
+	}
+	if _, ok := byName["delta"]; !ok {
+		t.Fatal("fresh-stamped peer was GC'd")
+	}
+	today := time.Now().UTC().Format(meshDay)
+	if p := byName["eps"]; p.LastSeen != today {
+		t.Fatalf("unstamped peer not grace-stamped: %+v", p)
+	}
+	// beta (live) also stamped today.
+	if p := byName["beta"]; p.LastSeen != today {
+		t.Fatalf("live peer not stamped: %+v", p)
+	}
+}
+
+func TestMeshPeerGCDisabled(t *testing.T) {
+	m, srv, _ := meshSyncPair(t)
+	m.meshRunner = fakePeersRunner("10.126.126.2")
+	m.meshProbeBase = func(ip string, port int) string { return srv.URL }
+
+	old := time.Now().UTC().AddDate(0, 0, -400).Format(meshDay)
+	c, _ := m.Load()
+	c.Mesh.PeerTTLDays = 0 // GC off
+	c.MeshPeers = []config.MeshPeer{
+		{HWID: "purewrt-cccccccccccccccccccccccc", Name: "gamma", Enabled: true, OverlayIP: "10.126.126.7", ExitOffered: true, LastSeen: old},
+	}
+	if err := config.Save(m.ConfigPath, c); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := m.MeshSync()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Removed != 0 {
+		t.Fatalf("GC ran with TTL 0: %+v", rep)
+	}
+	c, _ = m.Load()
+	found := false
+	for _, p := range c.MeshPeers {
+		if p.Name == "gamma" {
+			found = true
+			// Absent peer's old stamp must NOT be refreshed.
+			if p.LastSeen != old {
+				t.Fatalf("absent peer stamp rewritten: %+v", p)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("peer dropped despite TTL 0")
+	}
+}
+
+func TestMeshPeerGCKeepsOverlayAliveProbelessPeer(t *testing.T) {
+	// A peer alive on the overlay whose purewrt API is down must be stamped
+	// present, never aged toward GC.
+	m, _, _ := meshSyncPair(t)
+	m.meshRunner = fakePeersRunner("10.126.126.7")
+	dead := httptest.NewServer(http.NotFoundHandler())
+	dead.Close()
+	m.meshProbeBase = func(ip string, port int) string { return dead.URL }
+
+	old := time.Now().UTC().AddDate(0, 0, -40).Format(meshDay)
+	c, _ := m.Load()
+	c.MeshPeers = []config.MeshPeer{
+		{HWID: "purewrt-cccccccccccccccccccccccc", Name: "gamma", Enabled: true, OverlayIP: "10.126.126.7", ExitOffered: true, LastSeen: old},
+	}
+	if err := config.Save(m.ConfigPath, c); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := m.MeshSync()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Removed != 0 {
+		t.Fatalf("overlay-alive peer GC'd: %+v", rep)
+	}
+	c, _ = m.Load()
+	if len(c.MeshPeers) != 1 || c.MeshPeers[0].LastSeen != time.Now().UTC().Format(meshDay) {
+		t.Fatalf("overlay-alive peer not kept+stamped: %+v", c.MeshPeers)
 	}
 }

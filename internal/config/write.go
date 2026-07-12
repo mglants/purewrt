@@ -664,6 +664,9 @@ func writeMesh(b *bytes.Buffer, m Mesh) {
 	if m.SyncCron != d.SyncCron {
 		opt(b, "sync_cron", m.SyncCron)
 	}
+	if m.PeerTTLDays != d.PeerTTLDays {
+		opti(b, "peer_ttl_days", m.PeerTTLDays)
+	}
 	fmt.Fprintln(b)
 }
 
