@@ -26,9 +26,13 @@ start_service() {
     procd_close_instance
 }
 
-service_triggers() {
-    procd_add_reload_trigger "purewrt"
-}
+# Deliberately NO procd_add_reload_trigger "purewrt": that fires on every
+# LuCI Save & Apply of ANY purewrt option and a daemon restart renegotiates
+# the DHCP overlay IP, invalidating persisted peer records (the same loop
+# the generator's easytier fingerprint group prevents on the CLI path).
+# Restarts are driven by exactly two things: `purewrt apply` when the
+# easytier-material config changed, and procd's `file` param above when the
+# generated TOML content actually changed.
 
 reload_service() {
     restart
