@@ -209,7 +209,7 @@ func renderMihomoBase(c config.Config) []byte {
 		writeMeshExitGroup(&b, c, enabledProviders)
 	}
 	if hasProxySection {
-		writeNetCheckProbeGroup(&b, c, enabledProviders)
+		writeNetCheckProbeGroup(&b, c, enabledProviders, friends)
 	}
 	b.WriteString("\nrules:\n  - DOMAIN-SUFFIX,dns.google,DNSProxy\n  - DOMAIN-SUFFIX,cloudflare-dns.com,DNSProxy\n  - DOMAIN-SUFFIX,dns.quad9.net,DNSProxy\n  - IP-CIDR,1.1.1.1/32,DNSProxy,no-resolve\n  - IP-CIDR,8.8.8.8/32,DNSProxy,no-resolve\n  - IP-CIDR,9.9.9.9/32,DNSProxy,no-resolve\n")
 	for _, sec := range c.Sections {
@@ -275,10 +275,11 @@ func hasCommonGroup(c config.Config) bool {
 }
 
 // writeNetCheckProbeGroup emits the NetCheckProbe `select` group whose members
-// are every section proxy group + each vpn_* outbound + DIRECT, plus the
-// provider nodes via `use:` (a select group can hold both groups and nodes).
-// net-check --per-node SelectProxy's each member to probe it in isolation.
-func writeNetCheckProbeGroup(b *strings.Builder, c config.Config, providers []config.ProxyProvider) {
+// are every section proxy group + each vpn_* outbound + friend exits + DIRECT,
+// plus the provider nodes via `use:` (a select group can hold both groups and
+// nodes). net-check --per-node SelectProxy's each member to probe it in
+// isolation; individual friend_* members let probes pin one friend exit.
+func writeNetCheckProbeGroup(b *strings.Builder, c config.Config, providers []config.ProxyProvider, friends []friendProxy) {
 	b.WriteString("  - name: NetCheckProbe\n    type: select\n    proxies:\n      - DIRECT\n")
 	seen := map[string]bool{}
 	for _, sec := range c.Sections {
@@ -289,6 +290,9 @@ func writeNetCheckProbeGroup(b *strings.Builder, c config.Config, providers []co
 	}
 	for _, v := range referencedVPNs(c) {
 		b.WriteString("      - " + vpnProxyName(v.Name) + "\n")
+	}
+	for _, f := range friends {
+		b.WriteString("      - " + f.Name + "\n")
 	}
 	if len(providers) > 0 {
 		b.WriteString("    use:\n")

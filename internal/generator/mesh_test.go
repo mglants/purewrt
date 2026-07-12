@@ -177,6 +177,18 @@ func TestFriendDisabledOrNoExitNotEmitted(t *testing.T) {
 	}
 }
 
+func TestNetCheckProbeIncludesFriends(t *testing.T) {
+	// Friend exits are probe-able in isolation: net-check --per-node and
+	// throughput tests pin one friend via the NetCheckProbe select group.
+	c := joinedMesh()
+	c.Sections = []config.Section{{Name: "common", Enabled: true, Action: "proxy", TPROXYPort: 7894, ProxyGroup: "Common", IPv4Enabled: true}}
+	c.MeshPeers = []config.MeshPeer{{HWID: "purewrt-bbbbbbbbbbbbbbbbbbbbbbbb", Name: "beta", Enabled: true, OverlayIP: "10.126.126.2", ListenPort: 7897, ExitOffered: true}}
+	probe := groupBlock(t, string(Mihomo(c)), "NetCheckProbe")
+	if !strings.Contains(probe, "- friend_bbbbbbbbbbbbbbbbbbbbbbbb") {
+		t.Fatalf("NetCheckProbe missing friend member:\n%s", probe)
+	}
+}
+
 func TestFriendKeyedByHWIDNotName(t *testing.T) {
 	// The display name is cosmetic: a hostile name must not block the peer
 	// (identity is the hwid) and must never reach the YAML; a malformed
