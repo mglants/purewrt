@@ -61,10 +61,10 @@ func EasytierConfig(c config.Config) []byte {
 	// punched UDP path works; revisit if upstream fixes the hijack.
 	b.WriteString("enable_kcp_proxy = false\n")
 	// Log config deliberately absent from the TOML: easytier 2.6.4 ignores
-	// a [file_logger] section here (verified live — no file appears), so
-	// the init script configures INFO file logging via the ET_FILE_LOG_*
-	// environment instead. Console stays at the default warn: easytier's
-	// INFO startup banner echoes the full TOML including network_secret,
-	// and stdout capture would land it in syslog.
+	// logger sections here (verified live — no file appears), so the init
+	// script sets ET_CONSOLE_LOG_LEVEL=info and procd forwards stdout to
+	// syslog for the LuCI log panel. The INFO startup banner echoes the
+	// full TOML including network_secret into syslog — accepted tradeoff;
+	// the rpcd log source strips the secret line from the panel.
 	return []byte(b.String())
 }
