@@ -1022,11 +1022,13 @@ var (
 
 // mihomoReservedGroupNames are proxy-group names the generated mihomo.yaml
 // cannot use: mihomo's built-in proxies/groups plus the groups PureWRT itself
-// always emits (DNSProxy, NetCheckProbe). A section proxy_group colliding with
-// any of these fails mihomo config validation after apply.
+// emits (DNSProxy, NetCheckProbe, and the mesh groups MeshExit/Friends). A
+// section proxy_group colliding with any of these fails mihomo config
+// validation after apply.
 var mihomoReservedGroupNames = map[string]bool{
 	"GLOBAL": true, "DIRECT": true, "REJECT": true, "REJECT-DROP": true,
 	"PASS": true, "COMPATIBLE": true, "DNSProxy": true, "NetCheckProbe": true,
+	"MeshExit": true, "Friends": true,
 }
 
 func validateConfigHardening(c config.Config) error {

@@ -196,11 +196,14 @@ func renderMihomoBase(c config.Config) []byte {
 				// preferring it — IN-NAME rules, LuCI group-select and
 				// NetCheckProbe keep the unchanged public name.
 				writeProxyGroup(&b, sec.ProxyGroup+"_local", sec.ProxyGroupType, sec.ProxyFilter, sec.ProxyExcludeFilter, sec.ProxyStrategy, sec.ProxyHealthCheckURL, sec.ProxyHealthCheckInterval, enabledProviders, resolveVPNMembers(c, sec.VPNs))
-				writeSectionFallbackGroup(&b, sec.ProxyGroup, sec.ProxyHealthCheckURL, sec.ProxyHealthCheckInterval, friends)
+				writeSectionFallbackGroup(&b, sec.ProxyGroup, sec.ProxyHealthCheckURL, sec.ProxyHealthCheckInterval)
 			} else {
 				writeProxyGroup(&b, sec.ProxyGroup, sec.ProxyGroupType, sec.ProxyFilter, sec.ProxyExcludeFilter, sec.ProxyStrategy, sec.ProxyHealthCheckURL, sec.ProxyHealthCheckInterval, enabledProviders, resolveVPNMembers(c, sec.VPNs))
 			}
 		}
+	}
+	if len(friends) > 0 {
+		writeFriendsGroup(&b, friends)
 	}
 	if meshExit {
 		writeMeshExitGroup(&b, c, enabledProviders)

@@ -179,7 +179,7 @@ func TestValidateRejectsDuplicateProxyProviderNames(t *testing.T) {
 }
 
 func TestValidateRejectsReservedProxyGroupNames(t *testing.T) {
-	for _, group := range []string{"GLOBAL", "DIRECT", "REJECT", "REJECT-DROP", "PASS", "COMPATIBLE", "DNSProxy", "NetCheckProbe"} {
+	for _, group := range []string{"GLOBAL", "DIRECT", "REJECT", "REJECT-DROP", "PASS", "COMPATIBLE", "DNSProxy", "NetCheckProbe", "MeshExit", "Friends"} {
 		c := config.Default()
 		c.Sections = []config.Section{{Name: "media", Enabled: true, Action: "proxy", TPROXYPort: 7894, ProxyGroup: group, IPv4Enabled: true, IPv6Enabled: true}}
 		err := validateConfigHardening(c)

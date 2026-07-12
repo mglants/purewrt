@@ -28,7 +28,7 @@ func joinedMesh() config.Config {
 
 func TestMeshOffLeavesMihomoUntouched(t *testing.T) {
 	out := string(Mihomo(config.Default()))
-	for _, s := range []string{"mesh-in", "MeshExit", "friend_", "_local"} {
+	for _, s := range []string{"mesh-in", "MeshExit", "friend_", "_local", "Friends"} {
 		if strings.Contains(out, s) {
 			t.Fatalf("mesh-off config contains %q:\n%s", s, out)
 		}
@@ -61,7 +61,7 @@ func TestMeshExitGroupNeverLeaksDirectOrFriendOrSection(t *testing.T) {
 	out := string(Mihomo(c))
 
 	block := meshExitBlock(t, out)
-	for _, forbidden := range []string{"DIRECT", "friend_beta", "Media", "AI", "Common"} {
+	for _, forbidden := range []string{"DIRECT", "friend_beta", "Friends", "Media", "AI", "Common"} {
 		if strings.Contains(block, forbidden) {
 			t.Fatalf("MeshExit group leaks %q:\n%s", forbidden, block)
 		}
@@ -109,7 +109,9 @@ func TestFriendProxyAndFallbackWiring(t *testing.T) {
 	if !strings.Contains(out, "name: friend_beta") || !strings.Contains(out, "server: 10.126.126.2") {
 		t.Fatalf("friend proxy missing:\n%s", out)
 	}
-	// The section group named Common must become a fallback wrapping Common_local + friend_beta.
+	// The section group named Common must become a fallback wrapping
+	// Common_local + the shared Friends group (friends never appear in the
+	// fallback directly).
 	if !strings.Contains(out, "name: Common_local") {
 		t.Fatalf("section _local group missing:\n%s", out)
 	}
@@ -117,12 +119,46 @@ func TestFriendProxyAndFallbackWiring(t *testing.T) {
 	if !strings.Contains(fb, "type: fallback") {
 		t.Fatalf("Common not a fallback group:\n%s", fb)
 	}
-	if !strings.Contains(fb, "Common_local") || !strings.Contains(fb, "friend_beta") {
+	if !strings.Contains(fb, "Common_local") || !strings.Contains(fb, "- Friends") {
 		t.Fatalf("fallback missing members:\n%s", fb)
+	}
+	if strings.Contains(fb, "friend_beta") {
+		t.Fatalf("fallback references a friend directly instead of Friends:\n%s", fb)
+	}
+	// The Friends group spreads across friends: load-balance + sticky.
+	fr := groupBlock(t, out, "Friends")
+	for _, want := range []string{"type: load-balance", "strategy: sticky-sessions", "- friend_beta", "url: ", "interval: "} {
+		if !strings.Contains(fr, want) {
+			t.Fatalf("Friends group missing %q:\n%s", want, fr)
+		}
 	}
 	// IN-NAME rule name stays the public group name.
 	if !strings.Contains(out, "IN-NAME,tproxy-common,Common") {
 		t.Fatalf("IN-NAME rule changed:\n%s", out)
+	}
+}
+
+func TestFriendsGroupSingleFriendStillEmitted(t *testing.T) {
+	// One friend still gets the Friends wrapper — uniform YAML shape.
+	c := joinedMesh()
+	c.MeshPeers = []config.MeshPeer{{HWID: "purewrt-bbbbbbbbbbbbbbbbbbbbbbbb", Name: "beta", Enabled: true, OverlayIP: "10.126.126.2", ListenPort: 7897, ExitOffered: true}}
+	out := string(Mihomo(c))
+	fr := groupBlock(t, out, "Friends")
+	if !strings.Contains(fr, "- friend_beta") {
+		t.Fatalf("Friends group missing its only member:\n%s", fr)
+	}
+}
+
+func TestNoConsumableFriendsNoFriendsGroup(t *testing.T) {
+	// Mesh active but every peer ineligible: no Friends group, no _local
+	// wrappers — sections emit plainly.
+	c := joinedMesh()
+	c.MeshPeers = []config.MeshPeer{{HWID: "purewrt-bbbbbbbbbbbbbbbbbbbbbbbb", Name: "beta", Enabled: false, OverlayIP: "10.126.126.2", ListenPort: 7897, ExitOffered: true}}
+	out := string(Mihomo(c))
+	for _, s := range []string{"name: Friends", "_local"} {
+		if strings.Contains(out, s) {
+			t.Fatalf("friendless mesh still emits %q:\n%s", s, out)
+		}
 	}
 }
 

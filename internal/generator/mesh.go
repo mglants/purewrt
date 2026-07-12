@@ -125,15 +125,13 @@ func writeMeshExitGroup(b *strings.Builder, c config.Config, providers []config.
 	writeProxyGroup(b, "MeshExit", "url-test", c.Mesh.ExitFilter, c.Mesh.ExitExcludeFilter, "", "", 0, providers, vpnMembers)
 }
 
-// writeSectionFallbackGroup wraps a section's local group with friend exits:
-// the public group name becomes a `fallback` preferring <name>_local, so the
-// IN-NAME rule, LuCI group-select and NetCheckProbe keep working unchanged,
-// and friends only carry traffic when every local node is dead.
-func writeSectionFallbackGroup(b *strings.Builder, name, healthURL string, healthInterval int, friends []friendProxy) {
-	b.WriteString("  - name: " + name + "\n    type: fallback\n    proxies:\n      - " + name + "_local\n")
-	for _, f := range friends {
-		b.WriteString("      - " + f.Name + "\n")
-	}
+// writeSectionFallbackGroup wraps a section's local group with the shared
+// Friends group: the public group name becomes a `fallback` preferring
+// <name>_local, so the IN-NAME rule, LuCI group-select and NetCheckProbe
+// keep working unchanged, and friends only carry traffic when every local
+// node is dead.
+func writeSectionFallbackGroup(b *strings.Builder, name, healthURL string, healthInterval int) {
+	b.WriteString("  - name: " + name + "\n    type: fallback\n    proxies:\n      - " + name + "_local\n      - Friends\n")
 	if healthURL == "" {
 		healthURL = "https://cp.cloudflare.com/generate_204"
 	}
@@ -141,4 +139,19 @@ func writeSectionFallbackGroup(b *strings.Builder, name, healthURL string, healt
 		healthInterval = 300
 	}
 	b.WriteString("    url: " + healthURL + "\n    interval: " + itoa(healthInterval) + "\n")
+}
+
+// writeFriendsGroup emits the shared consumer-side group over every
+// consumable friend exit: load-balance with sticky-sessions, so parallel
+// flows spread across friends while each src/dst pair stays pinned, and
+// health checks skip dead friends. Emitted once (sections reference it via
+// their fallback wrapper), even for a single friend — uniform shape, stable
+// name for LuCI. Hand-rolled instead of writeProxyGroup: that helper falls
+// back to `use: [main]` when member-less, which must never happen here.
+func writeFriendsGroup(b *strings.Builder, friends []friendProxy) {
+	b.WriteString("  - name: Friends\n    type: load-balance\n    proxies:\n")
+	for _, f := range friends {
+		b.WriteString("      - " + f.Name + "\n")
+	}
+	b.WriteString("    url: https://cp.cloudflare.com/generate_204\n    interval: 300\n    strategy: sticky-sessions\n")
 }

@@ -412,7 +412,7 @@ return view.extend({
     proxyGroup.validate = function(sid, v) {
       // Mirrors the Go-side reserved list (mihomoReservedGroupNames): mihomo
       // built-ins plus the groups PureWRT always generates.
-      var reserved = [ 'GLOBAL', 'DIRECT', 'REJECT', 'REJECT-DROP', 'PASS', 'COMPATIBLE', 'DNSProxy', 'NetCheckProbe' ];
+      var reserved = [ 'GLOBAL', 'DIRECT', 'REJECT', 'REJECT-DROP', 'PASS', 'COMPATIBLE', 'DNSProxy', 'NetCheckProbe', 'MeshExit', 'Friends' ];
       if (reserved.indexOf(v) !== -1)
         return _('%s is a reserved mihomo/PureWRT group name; pick another').format(v);
       return true;
