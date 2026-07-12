@@ -7,9 +7,16 @@ import (
 	"strings"
 )
 
+// AutomaticHWID is the router's device identity: sha256 over stable hardware
+// sources (machine-id, base MACs), hashed so raw MACs never leave the box.
+// The hostname is deliberately NOT in the seed — it is mutable, and both
+// consumers need stability: subscription panels key device tracking on this
+// id, and the friend mesh derives peer credentials from it (a rename must
+// not mint a new identity). Hostname is only the last-resort seed when no
+// hardware source exists at all.
 func AutomaticHWID() string {
 	parts := []string{}
-	for _, p := range []string{"/etc/machine-id", "/proc/sys/kernel/hostname", "/sys/class/net/br-lan/address", "/sys/class/net/eth0/address"} {
+	for _, p := range []string{"/etc/machine-id", "/sys/class/net/br-lan/address", "/sys/class/net/eth0/address"} {
 		if b, err := os.ReadFile(p); err == nil {
 			v := strings.TrimSpace(string(b))
 			if v != "" {

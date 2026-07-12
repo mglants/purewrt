@@ -27,12 +27,12 @@ func TestMeshConfigRoundTrip(t *testing.T) {
 	c.Mesh.Enabled = true
 	c.Mesh.Code = code.Encode()
 	c.Mesh.NodeName = "router-alpha"
-	c.Mesh.HWID = "a0b1c2d3e4f5"
+	c.Mesh.HWID = "purewrt-aaaaaaaaaaaaaaaaaaaaaaaa"
 	c.Mesh.ExitEnabled = true
 	c.Mesh.ListenPort = 7899 // non-default, must survive
 	c.MeshPeers = []MeshPeer{
-		{HWID: "b0b1c2d3e4f5", Name: "router-beta", Enabled: true, OverlayIP: "10.126.126.2", ListenPort: 7897, ExitOffered: true, LastSeen: "2026-07-12T10:00:00Z"},
-		{HWID: "c0b1c2d3e4f5", Name: "router-gamma", Enabled: false, OverlayIP: "10.126.126.3", ListenPort: 7897, ExitOffered: false, LastError: "probe timeout"},
+		{HWID: "purewrt-bbbbbbbbbbbbbbbbbbbbbbbb", Name: "router-beta", Enabled: true, OverlayIP: "10.126.126.2", ListenPort: 7897, ExitOffered: true, LastSeen: "2026-07-12T10:00:00Z"},
+		{HWID: "purewrt-cccccccccccccccccccccccc", Name: "router-gamma", Enabled: false, OverlayIP: "10.126.126.3", ListenPort: 7897, ExitOffered: false, LastError: "probe timeout"},
 	}
 
 	path := filepath.Join(t.TempDir(), "purewrt")
@@ -69,9 +69,9 @@ func TestMeshSerializeMinimal(t *testing.T) {
 	c.Mesh.Enabled = true
 	c.Mesh.Code = code.Encode()
 	c.Mesh.NodeName = "alpha"
-	c.Mesh.HWID = "a0b1c2d3e4f5"
+	c.Mesh.HWID = "purewrt-aaaaaaaaaaaaaaaaaaaaaaaa"
 	c.Mesh.ExitEnabled = true
-	c.MeshPeers = []MeshPeer{{HWID: "b0b1c2d3e4f5", Name: "beta", Enabled: true, OverlayIP: "10.126.126.2", ListenPort: 7897, ExitOffered: true}}
+	c.MeshPeers = []MeshPeer{{HWID: "purewrt-bbbbbbbbbbbbbbbbbbbbbbbb", Name: "beta", Enabled: true, OverlayIP: "10.126.126.2", ListenPort: 7897, ExitOffered: true}}
 
 	out := string(Serialize(c))
 	for _, banned := range []string{"psk", "network_secret", "network_name", "cred_salt", "listen_port", "api_mesh_port", "device_name", "easytier_bin", "rpc_portal", "sync_cron", "extra_peer"} {
@@ -94,7 +94,7 @@ func TestMeshCodeCarriesExtraPeers(t *testing.T) {
 	c.Mesh.Enabled = true
 	c.Mesh.Code = code.Encode()
 	c.Mesh.NodeName = "alpha"
-	c.Mesh.HWID = "a0b1c2d3e4f5"
+	c.Mesh.HWID = "purewrt-aaaaaaaaaaaaaaaaaaaaaaaa"
 	c.Mesh.ExtraPeers = []string{"tcp://relay.example.org:11010"}
 	if out := string(Serialize(c)); strings.Contains(out, "extra_peer") {
 		t.Fatalf("extras matching code TLVs must not serialize:\n%s", out)
@@ -167,7 +167,7 @@ func TestMeshParseAppliesDefaults(t *testing.T) {
 	option node_name 'r1'
 
 config mesh_peer 'pwpeer_router_beta'
-	option hwid 'b0b1c2d3e4f5'
+	option hwid 'purewrt-bbbbbbbbbbbbbbbbbbbbbbbb'
 	option name 'router-beta'
 	option overlay_ip '10.126.126.2'
 	option exit_offered '1'
@@ -205,7 +205,7 @@ func TestMeshCredSaltDerivation(t *testing.T) {
 	c.Mesh.Enabled = true
 	c.Mesh.Code = code.Encode()
 	c.Mesh.NodeName = "alpha"
-	c.Mesh.HWID = "a0b1c2d3e4f5"
+	c.Mesh.HWID = "purewrt-aaaaaaaaaaaaaaaaaaaaaaaa"
 	// Repopulate decoded fields the way Load does.
 	path := filepath.Join(t.TempDir(), "purewrt")
 	if err := Save(path, c); err != nil {
@@ -221,14 +221,14 @@ func TestMeshCredSaltDerivation(t *testing.T) {
 	}
 	// A peer with the same hwid derives the same salt from the same PSK —
 	// that is exactly what lets friends compute this router's password.
-	peer := MeshPeer{HWID: "a0b1c2d3e4f5"}
+	peer := MeshPeer{HWID: "purewrt-aaaaaaaaaaaaaaaaaaaaaaaa"}
 	if peer.CredSalt(got.Mesh.PSK) != own {
 		t.Fatal("peer-side derivation disagrees with own derivation")
 	}
-	if (MeshPeer{HWID: "b0b1c2d3e4f5"}).CredSalt(got.Mesh.PSK) == own {
+	if (MeshPeer{HWID: "purewrt-bbbbbbbbbbbbbbbbbbbbbbbb"}).CredSalt(got.Mesh.PSK) == own {
 		t.Fatal("different hwids must derive different salts")
 	}
-	if (MeshPeer{HWID: "a0b1c2d3e4f5"}).CredSalt("zz-not-hex") != "" {
+	if (MeshPeer{HWID: "purewrt-aaaaaaaaaaaaaaaaaaaaaaaa"}).CredSalt("zz-not-hex") != "" {
 		t.Fatal("malformed PSK must yield empty salt")
 	}
 	if (MeshPeer{Name: "alpha"}).CredSalt(got.Mesh.PSK) != "" {

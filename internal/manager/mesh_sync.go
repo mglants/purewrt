@@ -23,8 +23,9 @@ import (
 // before it can land in UCI or generated YAML.
 var meshPeerNameRE = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
-// meshHWIDRE guards advertised hardware ids: 12 lowercase hex (base MAC).
-var meshHWIDRE = regexp.MustCompile(`^[0-9a-f]{12}$`)
+// meshHWIDRE guards advertised hardware ids: the provider.AutomaticHWID
+// format, "purewrt-" + 24 lowercase hex.
+var meshHWIDRE = regexp.MustCompile(`^purewrt-[0-9a-f]{24}$`)
 
 const meshProbeTimeout = 5 * time.Second
 

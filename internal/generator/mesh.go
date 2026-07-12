@@ -50,11 +50,12 @@ func meshFriends(c config.Config) []friendProxy {
 			port = c.Mesh.ListenPort
 		}
 		// Identity is the hwid; the display name may collide (two friends
-		// both called "openwrt"). Suffix later duplicates so mihomo proxy
-		// names stay unique.
+		// both called "openwrt"). Suffix later duplicates with the hwid
+		// tail (the head is the constant "purewrt-" prefix) so mihomo
+		// proxy names stay unique.
 		name := "friend_" + p.Name
 		if seen[name] && len(p.HWID) >= 4 {
-			name += "_" + p.HWID[:4]
+			name += "_" + p.HWID[len(p.HWID)-4:]
 		}
 		if seen[name] {
 			continue

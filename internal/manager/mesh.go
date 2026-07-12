@@ -3,15 +3,14 @@ package manager
 import (
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/purewrt/purewrt/internal/config"
 	"github.com/purewrt/purewrt/internal/mesh"
+	"github.com/purewrt/purewrt/internal/provider"
 )
 
 // MeshInitResult is what mesh-init / mesh-join / mesh-rotate print: the
@@ -45,68 +44,19 @@ func meshNodeName(explicit string) string {
 	return "purewrt"
 }
 
-// systemHWID reads the router's immutable hardware identity: the base MAC,
-// normalized to 12 lowercase hex chars (the dev_<mac> convention). Sources in
-// order: /etc/board.json (first macaddr in the network map, stable across
-// reboots and sysupgrades), then sysfs for eth0 / br-lan / the first
-// physical-looking interface.
-func systemHWID() (string, error) {
-	if raw, err := os.ReadFile("/etc/board.json"); err == nil {
-		var board struct {
-			Network map[string]struct {
-				MacAddr string `json:"macaddr"`
-			} `json:"network"`
-		}
-		if json.Unmarshal(raw, &board) == nil && len(board.Network) > 0 {
-			keys := make([]string, 0, len(board.Network))
-			for k := range board.Network {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-			for _, k := range keys {
-				if id := normalizeHWID(board.Network[k].MacAddr); id != "" {
-					return id, nil
-				}
-			}
-		}
-	}
-	candidates := []string{"eth0", "br-lan"}
-	if entries, err := os.ReadDir("/sys/class/net"); err == nil {
-		names := make([]string, 0, len(entries))
-		for _, e := range entries {
-			names = append(names, e.Name())
-		}
-		sort.Strings(names)
-		candidates = append(candidates, names...)
-	}
-	for _, ifc := range candidates {
-		if ifc == "lo" || strings.HasPrefix(ifc, "pwmesh") || strings.HasPrefix(ifc, "tun") || strings.HasPrefix(ifc, "wg") {
-			continue
-		}
-		if raw, err := os.ReadFile(filepath.Join("/sys/class/net", ifc, "address")); err == nil {
-			if id := normalizeHWID(strings.TrimSpace(string(raw))); id != "" {
-				return id, nil
-			}
-		}
-	}
-	return "", fmt.Errorf("mesh: no hardware id source found")
-}
-
-// normalizeHWID lowercases a MAC and strips separators; returns "" unless the
-// result is exactly 12 hex chars and not all-zero.
-func normalizeHWID(mac string) string {
-	id := strings.ToLower(strings.NewReplacer(":", "", "-", "", ".", "").Replace(strings.TrimSpace(mac)))
-	if !meshHWIDRE.MatchString(id) || id == "000000000000" {
-		return ""
-	}
-	return id
-}
-
+// meshHWID returns the device identity — the SAME id subscription downloads
+// send to panels (provider.AutomaticHWID): one identity mechanism, not two.
+// Its seed is hardware-only (hostname demoted to last resort), so it is
+// stable across renames and leave/rejoin cycles.
 func (m Manager) meshHWID() (string, error) {
 	if m.hwidReader != nil {
 		return m.hwidReader()
 	}
-	return systemHWID()
+	id := provider.AutomaticHWID()
+	if id == "" {
+		return "", fmt.Errorf("mesh: no hardware id source found")
+	}
+	return id, nil
 }
 
 // fillMeshFromCode populates the Mesh section from a decoded sync-code,

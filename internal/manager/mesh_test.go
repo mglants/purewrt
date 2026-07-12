@@ -28,7 +28,7 @@ func meshTestManager(t *testing.T, hwid ...string) Manager {
 	if err := config.Save(cfgPath, c); err != nil {
 		t.Fatal(err)
 	}
-	id := "a0b1c2d3e4f5"
+	id := "purewrt-aaaaaaaaaaaaaaaaaaaaaaaa"
 	if len(hwid) > 0 {
 		id = hwid[0]
 	}
@@ -61,7 +61,7 @@ func TestMeshInitJoinRoundTrip(t *testing.T) {
 
 	// A friend joins with the same code → identical group identity; its salt
 	// derives from its own node name, so it differs per host.
-	b := meshTestManager(t, "b0b1c2d3e4f5")
+	b := meshTestManager(t, "purewrt-bbbbbbbbbbbbbbbbbbbbbbbb")
 	jres, err := b.MeshJoin(res.Code, "beta")
 	if err != nil {
 		t.Fatal(err)
@@ -129,7 +129,7 @@ func TestMeshLeaveAndPeerSet(t *testing.T) {
 	}
 	// Persist a peer, then toggle it.
 	c, _ := m.Load()
-	c.MeshPeers = []config.MeshPeer{{HWID: "b0b1c2d3e4f5", Name: "beta", Enabled: true, OverlayIP: "10.126.126.2", ListenPort: 7897, ExitOffered: true}}
+	c.MeshPeers = []config.MeshPeer{{HWID: "purewrt-bbbbbbbbbbbbbbbbbbbbbbbb", Name: "beta", Enabled: true, OverlayIP: "10.126.126.2", ListenPort: 7897, ExitOffered: true}}
 	if err := config.Save(m.ConfigPath, c); err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestMeshStatusConfigOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	c, _ := m.Load()
-	c.MeshPeers = []config.MeshPeer{{HWID: "b0b1c2d3e4f5", Name: "beta", Enabled: true, OverlayIP: "10.126.126.2", ExitOffered: true, LastSeen: "2026-07-12T00:00:00Z"}}
+	c.MeshPeers = []config.MeshPeer{{HWID: "purewrt-bbbbbbbbbbbbbbbbbbbbbbbb", Name: "beta", Enabled: true, OverlayIP: "10.126.126.2", ExitOffered: true, LastSeen: "2026-07-12T00:00:00Z"}}
 	// Point the easytier bin at nothing so liveness stays config-only.
 	c.Mesh.EasytierBin = filepath.Join(t.TempDir(), "missing", "easytier-core")
 	if err := config.Save(m.ConfigPath, c); err != nil {

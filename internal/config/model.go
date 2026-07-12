@@ -546,7 +546,7 @@ type Mesh struct {
 	NetworkName   string   // decoded from Code at parse, never serialized
 	NetworkSecret string   // decoded from Code at parse (base64), never serialized
 	PSK           string   // decoded from Code at parse (hex 32B), never serialized
-	HWID          string   // immutable device identity (base MAC, 12 lowercase hex); set at init/join, self-healed by mesh-sync
+	HWID          string   // device identity (provider.AutomaticHWID, "purewrt-<hex24>"); set at init/join, self-healed by mesh-sync
 	NodeName      string   // display label only (hostname by default) — safe to rename
 	ExitEnabled   bool     // offer this router's proxies as an exit to friends
 	ListenPort    int      // mihomo ss mesh listener port
@@ -564,7 +564,7 @@ type Mesh struct {
 // liveness stays in the runtime status file and MUST NOT enter the
 // generation fingerprint.
 type MeshPeer struct {
-	HWID        string // immutable peer identity (base MAC) — dedupe/credential key
+	HWID        string // immutable peer identity (provider.AutomaticHWID format) — dedupe/credential key
 	Name        string // display label, may change across the peer's lifetime
 	Enabled     bool   // consume this friend's exit (user toggle)
 	OverlayIP   string

@@ -54,7 +54,7 @@ func meshSyncPair(t *testing.T) (Manager, *httptest.Server, config.Mesh) {
 	rc, _ := remote.Load()
 	rc.Mesh = c.Mesh
 	rc.Mesh.NodeName = "beta"
-	rc.Mesh.HWID = "b0b1c2d3e4f5"
+	rc.Mesh.HWID = "purewrt-bbbbbbbbbbbbbbbbbbbbbbbb"
 	if err := config.Save(remote.ConfigPath, rc); err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +133,7 @@ func TestMeshSyncKeepsUnreachablePersistedPeers(t *testing.T) {
 	m, srv, _ := meshSyncPair(t)
 	// Pre-persist gamma, currently absent from the overlay.
 	c, _ := m.Load()
-	c.MeshPeers = []config.MeshPeer{{HWID: "c0b1c2d3e4f5", Name: "gamma", Enabled: true, OverlayIP: "10.126.126.7", ListenPort: 7897, ExitOffered: true}}
+	c.MeshPeers = []config.MeshPeer{{HWID: "purewrt-cccccccccccccccccccccccc", Name: "gamma", Enabled: true, OverlayIP: "10.126.126.7", ListenPort: 7897, ExitOffered: true}}
 	if err := config.Save(m.ConfigPath, c); err != nil {
 		t.Fatal(err)
 	}
