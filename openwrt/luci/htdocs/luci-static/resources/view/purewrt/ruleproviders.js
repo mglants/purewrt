@@ -97,14 +97,17 @@ function preserveHiddenFlag(section, optionName) {
 }
 
 function updateRuleProvider(sid) {
-  var name = uci.get('purewrt', sid, 'name') || sid;
+  // Prefixed sections (rp_native_media, …) carry no `option name`; the display
+  // name — what the CLI matches on — is the prefix-stripped id. Resolve via
+  // naming, not `uci.get('name') || sid` which passes the raw rp_ id.
+  var name = naming.nameOf(uci.get('purewrt', sid), 'rule_provider');
   return callUpdateRuleProvider(name).then(function() {
     ui.addNotification(null, E('p', _('Rule provider updated and applied')), 'info');
   });
 }
 
 function hotReloadRuleProvider(sid) {
-  var name = uci.get('purewrt', sid, 'name') || sid;
+  var name = naming.nameOf(uci.get('purewrt', sid), 'rule_provider');
   return callUpdateRuleProviderHot(name).then(function() {
     ui.addNotification(null, E('p', _('Rule provider hot-reloaded via mihomo PUT /providers/rules')), 'info');
   });
