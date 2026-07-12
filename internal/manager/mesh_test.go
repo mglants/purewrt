@@ -133,7 +133,7 @@ func TestMeshLeaveAndPeerSet(t *testing.T) {
 	if err := config.Save(m.ConfigPath, c); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.MeshPeerSet("beta", false); err != nil {
+	if err := m.MeshPeerSet("purewrt-bbbbbbbbbbbbbbbbbbbbbbbb", false); err != nil {
 		t.Fatal(err)
 	}
 	c, _ = m.Load()

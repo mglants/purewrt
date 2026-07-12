@@ -12,20 +12,21 @@ import (
 // friendProxy is a consumable friend exit: a mihomo shadowsocks outbound
 // pointing at the friend's mesh listener over the easytier overlay.
 type friendProxy struct {
-	Name     string // mihomo proxy name, "friend_<peer>"
+	Name     string // mihomo proxy name, "friend_<hwid hex24>" — hwid-keyed, rename-proof
 	IP       string // overlay IPv4
 	Port     int
 	Password string // derived from the group PSK + the peer's advertised salt
 }
 
-// friendNameRE guards peer names before they land in generated YAML — peer
-// names arrive over the network from mesh-sync, so anything outside the safe
-// set is skipped rather than emitted.
-var friendNameRE = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+// friendHWIDRE guards peer identities before they land in generated YAML —
+// hwids arrive over the network from mesh-sync. The capture group is the
+// hex24 tail that becomes the mihomo proxy name suffix; the display name is
+// cosmetic and never enters generated configs.
+var friendHWIDRE = regexp.MustCompile(`^purewrt-([0-9a-f]{24})$`)
 
 // meshFriends returns the mihomo proxies for every consumable friend exit:
 // enabled, exit offered, has an overlay IP, and credentials derive cleanly.
-// Bad material (unparseable hex, hostile name) skips the peer — one broken
+// Bad material (unparseable hex, malformed hwid) skips the peer — one broken
 // peer must not stop the rest of the mesh from generating.
 func meshFriends(c config.Config) []friendProxy {
 	if !c.MeshActive() {
@@ -38,7 +39,8 @@ func meshFriends(c config.Config) []friendProxy {
 	var out []friendProxy
 	seen := map[string]bool{}
 	for _, p := range c.MeshPeers {
-		if !p.Enabled || !p.ExitOffered || p.OverlayIP == "" || !friendNameRE.MatchString(p.Name) {
+		hw := friendHWIDRE.FindStringSubmatch(p.HWID)
+		if !p.Enabled || !p.ExitOffered || p.OverlayIP == "" || hw == nil || seen[p.HWID] {
 			continue
 		}
 		salt, err := hex.DecodeString(p.CredSalt(c.Mesh.PSK))
@@ -49,20 +51,12 @@ func meshFriends(c config.Config) []friendProxy {
 		if port <= 0 {
 			port = c.Mesh.ListenPort
 		}
-		// Identity is the hwid; the display name may collide (two friends
-		// both called "openwrt"). Suffix later duplicates with the hwid
-		// tail (the head is the constant "purewrt-" prefix) so mihomo
-		// proxy names stay unique.
-		name := "friend_" + p.Name
-		if seen[name] && len(p.HWID) >= 4 {
-			name += "_" + p.HWID[len(p.HWID)-4:]
-		}
-		if seen[name] {
-			continue
-		}
-		seen[name] = true
+		seen[p.HWID] = true
 		out = append(out, friendProxy{
-			Name:     name,
+			// hwid-keyed: unique by construction and stable across the
+			// friend's renames, so a cosmetic rename can never churn the
+			// generated mihomo config.
+			Name:     "friend_" + hw[1],
 			IP:       p.OverlayIP,
 			Port:     port,
 			Password: mesh.DeriveSSPassword(psk, salt),

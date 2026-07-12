@@ -61,7 +61,7 @@ func TestMeshExitGroupNeverLeaksDirectOrFriendOrSection(t *testing.T) {
 	out := string(Mihomo(c))
 
 	block := meshExitBlock(t, out)
-	for _, forbidden := range []string{"DIRECT", "friend_beta", "Friends", "Media", "AI", "Common"} {
+	for _, forbidden := range []string{"DIRECT", "friend_bbbbbbbbbbbbbbbbbbbbbbbb", "Friends", "Media", "AI", "Common"} {
 		if strings.Contains(block, forbidden) {
 			t.Fatalf("MeshExit group leaks %q:\n%s", forbidden, block)
 		}
@@ -106,7 +106,7 @@ func TestFriendProxyAndFallbackWiring(t *testing.T) {
 	c.MeshPeers = []config.MeshPeer{{HWID: "purewrt-bbbbbbbbbbbbbbbbbbbbbbbb", Name: "beta", Enabled: true, OverlayIP: "10.126.126.2", ListenPort: 7897, ExitOffered: true}}
 	out := string(Mihomo(c))
 
-	if !strings.Contains(out, "name: friend_beta") || !strings.Contains(out, "server: 10.126.126.2") {
+	if !strings.Contains(out, "name: friend_bbbbbbbbbbbbbbbbbbbbbbbb") || !strings.Contains(out, "server: 10.126.126.2") {
 		t.Fatalf("friend proxy missing:\n%s", out)
 	}
 	// The section group named Common must become a fallback wrapping
@@ -122,12 +122,12 @@ func TestFriendProxyAndFallbackWiring(t *testing.T) {
 	if !strings.Contains(fb, "Common_local") || !strings.Contains(fb, "- Friends") {
 		t.Fatalf("fallback missing members:\n%s", fb)
 	}
-	if strings.Contains(fb, "friend_beta") {
+	if strings.Contains(fb, "friend_bbbbbbbbbbbbbbbbbbbbbbbb") {
 		t.Fatalf("fallback references a friend directly instead of Friends:\n%s", fb)
 	}
 	// The Friends group spreads across friends: load-balance + sticky.
 	fr := groupBlock(t, out, "Friends")
-	for _, want := range []string{"type: load-balance", "strategy: sticky-sessions", "- friend_beta", "url: ", "interval: "} {
+	for _, want := range []string{"type: load-balance", "strategy: sticky-sessions", "- friend_bbbbbbbbbbbbbbbbbbbbbbbb", "url: ", "interval: "} {
 		if !strings.Contains(fr, want) {
 			t.Fatalf("Friends group missing %q:\n%s", want, fr)
 		}
@@ -144,7 +144,7 @@ func TestFriendsGroupSingleFriendStillEmitted(t *testing.T) {
 	c.MeshPeers = []config.MeshPeer{{HWID: "purewrt-bbbbbbbbbbbbbbbbbbbbbbbb", Name: "beta", Enabled: true, OverlayIP: "10.126.126.2", ListenPort: 7897, ExitOffered: true}}
 	out := string(Mihomo(c))
 	fr := groupBlock(t, out, "Friends")
-	if !strings.Contains(fr, "- friend_beta") {
+	if !strings.Contains(fr, "- friend_bbbbbbbbbbbbbbbbbbbbbbbb") {
 		t.Fatalf("Friends group missing its only member:\n%s", fr)
 	}
 }
@@ -170,10 +170,31 @@ func TestFriendDisabledOrNoExitNotEmitted(t *testing.T) {
 		{HWID: "purewrt-dddddddddddddddddddddddd", Name: "delta", Enabled: true, OverlayIP: "", ListenPort: 7897, ExitOffered: true},
 	}
 	out := string(Mihomo(c))
-	for _, n := range []string{"friend_beta", "friend_gamma", "friend_delta"} {
+	for _, n := range []string{"friend_bbbb", "friend_cccc", "friend_dddd"} {
 		if strings.Contains(out, n) {
 			t.Fatalf("ineligible friend %q emitted:\n%s", n, out)
 		}
+	}
+}
+
+func TestFriendKeyedByHWIDNotName(t *testing.T) {
+	// The display name is cosmetic: a hostile name must not block the peer
+	// (identity is the hwid) and must never reach the YAML; a malformed
+	// hwid skips the peer entirely.
+	c := joinedMesh()
+	c.MeshPeers = []config.MeshPeer{
+		{HWID: "purewrt-bbbbbbbbbbbbbbbbbbbbbbbb", Name: "evil\nproxies: []", Enabled: true, OverlayIP: "10.126.126.2", ListenPort: 7897, ExitOffered: true},
+		{HWID: "not-a-hwid", Name: "ok", Enabled: true, OverlayIP: "10.126.126.3", ListenPort: 7897, ExitOffered: true},
+	}
+	out := string(Mihomo(c))
+	if !strings.Contains(out, "name: friend_bbbbbbbbbbbbbbbbbbbbbbbb") {
+		t.Fatalf("hostile display name blocked an hwid-valid friend:\n%s", out)
+	}
+	if strings.Contains(out, "evil") {
+		t.Fatalf("display name leaked into YAML:\n%s", out)
+	}
+	if strings.Contains(out, "10.126.126.3") {
+		t.Fatalf("malformed-hwid peer emitted:\n%s", out)
 	}
 }
 
@@ -214,7 +235,7 @@ func TestEasytierConfigGolden(t *testing.T) {
 	c.Mesh.ExtraPeers = []string{"tcp://relay.example.org:11010"}
 	out := string(EasytierConfig(c))
 	for _, want := range []string{
-		`hostname = "alpha"`,
+		`hostname = "purewrt-aaaaaaaaaaaaaaaaaaaaaaaa"`,
 		`network_name = "pwmesh-0011223344556677"`,
 		`network_secret = "c2VjcmV0"`,
 		`uri = "wss://pwmesh.glants.xyz/pwmesh"`,

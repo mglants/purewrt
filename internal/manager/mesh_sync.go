@@ -18,10 +18,12 @@ import (
 	"github.com/purewrt/purewrt/internal/system"
 )
 
-// meshPeerNameRE mirrors the generator's friend-name guard: peer names
-// arrive over the network, so anything outside the safe set is rejected
-// before it can land in UCI or generated YAML.
-var meshPeerNameRE = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+// meshPeerNameRE bounds display names arriving over the network. Since the
+// hwid keys everything machine-facing (proxy names, peer commands), a
+// hostile display name can't reach generated YAML — but it still lands in
+// UCI and LuCI, so anything outside the safe set falls back to the hwid as
+// the label instead of rejecting the peer.
+var meshPeerNameRE = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 // meshHWIDRE guards advertised hardware ids: the provider.AutomaticHWID
 // format, "purewrt-" + 24 lowercase hex.
@@ -129,10 +131,10 @@ func (m Manager) MeshSync() (MeshSyncReport, error) {
 			continue
 		}
 		if !meshPeerNameRE.MatchString(info.NodeName) {
-			rep.Errors = append(rep.Errors, op.IPv4+": hostile node name")
-			continue
+			// Display-only field: sanitize, don't reject the peer.
+			info.NodeName = info.HWID
 		}
-		status.Peers[info.NodeName] = meshRuntimePeerState{LastSeen: now.Format(time.RFC3339)}
+		status.Peers[info.HWID] = meshRuntimePeerState{LastSeen: now.Format(time.RFC3339)}
 		seenHWID[info.HWID] = true
 		if i, ok := byHWID[info.HWID]; ok {
 			p := &c.MeshPeers[i]

@@ -236,37 +236,39 @@ func (m Manager) MeshRotate() (MeshInitResult, error) {
 	return MeshInitResult{Code: fresh.Encode(), NetworkName: c.Mesh.NetworkName}, nil
 }
 
-// MeshPeerSet toggles consumption of one persisted peer's exit.
-func (m Manager) MeshPeerSet(name string, enabled bool) error {
+// MeshPeerSet toggles consumption of one persisted peer's exit. Peers are
+// addressed by hwid — the immutable identity; display names are cosmetic
+// and may collide or change under a friend's rename.
+func (m Manager) MeshPeerSet(hwid string, enabled bool) error {
 	c, err := m.Load()
 	if err != nil {
 		return err
 	}
 	for i := range c.MeshPeers {
-		if c.MeshPeers[i].Name == name {
+		if c.MeshPeers[i].HWID == hwid {
 			c.MeshPeers[i].Enabled = enabled
 			return m.meshSaveApply(c)
 		}
 	}
-	return fmt.Errorf("mesh peer %q not found", name)
+	return fmt.Errorf("mesh peer %q not found (address peers by hwid)", hwid)
 }
 
 // MeshPeerRemove forgets a persisted peer entirely. Needed for orphans a
 // friend leaves behind by leaving/rejoining under a new node name — the new
 // identity is discovered as a fresh peer and the old one never comes back.
 // If the peer is actually still alive, the next mesh-sync simply re-adds it.
-func (m Manager) MeshPeerRemove(name string) error {
+func (m Manager) MeshPeerRemove(hwid string) error {
 	c, err := m.Load()
 	if err != nil {
 		return err
 	}
 	for i := range c.MeshPeers {
-		if c.MeshPeers[i].Name == name {
+		if c.MeshPeers[i].HWID == hwid {
 			c.MeshPeers = append(c.MeshPeers[:i], c.MeshPeers[i+1:]...)
 			return m.meshSaveApply(c)
 		}
 	}
-	return fmt.Errorf("mesh peer %q not found", name)
+	return fmt.Errorf("mesh peer %q not found (address peers by hwid)", hwid)
 }
 
 // MeshStatusReport merges config state with live easytier daemon state.
@@ -289,7 +291,8 @@ type MeshStatusReport struct {
 }
 
 type MeshPeerStatus struct {
-	Name        string  `json:"name"`
+	HWID        string  `json:"hwid"` // immutable identity — what peer commands address
+	Name        string  `json:"name"` // cosmetic display label
 	Enabled     bool    `json:"enabled"`
 	OverlayIP   string  `json:"overlay_ip,omitempty"`
 	ExitOffered bool    `json:"exit_offered"`
@@ -397,7 +400,7 @@ func (m Manager) MeshStatus() MeshStatusReport {
 		}
 	}
 	for _, p := range c.MeshPeers {
-		st := MeshPeerStatus{Name: p.Name, Enabled: p.Enabled, OverlayIP: p.OverlayIP, ExitOffered: p.ExitOffered, LastSeen: p.LastSeen, LastError: p.LastError}
+		st := MeshPeerStatus{HWID: p.HWID, Name: p.Name, Enabled: p.Enabled, OverlayIP: p.OverlayIP, ExitOffered: p.ExitOffered, LastSeen: p.LastSeen, LastError: p.LastError}
 		if lp, ok := live[p.OverlayIP]; ok && p.OverlayIP != "" {
 			st.Live = true
 			st.Relay = lp.Relay

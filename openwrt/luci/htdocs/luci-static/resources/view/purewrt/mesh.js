@@ -20,8 +20,8 @@ var callInit = rpc.declare({ object: 'purewrt', method: 'mesh_init', params: [ '
 var callLeave = rpc.declare({ object: 'purewrt', method: 'mesh_leave' });
 var callCode = rpc.declare({ object: 'purewrt', method: 'mesh_code' });
 var callRotate = rpc.declare({ object: 'purewrt', method: 'mesh_rotate' });
-var callPeerSet = rpc.declare({ object: 'purewrt', method: 'mesh_peer_set', params: [ 'name', 'enabled' ] });
-var callPeerRemove = rpc.declare({ object: 'purewrt', method: 'mesh_peer_remove', params: [ 'name' ] });
+var callPeerSet = rpc.declare({ object: 'purewrt', method: 'mesh_peer_set', params: [ 'hwid', 'enabled' ] });
+var callPeerRemove = rpc.declare({ object: 'purewrt', method: 'mesh_peer_remove', params: [ 'hwid' ] });
 var callProxyGroups = rpc.declare({ object: 'purewrt', method: 'proxy_groups', expect: { items: [] } });
 
 // proxyMemberLabel mirrors the mihomo/sections pages: name (Nms) / name (dead) / name.
@@ -455,7 +455,7 @@ return view.extend({
       en.checked = !!p.enabled;
       en.addEventListener('change', function() {
         en.disabled = true;
-        callPeerSet(p.name, en.checked ? '1' : '0').then(function(r) {
+        callPeerSet(p.hwid, en.checked ? '1' : '0').then(function(r) {
           en.disabled = false;
           if (r && r.error) {
             ui.addNotification(null, E('p', r.error), 'error');
@@ -472,7 +472,7 @@ return view.extend({
         forget.addEventListener('click', function(ev) {
           ev.preventDefault();
           forget.disabled = true;
-          callPeerRemove(p.name).then(function(r) {
+          callPeerRemove(p.hwid).then(function(r) {
             if (r && r.error) {
               ui.addNotification(null, E('p', r.error), 'error');
               forget.disabled = false;
@@ -482,8 +482,14 @@ return view.extend({
           });
         });
       }
+      // Display label = cosmetic name + short hwid tail — the hwid is the
+      // identity peer commands address, so keep it visible.
+      var hwTail = (p.hwid || '').replace(/^purewrt-/, '').slice(0, 6);
       table.appendChild(E('tr', { 'class': 'tr' }, [
-        E('td', { 'class': 'td' }, p.name),
+        E('td', { 'class': 'td', 'title': p.hwid || '' }, [
+          p.name || '-', ' ',
+          E('span', { 'style': 'opacity:.6;font-family:monospace;font-size:.85em' }, hwTail ? '(' + hwTail + ')' : '')
+        ]),
         E('td', { 'class': 'td', 'style': 'font-family:monospace' }, p.overlay_ip || '-'),
         E('td', { 'class': 'td' }, link),
         E('td', { 'class': 'td' }, p.live && p.latency_ms ? (Math.round(p.latency_ms) + ' ms') : '-'),

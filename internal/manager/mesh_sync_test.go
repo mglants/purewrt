@@ -99,8 +99,8 @@ func TestMeshSyncDiscoversAndPersistsPeer(t *testing.T) {
 	if err := json.Unmarshal(b, &st); err != nil {
 		t.Fatal(err)
 	}
-	if st.Peers["beta"].LastSeen == "" {
-		t.Fatalf("runtime status missing beta: %+v", st)
+	if st.Peers["purewrt-bbbbbbbbbbbbbbbbbbbbbbbb"].LastSeen == "" {
+		t.Fatalf("runtime status missing beta (keyed by hwid): %+v", st)
 	}
 
 	// Second sync: nothing material changed → no apply.
@@ -110,6 +110,43 @@ func TestMeshSyncDiscoversAndPersistsPeer(t *testing.T) {
 	}
 	if rep.Added != 0 || rep.Updated != 0 || rep.Applied {
 		t.Fatalf("idempotent sync dirtied config: %+v", rep)
+	}
+}
+
+func TestMeshSyncHostileNameFallsBackToHWID(t *testing.T) {
+	// The display name is cosmetic: a hostile advertised node_name must not
+	// reject the peer — it sanitizes to the hwid label instead.
+	m := meshTestManager(t)
+	if _, err := m.MeshInit("alpha"); err != nil {
+		t.Fatal(err)
+	}
+	c, err := m.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote := meshTestManager(t)
+	rc, _ := remote.Load()
+	rc.Mesh = c.Mesh
+	rc.Mesh.NodeName = "evil name\n$(reboot)"
+	rc.Mesh.HWID = "purewrt-bbbbbbbbbbbbbbbbbbbbbbbb"
+	if err := config.Save(remote.ConfigPath, rc); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(remote.MeshInfoHandler())
+	t.Cleanup(srv.Close)
+
+	m.meshRunner = fakePeersRunner("10.126.126.2")
+	m.meshProbeBase = func(ip string, port int) string { return srv.URL }
+	rep, err := m.MeshSync()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Errors) > 0 || rep.Added != 1 {
+		t.Fatalf("hostile display name rejected the peer: %+v", rep)
+	}
+	got, _ := m.Load()
+	if len(got.MeshPeers) != 1 || got.MeshPeers[0].Name != "purewrt-bbbbbbbbbbbbbbbbbbbbbbbb" {
+		t.Fatalf("hostile name not sanitized to hwid: %+v", got.MeshPeers)
 	}
 }
 

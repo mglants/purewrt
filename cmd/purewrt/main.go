@@ -1084,8 +1084,8 @@ var commands = []command{
 			})
 		}},
 	{name: "mesh-peer-set", group: "Friend mesh",
-		args: "<name> enabled=0|1",
-		desc: "Enable/disable consuming one friend's exit",
+		args: "<hwid> enabled=0|1",
+		desc: "Enable/disable consuming one friend's exit (address by hwid)",
 		run: func(m manager.Manager) {
 			need(4)
 			v := os.Args[3]
@@ -1098,8 +1098,8 @@ var commands = []command{
 			})
 		}},
 	{name: "mesh-peer-remove", group: "Friend mesh",
-		args: "<name>",
-		desc: "Forget a persisted friend (orphans from a leave/rejoin under a new name)",
+		args: "<hwid>",
+		desc: "Forget a persisted friend by hwid (orphans that left the mesh)",
 		run: func(m manager.Manager) {
 			need(3)
 			withOperationLockCoalesce(func() {
