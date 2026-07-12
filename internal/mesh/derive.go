@@ -41,3 +41,11 @@ func DeriveSSPassword(psk, credSalt []byte) string {
 func DeriveAPIKey(psk []byte) []byte {
 	return hkdfSHA256(psk, nil, []byte("purewrt-mesh/api-v1"), 32)
 }
+
+// DeriveCredSalt derives a router's credential salt from the group PSK and
+// its node name, so the salt needs no storage or exchange: any group member
+// can compute any other member's listener password from the name alone.
+// Salts were public-by-design anyway; secrecy lives entirely in the PSK.
+func DeriveCredSalt(psk []byte, nodeName string) string {
+	return hex.EncodeToString(hkdfSHA256(psk, nil, append([]byte("purewrt-mesh/salt-v1:"), nodeName...), 16))
+}

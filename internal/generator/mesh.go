@@ -40,7 +40,7 @@ func meshFriends(c config.Config) []friendProxy {
 		if !p.Enabled || !p.ExitOffered || p.OverlayIP == "" || !friendNameRE.MatchString(p.Name) {
 			continue
 		}
-		salt, err := hex.DecodeString(p.CredSalt)
+		salt, err := hex.DecodeString(p.CredSalt(c.Mesh.PSK))
 		if err != nil || len(salt) == 0 {
 			continue
 		}
@@ -66,7 +66,7 @@ func meshListenerPassword(c config.Config) string {
 	if err != nil || len(psk) == 0 {
 		return ""
 	}
-	salt, err := hex.DecodeString(c.Mesh.CredSalt)
+	salt, err := hex.DecodeString(c.Mesh.CredSalt())
 	if err != nil || len(salt) == 0 {
 		return ""
 	}

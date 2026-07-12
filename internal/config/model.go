@@ -1,9 +1,12 @@
 package config
 
 import (
+	"encoding/hex"
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"github.com/purewrt/purewrt/internal/mesh"
 )
 
 func TitleASCII(s string) string {
@@ -532,17 +535,18 @@ type OONI struct {
 
 // Mesh is the friend-to-friend mesh: an optional easytier overlay between a
 // small group of trusted routers, each exposing its working proxies (never
-// its direct internet) as a fallback exit for the others. All group secrets
-// live in the sync-code; per-router credentials are HKDF-derived from PSK +
-// CredSalt in internal/mesh. The feature is fully dormant until mesh-init or
-// mesh-join fills NetworkName.
+// its direct internet) as a fallback exit for the others. The sync-code is
+// the single stored secret; everything else — network identity, PSK,
+// per-router ss passwords — is decoded or HKDF-derived from it (see
+// internal/mesh). The feature is fully dormant until mesh-init or mesh-join
+// stores a code.
 type Mesh struct {
 	Enabled       bool
-	NetworkName   string   // easytier network name, "pwmesh-<hex16>" derived from the sync-code
-	NetworkSecret string   // easytier network secret (base64)
-	PSK           string   // hex 32B group pre-shared key — root of all derived credentials
+	Code          string   // sync-code verbatim — the ONLY stored secret
+	NetworkName   string   // decoded from Code at parse, never serialized
+	NetworkSecret string   // decoded from Code at parse (base64), never serialized
+	PSK           string   // decoded from Code at parse (hex 32B), never serialized
 	NodeName      string   // this router's mesh identity (hostname by default)
-	CredSalt      string   // hex 16B, minted at init/join; peers derive this router's ss password from it
 	ExitEnabled   bool     // offer this router's proxies as an exit to friends
 	ListenPort    int      // mihomo ss mesh listener port
 	APIMeshPort   int      // purewrt-api mesh endpoint port (overlay-only via fw4 zone)
@@ -563,10 +567,31 @@ type MeshPeer struct {
 	Enabled     bool // consume this friend's exit (user toggle)
 	OverlayIP   string
 	ListenPort  int
-	CredSalt    string // peer's advertised salt for ss-password derivation
 	ExitOffered bool
 	LastSeen    string // RFC3339, informational
 	LastError   string // informational, mirrors RuleProvider.LastError
+}
+
+// CredSalt derives this router's credential salt from the group PSK and node
+// name; nothing is stored or exchanged. Returns "" when the PSK is
+// absent/malformed (dormant mesh).
+func (m Mesh) CredSalt() string {
+	return derivedCredSalt(m.PSK, m.NodeName)
+}
+
+// CredSalt derives a peer's credential salt from the group PSK and the
+// peer's name — any member can compute any other member's listener password
+// from the name alone; secrecy lives entirely in the PSK.
+func (p MeshPeer) CredSalt(groupPSK string) string {
+	return derivedCredSalt(groupPSK, p.Name)
+}
+
+func derivedCredSalt(pskHex, name string) string {
+	psk, err := hex.DecodeString(pskHex)
+	if err != nil || len(psk) == 0 {
+		return ""
+	}
+	return mesh.DeriveCredSalt(psk, name)
 }
 
 // MeshActive reports whether the mesh feature should generate anything:

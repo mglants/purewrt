@@ -54,7 +54,6 @@ func meshSyncPair(t *testing.T) (Manager, *httptest.Server, config.Mesh) {
 	rc, _ := remote.Load()
 	rc.Mesh = c.Mesh
 	rc.Mesh.NodeName = "beta"
-	rc.Mesh.CredSalt = "0f0e0d0c0b0a09080706050403020100"
 	if err := config.Save(remote.ConfigPath, rc); err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +82,7 @@ func TestMeshSyncDiscoversAndPersistsPeer(t *testing.T) {
 		t.Fatalf("peer not persisted: %+v", c.MeshPeers)
 	}
 	p := c.MeshPeers[0]
-	if p.Name != "beta" || p.OverlayIP != "10.126.126.2" || !p.Enabled || !p.ExitOffered || p.CredSalt != "0f0e0d0c0b0a09080706050403020100" {
+	if p.Name != "beta" || p.OverlayIP != "10.126.126.2" || !p.Enabled || !p.ExitOffered {
 		t.Fatalf("peer material wrong: %+v", p)
 	}
 	// Liveness landed in the runtime file, not UCI.
@@ -133,7 +132,7 @@ func TestMeshSyncKeepsUnreachablePersistedPeers(t *testing.T) {
 	m, srv, _ := meshSyncPair(t)
 	// Pre-persist gamma, currently absent from the overlay.
 	c, _ := m.Load()
-	c.MeshPeers = []config.MeshPeer{{Name: "gamma", Enabled: true, OverlayIP: "10.126.126.7", ListenPort: 7897, CredSalt: "aa", ExitOffered: true}}
+	c.MeshPeers = []config.MeshPeer{{Name: "gamma", Enabled: true, OverlayIP: "10.126.126.7", ListenPort: 7897, ExitOffered: true}}
 	if err := config.Save(m.ConfigPath, c); err != nil {
 		t.Fatal(err)
 	}

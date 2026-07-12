@@ -1,7 +1,6 @@
 package manager
 
 import (
-	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -45,11 +44,8 @@ func meshNodeName(explicit string) string {
 
 // fillMeshFromCode populates the Mesh section from a decoded sync-code,
 // preserving plumbing fields (ports, device, bin) the code doesn't carry.
+// The credential salt is derived from (PSK, node name) — nothing is minted.
 func fillMeshFromCode(c *config.Config, code mesh.Code, nodeName string) error {
-	salt := make([]byte, 16)
-	if _, err := rand.Read(salt); err != nil {
-		return fmt.Errorf("mesh: mint cred salt: %w", err)
-	}
 	d := config.DefaultMesh()
 	mc := c.Mesh
 	if mc.ListenPort <= 0 {
@@ -71,10 +67,10 @@ func fillMeshFromCode(c *config.Config, code mesh.Code, nodeName string) error {
 		mc.SyncCron = d.SyncCron
 	}
 	mc.Enabled = true
+	mc.Code = code.Encode()
 	mc.NetworkName = code.NetworkName()
 	mc.NetworkSecret = base64.StdEncoding.EncodeToString(code.NetworkSecret[:])
 	mc.PSK = hex.EncodeToString(code.PSK[:])
-	mc.CredSalt = hex.EncodeToString(salt)
 	mc.NodeName = nodeName
 	// Offering the exit is the point of the mesh, and it never exposes the
 	// router's home IP (MeshExit routes via own proxies only) — default on,
@@ -155,27 +151,12 @@ func (m Manager) MeshLeave() error {
 	return m.meshSaveApply(c)
 }
 
-// meshCodeFromConfig reconstructs the group sync-code from stored material.
+// meshCodeFromConfig decodes the stored sync-code.
 func meshCodeFromConfig(mc config.Mesh) (mesh.Code, error) {
-	var code mesh.Code
-	entropyHex := strings.TrimPrefix(mc.NetworkName, "pwmesh-")
-	entropy, err := hex.DecodeString(entropyHex)
-	if err != nil || len(entropy) != len(code.NameEntropy) {
-		return code, fmt.Errorf("mesh: stored network name %q is not pwmesh-<hex16>", mc.NetworkName)
+	if mc.Code == "" {
+		return mesh.Code{}, fmt.Errorf("mesh: no sync-code stored")
 	}
-	secret, err := base64.StdEncoding.DecodeString(mc.NetworkSecret)
-	if err != nil || len(secret) != len(code.NetworkSecret) {
-		return code, fmt.Errorf("mesh: stored network secret malformed")
-	}
-	psk, err := hex.DecodeString(mc.PSK)
-	if err != nil || len(psk) != len(code.PSK) {
-		return code, fmt.Errorf("mesh: stored PSK malformed")
-	}
-	copy(code.NameEntropy[:], entropy)
-	copy(code.NetworkSecret[:], secret)
-	copy(code.PSK[:], psk)
-	code.ExtraPeers = append([]string{}, mc.ExtraPeers...)
-	return code, nil
+	return mesh.DecodeCode(mc.Code)
 }
 
 // MeshCode re-encodes the stored group material as a pasteable sync-code.

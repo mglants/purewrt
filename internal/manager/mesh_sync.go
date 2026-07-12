@@ -106,21 +106,17 @@ func (m Manager) MeshSync() (MeshSyncReport, error) {
 			rep.Errors = append(rep.Errors, op.IPv4+": hostile node name")
 			continue
 		}
-		if _, err := hex.DecodeString(info.CredSalt); err != nil || info.CredSalt == "" {
-			rep.Errors = append(rep.Errors, info.NodeName+": malformed cred salt")
-			continue
-		}
 		status.Peers[info.NodeName] = meshRuntimePeerState{LastSeen: now.Format(time.RFC3339)}
 		if i, ok := byName[info.NodeName]; ok {
 			p := &c.MeshPeers[i]
-			if p.OverlayIP != op.IPv4 || p.ListenPort != info.ListenPort || p.CredSalt != info.CredSalt || p.ExitOffered != info.ExitOffered {
-				p.OverlayIP, p.ListenPort, p.CredSalt, p.ExitOffered = op.IPv4, info.ListenPort, info.CredSalt, info.ExitOffered
+			if p.OverlayIP != op.IPv4 || p.ListenPort != info.ListenPort || p.ExitOffered != info.ExitOffered {
+				p.OverlayIP, p.ListenPort, p.ExitOffered = op.IPv4, info.ListenPort, info.ExitOffered
 				rep.Updated++
 				changed = true
 			}
 			continue
 		}
-		c.MeshPeers = append(c.MeshPeers, config.MeshPeer{Name: info.NodeName, Enabled: true, OverlayIP: op.IPv4, ListenPort: info.ListenPort, CredSalt: info.CredSalt, ExitOffered: info.ExitOffered})
+		c.MeshPeers = append(c.MeshPeers, config.MeshPeer{Name: info.NodeName, Enabled: true, OverlayIP: op.IPv4, ListenPort: info.ListenPort, ExitOffered: info.ExitOffered})
 		byName[info.NodeName] = len(c.MeshPeers) - 1
 		rep.Added++
 		changed = true

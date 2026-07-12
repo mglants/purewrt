@@ -11,15 +11,14 @@ import (
 )
 
 // MeshInfo is the /mesh/v1/info payload: the material fields a friend needs
-// to consume this router's exit. cred_salt is public-by-design — deriving
-// the ss password additionally requires the group PSK, which only sync-code
-// holders have.
+// to consume this router's exit. No credential material travels — the ss
+// password derives from (group PSK, node_name), both of which the peer
+// already holds.
 type MeshInfo struct {
 	V           int    `json:"v"`
 	NodeName    string `json:"node_name"`
 	ExitOffered bool   `json:"exit_offered"`
 	ListenPort  int    `json:"listen_port"`
-	CredSalt    string `json:"cred_salt"`
 }
 
 // MeshInfoHandler serves the overlay-only mesh API (mounted on its own
@@ -53,7 +52,7 @@ func (m Manager) MeshInfoHandler() http.Handler {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		body, err := json.Marshal(MeshInfo{V: 1, NodeName: c.Mesh.NodeName, ExitOffered: c.Mesh.ExitEnabled, ListenPort: c.Mesh.ListenPort, CredSalt: c.Mesh.CredSalt})
+		body, err := json.Marshal(MeshInfo{V: 1, NodeName: c.Mesh.NodeName, ExitOffered: c.Mesh.ExitEnabled, ListenPort: c.Mesh.ListenPort})
 		if err != nil {
 			http.Error(w, "internal", http.StatusInternalServerError)
 			return

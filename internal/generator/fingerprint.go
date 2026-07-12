@@ -71,14 +71,13 @@ type meshPeerFPEntry struct {
 	Enabled     bool   `json:"enabled"`
 	OverlayIP   string `json:"overlay_ip"`
 	ListenPort  int    `json:"listen_port"`
-	CredSalt    string `json:"cred_salt"`
 	ExitOffered bool   `json:"exit_offered"`
 }
 
 func meshPeerFPEntries(c config.Config) []meshPeerFPEntry {
 	out := make([]meshPeerFPEntry, 0, len(c.MeshPeers))
 	for _, p := range c.MeshPeers {
-		out = append(out, meshPeerFPEntry{Name: p.Name, Enabled: p.Enabled, OverlayIP: p.OverlayIP, ListenPort: p.ListenPort, CredSalt: p.CredSalt, ExitOffered: p.ExitOffered})
+		out = append(out, meshPeerFPEntry{Name: p.Name, Enabled: p.Enabled, OverlayIP: p.OverlayIP, ListenPort: p.ListenPort, ExitOffered: p.ExitOffered})
 	}
 	return out
 }

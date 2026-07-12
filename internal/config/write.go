@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/purewrt/purewrt/internal/mesh"
 	"github.com/purewrt/purewrt/internal/system"
 )
 
@@ -629,39 +630,76 @@ func writeBypass(b *bytes.Buffer, bp Bypass) {
 }
 
 // writeMesh emits nothing while the feature is dormant so untouched installs
-// keep byte-identical configs.
+// keep byte-identical configs. A joined config stores exactly one secret —
+// the sync-code — plus only the options that differ from DefaultMesh().
 func writeMesh(b *bytes.Buffer, m Mesh) {
-	if !m.Enabled && m.NetworkName == "" {
+	if !m.Enabled && m.Code == "" {
 		return
 	}
+	d := DefaultMesh()
 	fmt.Fprintln(b, "config mesh 'mesh'")
 	optb(b, "enabled", m.Enabled)
-	opt(b, "network_name", m.NetworkName)
-	opt(b, "network_secret", m.NetworkSecret)
-	opt(b, "psk", m.PSK)
+	opt(b, "code", m.Code)
 	opt(b, "node_name", m.NodeName)
-	opt(b, "cred_salt", m.CredSalt)
 	optb(b, "exit_enabled", m.ExitEnabled)
-	opti(b, "listen_port", m.ListenPort)
-	opti(b, "api_mesh_port", m.APIMeshPort)
-	opt(b, "device_name", m.DeviceName)
-	listv(b, "extra_peer", m.ExtraPeers)
-	opt(b, "easytier_bin", m.EasytierBin)
-	opt(b, "rpc_portal", m.RPCPortal)
-	opt(b, "sync_cron", m.SyncCron)
+	if m.ListenPort != d.ListenPort {
+		opti(b, "listen_port", m.ListenPort)
+	}
+	if m.APIMeshPort != d.APIMeshPort {
+		opti(b, "api_mesh_port", m.APIMeshPort)
+	}
+	if m.DeviceName != d.DeviceName {
+		opt(b, "device_name", m.DeviceName)
+	}
+	if !meshExtrasMatchCode(m.Code, m.ExtraPeers) {
+		listv(b, "extra_peer", m.ExtraPeers)
+	}
+	if m.EasytierBin != d.EasytierBin {
+		opt(b, "easytier_bin", m.EasytierBin)
+	}
+	if m.RPCPortal != d.RPCPortal {
+		opt(b, "rpc_portal", m.RPCPortal)
+	}
+	if m.SyncCron != d.SyncCron {
+		opt(b, "sync_cron", m.SyncCron)
+	}
 	fmt.Fprintln(b)
+}
+
+// meshExtrasMatchCode reports whether the extra_peer list is exactly what the
+// stored code's TLVs already carry — if so the list needs no separate option
+// (the parser falls back to the TLVs).
+func meshExtrasMatchCode(codeStr string, extras []string) bool {
+	if codeStr == "" {
+		return len(extras) == 0
+	}
+	code, err := mesh.DecodeCode(codeStr)
+	if err != nil {
+		return false
+	}
+	if len(code.ExtraPeers) != len(extras) {
+		return false
+	}
+	for i := range extras {
+		if code.ExtraPeers[i] != extras[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // writeMeshPeer emits anonymous sections: peer names carry dashes
 // (hostnames), which are invalid in UCI section names — same reason
-// zapret_profile sections are anonymous.
+// zapret_profile sections are anonymous. No credential material is stored:
+// the peer's ss password derives from (group PSK, name).
 func writeMeshPeer(b *bytes.Buffer, p MeshPeer) {
 	fmt.Fprintln(b, "config mesh_peer")
 	opt(b, "name", p.Name)
 	optb(b, "enabled", p.Enabled)
 	opt(b, "overlay_ip", p.OverlayIP)
-	opti(b, "listen_port", p.ListenPort)
-	opt(b, "cred_salt", p.CredSalt)
+	if p.ListenPort != DefaultMesh().ListenPort {
+		opti(b, "listen_port", p.ListenPort)
+	}
 	optb(b, "exit_offered", p.ExitOffered)
 	optNonEmpty(b, "last_seen", p.LastSeen)
 	optNonEmpty(b, "last_error", p.LastError)

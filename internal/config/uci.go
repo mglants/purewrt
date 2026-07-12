@@ -2,11 +2,15 @@ package config
 
 import (
 	"bufio"
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/purewrt/purewrt/internal/mesh"
 )
 
 // parseWarn surfaces a skipped UCI line on stderr. The parser deliberately
@@ -383,26 +387,39 @@ func applySection(c *Config, x struct {
 	case "mesh":
 		d := DefaultMesh()
 		c.Mesh.Enabled = b(x.opts, "enabled", d.Enabled)
-		c.Mesh.NetworkName = one(x.opts, "network_name", d.NetworkName)
-		c.Mesh.NetworkSecret = one(x.opts, "network_secret", d.NetworkSecret)
-		c.Mesh.PSK = one(x.opts, "psk", d.PSK)
+		c.Mesh.Code = one(x.opts, "code", "")
 		c.Mesh.NodeName = one(x.opts, "node_name", d.NodeName)
-		c.Mesh.CredSalt = one(x.opts, "cred_salt", d.CredSalt)
 		c.Mesh.ExitEnabled = b(x.opts, "exit_enabled", d.ExitEnabled)
 		c.Mesh.ListenPort = i(x.opts, "listen_port", d.ListenPort)
 		c.Mesh.APIMeshPort = i(x.opts, "api_mesh_port", d.APIMeshPort)
 		c.Mesh.DeviceName = one(x.opts, "device_name", d.DeviceName)
-		c.Mesh.ExtraPeers = list(x.opts, "extra_peer", d.ExtraPeers)
 		c.Mesh.EasytierBin = one(x.opts, "easytier_bin", d.EasytierBin)
 		c.Mesh.RPCPortal = one(x.opts, "rpc_portal", d.RPCPortal)
 		c.Mesh.SyncCron = one(x.opts, "sync_cron", d.SyncCron)
+		// The sync-code is the single stored secret; network identity + PSK
+		// decode from it here. An undecodable code leaves the mesh dormant
+		// (never a parse abort) — the warning surfaces the corruption.
+		var codeExtras []string
+		if c.Mesh.Code != "" {
+			if code, err := mesh.DecodeCode(c.Mesh.Code); err == nil {
+				c.Mesh.NetworkName = code.NetworkName()
+				c.Mesh.NetworkSecret = base64.StdEncoding.EncodeToString(code.NetworkSecret[:])
+				c.Mesh.PSK = hex.EncodeToString(code.PSK[:])
+				codeExtras = code.ExtraPeers
+			} else {
+				fmt.Fprintf(os.Stderr, "warning: mesh code invalid (%v) — mesh stays dormant\n", err)
+				c.Mesh.Code = ""
+			}
+		}
+		// extra_peer list wins when present; otherwise the code's embedded
+		// TLV peers apply.
+		c.Mesh.ExtraPeers = list(x.opts, "extra_peer", codeExtras)
 	case "mesh_peer":
 		p := MeshPeer{
 			Name:        one(x.opts, "name", x.name),
 			Enabled:     b(x.opts, "enabled", true),
 			OverlayIP:   one(x.opts, "overlay_ip", ""),
 			ListenPort:  i(x.opts, "listen_port", DefaultMesh().ListenPort),
-			CredSalt:    one(x.opts, "cred_salt", ""),
 			ExitOffered: b(x.opts, "exit_offered", false),
 			LastSeen:    one(x.opts, "last_seen", ""),
 			LastError:   one(x.opts, "last_error", ""),

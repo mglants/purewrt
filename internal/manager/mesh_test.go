@@ -46,15 +46,16 @@ func TestMeshInitJoinRoundTrip(t *testing.T) {
 	if !ca.MeshActive() || ca.Mesh.NodeName != "alpha" || !ca.Mesh.ExitEnabled {
 		t.Fatalf("mesh not active after init: %+v", ca.Mesh)
 	}
-	if ca.Mesh.CredSalt == "" || ca.Mesh.PSK == "" {
-		t.Fatal("credentials not minted")
+	if ca.Mesh.Code == "" || ca.Mesh.PSK == "" || ca.Mesh.CredSalt() == "" {
+		t.Fatal("credentials not derivable after init")
 	}
 	// Second init must refuse.
 	if _, err := a.MeshInit(""); err == nil {
 		t.Fatal("second mesh-init did not refuse")
 	}
 
-	// A friend joins with the same code → identical group identity, own salt.
+	// A friend joins with the same code → identical group identity; its salt
+	// derives from its own node name, so it differs per host.
 	b := meshTestManager(t)
 	jres, err := b.MeshJoin(res.Code, "beta")
 	if err != nil {
@@ -70,8 +71,8 @@ func TestMeshInitJoinRoundTrip(t *testing.T) {
 	if cb.Mesh.PSK != ca.Mesh.PSK || cb.Mesh.NetworkSecret != ca.Mesh.NetworkSecret {
 		t.Fatal("join did not reproduce group secrets")
 	}
-	if cb.Mesh.CredSalt == ca.Mesh.CredSalt {
-		t.Fatal("joiner must mint its OWN cred salt")
+	if cb.Mesh.CredSalt() == ca.Mesh.CredSalt() {
+		t.Fatal("joiner must derive its OWN cred salt (name-scoped)")
 	}
 	if _, err := mesh.DecodeCode(jres.Code); err != nil {
 		t.Fatalf("re-printed code does not decode: %v", err)
@@ -111,8 +112,8 @@ func TestMeshRotateKeepsNameKillsSecrets(t *testing.T) {
 		t.Fatal("rotate did not change the code")
 	}
 	after, _ := m.Load()
-	if after.Mesh.PSK == before.Mesh.PSK || after.Mesh.NetworkSecret == before.Mesh.NetworkSecret || after.Mesh.CredSalt == before.Mesh.CredSalt {
-		t.Fatal("rotate must mint new PSK, secret and salt")
+	if after.Mesh.PSK == before.Mesh.PSK || after.Mesh.NetworkSecret == before.Mesh.NetworkSecret || after.Mesh.CredSalt() == before.Mesh.CredSalt() {
+		t.Fatal("rotate must mint new PSK and secret (and with them the derived salt)")
 	}
 }
 
@@ -123,7 +124,7 @@ func TestMeshLeaveAndPeerSet(t *testing.T) {
 	}
 	// Persist a peer, then toggle it.
 	c, _ := m.Load()
-	c.MeshPeers = []config.MeshPeer{{Name: "beta", Enabled: true, OverlayIP: "10.126.126.2", ListenPort: 7897, CredSalt: "0f0e", ExitOffered: true}}
+	c.MeshPeers = []config.MeshPeer{{Name: "beta", Enabled: true, OverlayIP: "10.126.126.2", ListenPort: 7897, ExitOffered: true}}
 	if err := config.Save(m.ConfigPath, c); err != nil {
 		t.Fatal(err)
 	}
