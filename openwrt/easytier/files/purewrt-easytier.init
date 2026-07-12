@@ -22,15 +22,16 @@ start_service() {
     # Restart when purewrt regenerates the TOML (procd config trigger).
     procd_set_param file "$CONF"
     procd_set_param respawn 3600 5 5
-    # INFO to stdout → procd → syslog, feeding the LuCI Friend Mesh log
-    # panel. Via environment because easytier 2.6.4 ignores logger sections
-    # in the TOML. KNOWN TRADEOFF (owner-accepted): the INFO startup banner
-    # echoes the full config including network_secret into the syslog ring
-    # buffer (and any remote collector) — the rpcd log source filters the
-    # secret line from the LuCI panel, and mesh-rotate invalidates a leaked
-    # secret.
-    procd_set_param env ET_CONSOLE_LOG_LEVEL=info
-    procd_set_param stdout 1
+    # INFO to a capped tmpfs file for the LuCI Friend Mesh log panel; the
+    # console stays at warn so syslog only gets real problems. Via
+    # environment because easytier 2.6.4 ignores logger sections in the
+    # TOML. Console INFO was tried and reverted: easytier has no module
+    # filters (directive syntax panics, RUST_LOG directives are ignored)
+    # and its direct-connect retry loop logs ~1.7 lines/s forever, flooding
+    # the ring buffer — and the INFO startup banner echoes network_secret.
+    # Rolling files capped well below the 100 MB default: /tmp is RAM.
+    mkdir -p /tmp/purewrt/log
+    procd_set_param env ET_FILE_LOG_LEVEL=info ET_FILE_LOG_DIR=/tmp/purewrt/log ET_FILE_LOG_SIZE=5 ET_FILE_LOG_COUNT=2
     procd_set_param stderr 1
     procd_close_instance
 }

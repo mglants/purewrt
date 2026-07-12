@@ -16,13 +16,18 @@ read_file() {
 
 read_logread() {
   pattern="$1"
+  # Optional second arg: egrep pattern of lines to EXCLUDE. Needed because
+  # some daemons' lines match other panels' keywords incidentally — e.g.
+  # easytier-core logs mention /etc/purewrt paths and instance_name
+  # "purewrt", bleeding into the PureWRT panel.
+  exclude="${2:-__never_matches__}"
   printf '{"path":"logread:%s","output":"' "$pattern"
   # Drop crond's crontab-line echoes (`crond[PID]: line <cmd>`) — busybox crond
   # logs every loaded line at err level, and since those lines contain the job
   # command they match our purewrt/update/ooni patterns and spam the panels.
   # Actual run markers (`crond[PID]: USER root ... cmd ...`) and the jobs' own
   # `logger -t purewrt-cron|ooniprobe` output are kept.
-  logread 2>/dev/null | grep -Ei "$pattern" | grep -vE 'crond\[[0-9]+\]:[[:space:]]+line[[:space:]]' | tail -n 300 | json_string
+  logread 2>/dev/null | grep -Ei "$pattern" | grep -vE "$exclude" | grep -vE 'crond\[[0-9]+\]:[[:space:]]+line[[:space:]]' | tail -n 300 | json_string
   printf '"}'
 }
 
@@ -180,18 +185,26 @@ call)
         # produced near-identical output — split was bogus, merge wins.
         # `manager` alias kept so any external script that still asks for
         # it gets the same content rather than an empty response.
-        rpc|manager) read_logread 'purewrt|rpcd.*purewrt' ;;
+        # easytier-core excluded: its lines mention /etc/purewrt paths and
+        # instance_name "purewrt" — they belong to the Friend Mesh panel.
+        rpc|manager) read_logread 'purewrt|rpcd.*purewrt' 'easytier-core' ;;
         update) read_logread 'purewrt-bg|purewrt-cron|update-rule-provider|update-proxy-provider|providers.*updated|provider.*updated' ;;
         mihomo) read_logread 'mihomo|clash' ;;
         zapret) read_logread 'purewrt-zapret|zapret|nfqws|tpws' ;;
-        # Overlay daemon INFO arrives via procd stdout capture in syslog.
-        # The startup banner echoes network_secret — strip that line so the
-        # panel never displays the group credential (the ring buffer still
-        # holds it; owner-accepted tradeoff, see the easytier init script).
+        # Overlay daemon INFO lives in a capped tmpfs file (console INFO
+        # floods syslog and its banner echoes network_secret — see the
+        # easytier init script). Tail the newest rolling file, strip the
+        # secret line the startup banner echoes, fall back to syslog
+        # (stderr warnings + init logger lines) when no file exists yet.
         easytier)
-          printf '{"path":"logread:easytier","output":"'
-          logread 2>/dev/null | grep -Ei 'easytier' | grep -v 'network_secret' | tail -n 300 | json_string
-          printf '"}' ;;
+          f=$(ls -t /tmp/purewrt/log/easytier* 2>/dev/null | head -n1)
+          if [ -n "$f" ]; then
+            printf '{"path":"%s","output":"' "$f"
+            tail -n 300 "$f" 2>/dev/null | grep -v 'network_secret' | json_string
+            printf '"}'
+          else
+            read_logread 'easytier'
+          fi ;;
         ooni) read_logread 'ooniprobe' ;;
         *) read_logread 'purewrt|purewrt-bg|purewrt-cron|mihomo|clash|zapret|nfqws|tpws|easytier' ;;
       esac ;;
