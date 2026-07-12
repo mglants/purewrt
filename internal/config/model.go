@@ -102,6 +102,8 @@ type Config struct {
 	RuleProviders    []RuleProvider
 	Bypass           Bypass
 	OONI             OONI
+	Mesh             Mesh
+	MeshPeers        []MeshPeer
 }
 
 type Settings struct {
@@ -528,6 +530,74 @@ type OONI struct {
 	UID int
 }
 
+// Mesh is the friend-to-friend mesh: an optional easytier overlay between a
+// small group of trusted routers, each exposing its working proxies (never
+// its direct internet) as a fallback exit for the others. All group secrets
+// live in the sync-code; per-router credentials are HKDF-derived from PSK +
+// CredSalt in internal/mesh. The feature is fully dormant until mesh-init or
+// mesh-join fills NetworkName.
+type Mesh struct {
+	Enabled       bool
+	NetworkName   string   // easytier network name, "pwmesh-<hex16>" derived from the sync-code
+	NetworkSecret string   // easytier network secret (base64)
+	PSK           string   // hex 32B group pre-shared key — root of all derived credentials
+	NodeName      string   // this router's mesh identity (hostname by default)
+	CredSalt      string   // hex 16B, minted at init/join; peers derive this router's ss password from it
+	ExitEnabled   bool     // offer this router's proxies as an exit to friends
+	ListenPort    int      // mihomo ss mesh listener port
+	APIMeshPort   int      // purewrt-api mesh endpoint port (overlay-only via fw4 zone)
+	DeviceName    string   // easytier TUN device
+	ExtraPeers    []string // custom rendezvous/relay peer URLs (from sync-code TLVs or UCI)
+	EasytierBin   string   // easytier-core path; presence gates the feature like zapret's nfqws
+	RPCPortal     string   // easytier RPC portal easytier-cli talks to
+	SyncCron      string   // mesh-sync cron schedule; empty disables the cron block
+}
+
+// MeshPeer is a persisted friend router discovered by mesh-sync. Material
+// fields (name/ip/port/salt/exit) are generator inputs and belong in UCI so
+// generation stays a pure function of /etc/config/purewrt across reboots;
+// liveness stays in the runtime status file and MUST NOT enter the
+// generation fingerprint.
+type MeshPeer struct {
+	Name        string
+	Enabled     bool // consume this friend's exit (user toggle)
+	OverlayIP   string
+	ListenPort  int
+	CredSalt    string // peer's advertised salt for ss-password derivation
+	ExitOffered bool
+	LastSeen    string // RFC3339, informational
+	LastError   string // informational, mirrors RuleProvider.LastError
+}
+
+// MeshActive reports whether the mesh feature should generate anything:
+// enabled AND joined (a network identity exists).
+func (c Config) MeshActive() bool {
+	return c.Mesh.Enabled && c.Mesh.NetworkName != ""
+}
+
+// MeshPeerByName returns the persisted peer with the given name.
+func (c Config) MeshPeerByName(name string) (MeshPeer, bool) {
+	for _, p := range c.MeshPeers {
+		if p.Name == name {
+			return p, true
+		}
+	}
+	return MeshPeer{}, false
+}
+
+// DefaultMesh returns the dormant mesh defaults (also applied to unset
+// options when parsing a joined config).
+func DefaultMesh() Mesh {
+	return Mesh{
+		ListenPort:  7897,
+		APIMeshPort: 8788,
+		DeviceName:  "pwmesh0",
+		EasytierBin: "/usr/bin/easytier-core",
+		RPCPortal:   "127.0.0.1:15888",
+		SyncCron:    "*/5 * * * *",
+	}
+}
+
 func Default() Config {
 	return Config{
 		Settings:         Settings{ConfigVersion: 1, Enabled: true, Workdir: DefaultWorkdir, RuntimeDir: DefaultRuntimeDir, DNSMasqIncludeDir: "", MihomoBin: "/usr/bin/mihomo", MihomoConfig: DefaultMihomoConfig, MihomoAllowLAN: false, ExternalController: "127.0.0.1:9090", Secret: "auto-generated-secret", DNSBackend: "dnsmasq", FirewallBackend: "nftables", FwMark: "0x1", FwMarkMask: "0xff", RouteTable: "100", IPRulePriority: "100", IPv6: true, DNSListen: "127.0.0.1:7874", AutoReload: true, SafeApply: true, RollbackOnFail: true, BackupRetention: 3, ApplyBackupMaxBytes: 0, MihomoChannel: "alpha", MihomoReleaseAPI: "https://api.github.com/repos/MetaCubeX/mihomo/releases/tags/Prerelease-Alpha", MihomoStableReleaseAPI: "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest", MihomoMixinEnabled: false, MihomoAutoUpdateEnabled: false, MihomoAutoUpdateCron: "23 4 * * *", NetCheckEnabled: false, NetCheckCron: "", NetCheckBytes: 2 << 20, MihomoGeodataEnabled: false, UpdateViaProxy: false, UpdateProxyURL: "http://127.0.0.1:7890", UpdateConcurrency: 2, AutoUpdateEnabled: true, AutoUpdateCron: "17 */6 * * *", ReloadAfterUpdate: true, BackgroundUpdates: true, BootUpdateDelay: 0, UpdateNice: 19, UpdateIONiceClass: 3, UpdateIONiceLevel: 7, DashboardEnabled: true, DashboardListen: "0.0.0.0:9090", DashboardPath: "/etc/purewrt/dashboard", DashboardURL: "https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip", DashboardName: "metacubexd", DefaultListsBaseURL: "https://github.com/mglants/purewrt-lists/releases/latest/download/", ResourceProfile: "standard", CacheMode: "auto", CacheDir: "", ArtifactCacheMode: "auto", ArtifactCacheMaxBytes: 16777216, ArtifactCacheMaxEntries: 50000, RuleDedupMode: "auto", LogLevel: "warn", BootstrapDoHEnabled: true, BootstrapDoHResolvers: DefaultBootstrapDoHResolvers(), BootstrapDoHTimeoutMs: 8000, BootstrapProxyFallback: true, BootstrapTLSFingerprint: "browser", IPv6Mode: "auto", IPv6RejectWhenOff: false, RouterOutputProxy: true, CgroupV2Path: "services/mihomo", LANSourceZones: []string{"lan"}},
@@ -545,6 +615,8 @@ func Default() Config {
 		Sections:         []Section{{Name: "media", Enabled: true, Action: "proxy", TPROXYPort: 7894, ProxyGroup: "Media", ProxyGroupType: "url-test", ProxyStrategy: "sticky-sessions", IPv4Enabled: true, IPv6Enabled: true, UDPMode: "proxy", Priority: 10}, {Name: "ai", Enabled: true, Action: "proxy", TPROXYPort: 7895, ProxyGroup: "AI", ProxyGroupType: "url-test", ProxyStrategy: "sticky-sessions", IPv4Enabled: true, IPv6Enabled: true, UDPMode: "proxy", Priority: 20}, {Name: "common", Enabled: true, Action: "proxy", TPROXYPort: 7893, ProxyGroup: "Common", ProxyGroupType: "url-test", ProxyStrategy: "sticky-sessions", IPv4Enabled: true, IPv6Enabled: true, UDPMode: "proxy", Priority: 60}},
 		Bypass:           Bypass{Name: "bypass"},
 		OONI:             OONI{Enabled: false, Upload: true, Schedule: "0 */6 * * *", Proxy: "socks5://127.0.0.1:7890", Home: "/tmp/ooni", User: "ooniprobe"},
+		Mesh:             DefaultMesh(),
+		MeshPeers:        []MeshPeer{},
 	}
 }
 

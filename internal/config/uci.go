@@ -85,6 +85,7 @@ func Load(path string) (Config, error) {
 	c.VPNs = nil
 	c.ZapretProfiles = nil
 	c.ZapretStrategies = nil
+	c.MeshPeers = nil
 	for _, x := range sections {
 		applySection(&c, x)
 	}
@@ -379,6 +380,36 @@ func applySection(c *Config, x struct {
 		c.Bypass.ProxyServerCIDR6 = list(x.opts, "proxy_server_cidr6", nil)
 		c.Bypass.SourceCIDR4 = list(x.opts, "source_cidr4", nil)
 		c.Bypass.SourceCIDR6 = list(x.opts, "source_cidr6", nil)
+	case "mesh":
+		d := DefaultMesh()
+		c.Mesh.Enabled = b(x.opts, "enabled", d.Enabled)
+		c.Mesh.NetworkName = one(x.opts, "network_name", d.NetworkName)
+		c.Mesh.NetworkSecret = one(x.opts, "network_secret", d.NetworkSecret)
+		c.Mesh.PSK = one(x.opts, "psk", d.PSK)
+		c.Mesh.NodeName = one(x.opts, "node_name", d.NodeName)
+		c.Mesh.CredSalt = one(x.opts, "cred_salt", d.CredSalt)
+		c.Mesh.ExitEnabled = b(x.opts, "exit_enabled", d.ExitEnabled)
+		c.Mesh.ListenPort = i(x.opts, "listen_port", d.ListenPort)
+		c.Mesh.APIMeshPort = i(x.opts, "api_mesh_port", d.APIMeshPort)
+		c.Mesh.DeviceName = one(x.opts, "device_name", d.DeviceName)
+		c.Mesh.ExtraPeers = list(x.opts, "extra_peer", d.ExtraPeers)
+		c.Mesh.EasytierBin = one(x.opts, "easytier_bin", d.EasytierBin)
+		c.Mesh.RPCPortal = one(x.opts, "rpc_portal", d.RPCPortal)
+		c.Mesh.SyncCron = one(x.opts, "sync_cron", d.SyncCron)
+	case "mesh_peer":
+		p := MeshPeer{
+			Name:        one(x.opts, "name", x.name),
+			Enabled:     b(x.opts, "enabled", true),
+			OverlayIP:   one(x.opts, "overlay_ip", ""),
+			ListenPort:  i(x.opts, "listen_port", DefaultMesh().ListenPort),
+			CredSalt:    one(x.opts, "cred_salt", ""),
+			ExitOffered: b(x.opts, "exit_offered", false),
+			LastSeen:    one(x.opts, "last_seen", ""),
+			LastError:   one(x.opts, "last_error", ""),
+		}
+		if p.Name != "" {
+			c.MeshPeers = append(c.MeshPeers, p)
+		}
 	case "ooni":
 		d := Default().OONI
 		c.OONI.Enabled = b(x.opts, "enabled", d.Enabled)

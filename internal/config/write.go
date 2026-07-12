@@ -77,6 +77,10 @@ func Serialize(c Config) []byte {
 	}
 	writeBypass(&b, c.Bypass)
 	writeOONI(&b, c.OONI)
+	writeMesh(&b, c.Mesh)
+	for _, p := range c.MeshPeers {
+		writeMeshPeer(&b, p)
+	}
 	return b.Bytes()
 }
 
@@ -621,6 +625,46 @@ func writeBypass(b *bytes.Buffer, bp Bypass) {
 	listv(b, "proxy_server_cidr6", bp.ProxyServerCIDR6)
 	listv(b, "source_cidr4", bp.SourceCIDR4)
 	listv(b, "source_cidr6", bp.SourceCIDR6)
+	fmt.Fprintln(b)
+}
+
+// writeMesh emits nothing while the feature is dormant so untouched installs
+// keep byte-identical configs.
+func writeMesh(b *bytes.Buffer, m Mesh) {
+	if !m.Enabled && m.NetworkName == "" {
+		return
+	}
+	fmt.Fprintln(b, "config mesh 'mesh'")
+	optb(b, "enabled", m.Enabled)
+	opt(b, "network_name", m.NetworkName)
+	opt(b, "network_secret", m.NetworkSecret)
+	opt(b, "psk", m.PSK)
+	opt(b, "node_name", m.NodeName)
+	opt(b, "cred_salt", m.CredSalt)
+	optb(b, "exit_enabled", m.ExitEnabled)
+	opti(b, "listen_port", m.ListenPort)
+	opti(b, "api_mesh_port", m.APIMeshPort)
+	opt(b, "device_name", m.DeviceName)
+	listv(b, "extra_peer", m.ExtraPeers)
+	opt(b, "easytier_bin", m.EasytierBin)
+	opt(b, "rpc_portal", m.RPCPortal)
+	opt(b, "sync_cron", m.SyncCron)
+	fmt.Fprintln(b)
+}
+
+// writeMeshPeer emits anonymous sections: peer names carry dashes
+// (hostnames), which are invalid in UCI section names — same reason
+// zapret_profile sections are anonymous.
+func writeMeshPeer(b *bytes.Buffer, p MeshPeer) {
+	fmt.Fprintln(b, "config mesh_peer")
+	opt(b, "name", p.Name)
+	optb(b, "enabled", p.Enabled)
+	opt(b, "overlay_ip", p.OverlayIP)
+	opti(b, "listen_port", p.ListenPort)
+	opt(b, "cred_salt", p.CredSalt)
+	optb(b, "exit_offered", p.ExitOffered)
+	optNonEmpty(b, "last_seen", p.LastSeen)
+	optNonEmpty(b, "last_error", p.LastError)
 	fmt.Fprintln(b)
 }
 
