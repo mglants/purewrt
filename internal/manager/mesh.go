@@ -3,9 +3,11 @@ package manager
 import (
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/purewrt/purewrt/internal/config"
@@ -30,8 +32,9 @@ func (m Manager) MeshInstalled() bool {
 	return err == nil && !fi.IsDir()
 }
 
-// meshNodeName picks the mesh identity: explicit flag, else the router's
-// hostname, else a fixed fallback.
+// meshNodeName picks the display label: explicit flag, else the router's
+// hostname, else a fixed fallback. Since identity moved to the hwid this is
+// cosmetic — renames can't orphan the node.
 func meshNodeName(explicit string) string {
 	if explicit != "" {
 		return explicit
@@ -42,10 +45,78 @@ func meshNodeName(explicit string) string {
 	return "purewrt"
 }
 
+// systemHWID reads the router's immutable hardware identity: the base MAC,
+// normalized to 12 lowercase hex chars (the dev_<mac> convention). Sources in
+// order: /etc/board.json (first macaddr in the network map, stable across
+// reboots and sysupgrades), then sysfs for eth0 / br-lan / the first
+// physical-looking interface.
+func systemHWID() (string, error) {
+	if raw, err := os.ReadFile("/etc/board.json"); err == nil {
+		var board struct {
+			Network map[string]struct {
+				MacAddr string `json:"macaddr"`
+			} `json:"network"`
+		}
+		if json.Unmarshal(raw, &board) == nil && len(board.Network) > 0 {
+			keys := make([]string, 0, len(board.Network))
+			for k := range board.Network {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				if id := normalizeHWID(board.Network[k].MacAddr); id != "" {
+					return id, nil
+				}
+			}
+		}
+	}
+	candidates := []string{"eth0", "br-lan"}
+	if entries, err := os.ReadDir("/sys/class/net"); err == nil {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		sort.Strings(names)
+		candidates = append(candidates, names...)
+	}
+	for _, ifc := range candidates {
+		if ifc == "lo" || strings.HasPrefix(ifc, "pwmesh") || strings.HasPrefix(ifc, "tun") || strings.HasPrefix(ifc, "wg") {
+			continue
+		}
+		if raw, err := os.ReadFile(filepath.Join("/sys/class/net", ifc, "address")); err == nil {
+			if id := normalizeHWID(strings.TrimSpace(string(raw))); id != "" {
+				return id, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("mesh: no hardware id source found")
+}
+
+// normalizeHWID lowercases a MAC and strips separators; returns "" unless the
+// result is exactly 12 hex chars and not all-zero.
+func normalizeHWID(mac string) string {
+	id := strings.ToLower(strings.NewReplacer(":", "", "-", "", ".", "").Replace(strings.TrimSpace(mac)))
+	if !meshHWIDRE.MatchString(id) || id == "000000000000" {
+		return ""
+	}
+	return id
+}
+
+func (m Manager) meshHWID() (string, error) {
+	if m.hwidReader != nil {
+		return m.hwidReader()
+	}
+	return systemHWID()
+}
+
 // fillMeshFromCode populates the Mesh section from a decoded sync-code,
 // preserving plumbing fields (ports, device, bin) the code doesn't carry.
-// The credential salt is derived from (PSK, node name) — nothing is minted.
-func fillMeshFromCode(c *config.Config, code mesh.Code, nodeName string) error {
+// The credential salt is derived from (PSK, hwid) — nothing is minted.
+func (m Manager) fillMeshFromCode(c *config.Config, code mesh.Code, nodeName string) error {
+	hwid, err := m.meshHWID()
+	if err != nil {
+		return err
+	}
 	d := config.DefaultMesh()
 	mc := c.Mesh
 	if mc.ListenPort <= 0 {
@@ -71,6 +142,7 @@ func fillMeshFromCode(c *config.Config, code mesh.Code, nodeName string) error {
 	mc.NetworkName = code.NetworkName()
 	mc.NetworkSecret = base64.StdEncoding.EncodeToString(code.NetworkSecret[:])
 	mc.PSK = hex.EncodeToString(code.PSK[:])
+	mc.HWID = hwid
 	mc.NodeName = nodeName
 	// Offering the exit is the point of the mesh, and it never exposes the
 	// router's home IP (MeshExit routes via own proxies only) — default on,
@@ -105,7 +177,7 @@ func (m Manager) MeshInit(nodeName string) (MeshInitResult, error) {
 	if err != nil {
 		return MeshInitResult{}, err
 	}
-	if err := fillMeshFromCode(&c, code, meshNodeName(nodeName)); err != nil {
+	if err := m.fillMeshFromCode(&c, code, meshNodeName(nodeName)); err != nil {
 		return MeshInitResult{}, err
 	}
 	if err := m.meshSaveApply(c); err != nil {
@@ -127,7 +199,7 @@ func (m Manager) MeshJoin(codeStr, nodeName string) (MeshInitResult, error) {
 	if err != nil {
 		return MeshInitResult{}, err
 	}
-	if err := fillMeshFromCode(&c, code, meshNodeName(nodeName)); err != nil {
+	if err := m.fillMeshFromCode(&c, code, meshNodeName(nodeName)); err != nil {
 		return MeshInitResult{}, err
 	}
 	if err := m.meshSaveApply(c); err != nil {
@@ -199,7 +271,7 @@ func (m Manager) MeshRotate() (MeshInitResult, error) {
 	fresh.NameEntropy = old.NameEntropy // keep the network name
 	fresh.ExtraPeers = old.ExtraPeers
 	nodeName := c.Mesh.NodeName
-	if err := fillMeshFromCode(&c, fresh, nodeName); err != nil {
+	if err := m.fillMeshFromCode(&c, fresh, nodeName); err != nil {
 		return MeshInitResult{}, err
 	}
 	if err := m.meshSaveApply(c); err != nil {

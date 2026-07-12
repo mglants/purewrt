@@ -11,8 +11,9 @@ import (
 
 // meshTestManager returns a DryRun manager over a temp config whose paths
 // all live under the test dir, so the full init→save→apply pipeline runs
-// without touching the real system.
-func meshTestManager(t *testing.T) Manager {
+// without touching the real system. The optional hwid overrides the faked
+// hardware id (default a0…) so two managers can be distinct devices.
+func meshTestManager(t *testing.T, hwid ...string) Manager {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("PUREWRT_UCI_DIR", filepath.Join(dir, "uci"))
@@ -27,7 +28,11 @@ func meshTestManager(t *testing.T) Manager {
 	if err := config.Save(cfgPath, c); err != nil {
 		t.Fatal(err)
 	}
-	return Manager{ConfigPath: cfgPath, DryRun: true}
+	id := "a0b1c2d3e4f5"
+	if len(hwid) > 0 {
+		id = hwid[0]
+	}
+	return Manager{ConfigPath: cfgPath, DryRun: true, hwidReader: func() (string, error) { return id, nil }}
 }
 
 func TestMeshInitJoinRoundTrip(t *testing.T) {
@@ -56,7 +61,7 @@ func TestMeshInitJoinRoundTrip(t *testing.T) {
 
 	// A friend joins with the same code → identical group identity; its salt
 	// derives from its own node name, so it differs per host.
-	b := meshTestManager(t)
+	b := meshTestManager(t, "b0b1c2d3e4f5")
 	jres, err := b.MeshJoin(res.Code, "beta")
 	if err != nil {
 		t.Fatal(err)
@@ -124,7 +129,7 @@ func TestMeshLeaveAndPeerSet(t *testing.T) {
 	}
 	// Persist a peer, then toggle it.
 	c, _ := m.Load()
-	c.MeshPeers = []config.MeshPeer{{Name: "beta", Enabled: true, OverlayIP: "10.126.126.2", ListenPort: 7897, ExitOffered: true}}
+	c.MeshPeers = []config.MeshPeer{{HWID: "b0b1c2d3e4f5", Name: "beta", Enabled: true, OverlayIP: "10.126.126.2", ListenPort: 7897, ExitOffered: true}}
 	if err := config.Save(m.ConfigPath, c); err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +166,7 @@ func TestMeshStatusConfigOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	c, _ := m.Load()
-	c.MeshPeers = []config.MeshPeer{{Name: "beta", Enabled: true, OverlayIP: "10.126.126.2", ExitOffered: true, LastSeen: "2026-07-12T00:00:00Z"}}
+	c.MeshPeers = []config.MeshPeer{{HWID: "b0b1c2d3e4f5", Name: "beta", Enabled: true, OverlayIP: "10.126.126.2", ExitOffered: true, LastSeen: "2026-07-12T00:00:00Z"}}
 	// Point the easytier bin at nothing so liveness stays config-only.
 	c.Mesh.EasytierBin = filepath.Join(t.TempDir(), "missing", "easytier-core")
 	if err := config.Save(m.ConfigPath, c); err != nil {

@@ -16,6 +16,7 @@ func joinedMesh() config.Config {
 		Enabled:     true,
 		NetworkName: "pwmesh-0011223344556677",
 		PSK:         "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+		HWID:        "a0b1c2d3e4f5",
 		NodeName:    "alpha",
 		ExitEnabled: true,
 		ListenPort:  7897,
@@ -56,7 +57,7 @@ func TestMeshListenerAndExitGroupEmitted(t *testing.T) {
 func TestMeshExitGroupNeverLeaksDirectOrFriendOrSection(t *testing.T) {
 	c := joinedMesh()
 	// Add a consumable friend so friend_* proxies also exist in the config.
-	c.MeshPeers = []config.MeshPeer{{Name: "beta", Enabled: true, OverlayIP: "10.126.126.2", ListenPort: 7897, ExitOffered: true}}
+	c.MeshPeers = []config.MeshPeer{{HWID: "b0b1c2d3e4f5", Name: "beta", Enabled: true, OverlayIP: "10.126.126.2", ListenPort: 7897, ExitOffered: true}}
 	out := string(Mihomo(c))
 
 	block := meshExitBlock(t, out)
@@ -83,7 +84,7 @@ func TestMeshExitNotEmittedWhenNotViable(t *testing.T) {
 func TestFriendProxyAndFallbackWiring(t *testing.T) {
 	c := joinedMesh()
 	c.Mesh.ExitEnabled = false // pure consumer
-	c.MeshPeers = []config.MeshPeer{{Name: "beta", Enabled: true, OverlayIP: "10.126.126.2", ListenPort: 7897, ExitOffered: true}}
+	c.MeshPeers = []config.MeshPeer{{HWID: "b0b1c2d3e4f5", Name: "beta", Enabled: true, OverlayIP: "10.126.126.2", ListenPort: 7897, ExitOffered: true}}
 	out := string(Mihomo(c))
 
 	if !strings.Contains(out, "name: friend_beta") || !strings.Contains(out, "server: 10.126.126.2") {
@@ -109,9 +110,9 @@ func TestFriendProxyAndFallbackWiring(t *testing.T) {
 func TestFriendDisabledOrNoExitNotEmitted(t *testing.T) {
 	c := joinedMesh()
 	c.MeshPeers = []config.MeshPeer{
-		{Name: "beta", Enabled: false, OverlayIP: "10.126.126.2", ListenPort: 7897, ExitOffered: true},
-		{Name: "gamma", Enabled: true, OverlayIP: "10.126.126.3", ListenPort: 7897, ExitOffered: false},
-		{Name: "delta", Enabled: true, OverlayIP: "", ListenPort: 7897, ExitOffered: true},
+		{HWID: "b0b1c2d3e4f5", Name: "beta", Enabled: false, OverlayIP: "10.126.126.2", ListenPort: 7897, ExitOffered: true},
+		{HWID: "c0b1c2d3e4f5", Name: "gamma", Enabled: true, OverlayIP: "10.126.126.3", ListenPort: 7897, ExitOffered: false},
+		{HWID: "d0b1c2d3e4f5", Name: "delta", Enabled: true, OverlayIP: "", ListenPort: 7897, ExitOffered: true},
 	}
 	out := string(Mihomo(c))
 	for _, n := range []string{"friend_beta", "friend_gamma", "friend_delta"} {
@@ -217,11 +218,11 @@ func TestMeshFingerprintGroupSemantics(t *testing.T) {
 		return fp.Groups
 	}
 	c := joinedMesh()
-	c.MeshPeers = []config.MeshPeer{{Name: "beta", Enabled: true, OverlayIP: "10.126.126.2", ListenPort: 7897, ExitOffered: true}}
+	c.MeshPeers = []config.MeshPeer{{HWID: "b0b1c2d3e4f5", Name: "beta", Enabled: true, OverlayIP: "10.126.126.2", ListenPort: 7897, ExitOffered: true}}
 	base := hashes(c)
 
 	material := c
-	material.MeshPeers = []config.MeshPeer{{Name: "beta", Enabled: true, OverlayIP: "10.126.126.9", ListenPort: 7897, ExitOffered: true}}
+	material.MeshPeers = []config.MeshPeer{{HWID: "b0b1c2d3e4f5", Name: "beta", Enabled: true, OverlayIP: "10.126.126.9", ListenPort: 7897, ExitOffered: true}}
 	got := hashes(material)
 	if got["mesh"] == base["mesh"] {
 		t.Error("peer overlay IP change did not dirty mesh group")
@@ -231,7 +232,7 @@ func TestMeshFingerprintGroupSemantics(t *testing.T) {
 	}
 
 	liveness := c
-	liveness.MeshPeers = []config.MeshPeer{{Name: "beta", Enabled: true, OverlayIP: "10.126.126.2", ListenPort: 7897, ExitOffered: true, LastSeen: "2026-07-12T00:00:00Z", LastError: "boom"}}
+	liveness.MeshPeers = []config.MeshPeer{{HWID: "b0b1c2d3e4f5", Name: "beta", Enabled: true, OverlayIP: "10.126.126.2", ListenPort: 7897, ExitOffered: true, LastSeen: "2026-07-12T00:00:00Z", LastError: "boom"}}
 	got = hashes(liveness)
 	for name, h := range got {
 		if base[name] != h {
@@ -246,7 +247,7 @@ func TestMeshFingerprintGroupSemantics(t *testing.T) {
 func TestMeshLeavesNFTablesUntouched(t *testing.T) {
 	off := NFTables(config.Default())
 	on := joinedMesh()
-	on.MeshPeers = []config.MeshPeer{{Name: "beta", Enabled: true, OverlayIP: "10.126.126.2", ListenPort: 7897, ExitOffered: true}}
+	on.MeshPeers = []config.MeshPeer{{HWID: "b0b1c2d3e4f5", Name: "beta", Enabled: true, OverlayIP: "10.126.126.2", ListenPort: 7897, ExitOffered: true}}
 	got := NFTables(on)
 	if string(off) != string(got) {
 		t.Error("mesh config altered nftables output")

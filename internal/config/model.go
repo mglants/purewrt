@@ -546,7 +546,8 @@ type Mesh struct {
 	NetworkName   string   // decoded from Code at parse, never serialized
 	NetworkSecret string   // decoded from Code at parse (base64), never serialized
 	PSK           string   // decoded from Code at parse (hex 32B), never serialized
-	NodeName      string   // this router's mesh identity (hostname by default)
+	HWID          string   // immutable device identity (base MAC, 12 lowercase hex); set at init/join, self-healed by mesh-sync
+	NodeName      string   // display label only (hostname by default) — safe to rename
 	ExitEnabled   bool     // offer this router's proxies as an exit to friends
 	ListenPort    int      // mihomo ss mesh listener port
 	APIMeshPort   int      // purewrt-api mesh endpoint port (overlay-only via fw4 zone)
@@ -563,8 +564,9 @@ type Mesh struct {
 // liveness stays in the runtime status file and MUST NOT enter the
 // generation fingerprint.
 type MeshPeer struct {
-	Name        string
-	Enabled     bool // consume this friend's exit (user toggle)
+	HWID        string // immutable peer identity (base MAC) — dedupe/credential key
+	Name        string // display label, may change across the peer's lifetime
+	Enabled     bool   // consume this friend's exit (user toggle)
 	OverlayIP   string
 	ListenPort  int
 	ExitOffered bool
@@ -572,26 +574,29 @@ type MeshPeer struct {
 	LastError   string // informational, mirrors RuleProvider.LastError
 }
 
-// CredSalt derives this router's credential salt from the group PSK and node
-// name; nothing is stored or exchanged. Returns "" when the PSK is
-// absent/malformed (dormant mesh).
+// CredSalt derives this router's credential salt from the group PSK and its
+// hardware id; nothing is stored or exchanged. Returns "" when the PSK or
+// hwid is absent (dormant/unidentified mesh).
 func (m Mesh) CredSalt() string {
-	return derivedCredSalt(m.PSK, m.NodeName)
+	return derivedCredSalt(m.PSK, m.HWID)
 }
 
 // CredSalt derives a peer's credential salt from the group PSK and the
-// peer's name — any member can compute any other member's listener password
-// from the name alone; secrecy lives entirely in the PSK.
+// peer's hwid — any member can compute any other member's listener password
+// from the hwid alone; secrecy lives entirely in the PSK.
 func (p MeshPeer) CredSalt(groupPSK string) string {
-	return derivedCredSalt(groupPSK, p.Name)
+	return derivedCredSalt(groupPSK, p.HWID)
 }
 
-func derivedCredSalt(pskHex, name string) string {
+func derivedCredSalt(pskHex, hwid string) string {
+	if hwid == "" {
+		return ""
+	}
 	psk, err := hex.DecodeString(pskHex)
 	if err != nil || len(psk) == 0 {
 		return ""
 	}
-	return mesh.DeriveCredSalt(psk, name)
+	return mesh.DeriveCredSalt(psk, hwid)
 }
 
 // MeshActive reports whether the mesh feature should generate anything:

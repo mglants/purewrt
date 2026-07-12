@@ -640,6 +640,7 @@ func writeMesh(b *bytes.Buffer, m Mesh) {
 	fmt.Fprintln(b, "config mesh 'mesh'")
 	optb(b, "enabled", m.Enabled)
 	opt(b, "code", m.Code)
+	opt(b, "hwid", m.HWID)
 	opt(b, "node_name", m.NodeName)
 	optb(b, "exit_enabled", m.ExitEnabled)
 	if m.ListenPort != d.ListenPort {
@@ -694,6 +695,7 @@ func meshExtrasMatchCode(codeStr string, extras []string) bool {
 // the peer's ss password derives from (group PSK, name).
 func writeMeshPeer(b *bytes.Buffer, p MeshPeer) {
 	fmt.Fprintln(b, "config mesh_peer")
+	opt(b, "hwid", p.HWID)
 	opt(b, "name", p.Name)
 	optb(b, "enabled", p.Enabled)
 	opt(b, "overlay_ip", p.OverlayIP)

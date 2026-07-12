@@ -67,6 +67,7 @@ type generationFingerprintInput struct {
 // liveness fields (LastSeen/LastError) are deliberately excluded so a
 // mesh-sync heartbeat can't dirty the generation cache.
 type meshPeerFPEntry struct {
+	HWID        string `json:"hwid"`
 	Name        string `json:"name"`
 	Enabled     bool   `json:"enabled"`
 	OverlayIP   string `json:"overlay_ip"`
@@ -77,7 +78,7 @@ type meshPeerFPEntry struct {
 func meshPeerFPEntries(c config.Config) []meshPeerFPEntry {
 	out := make([]meshPeerFPEntry, 0, len(c.MeshPeers))
 	for _, p := range c.MeshPeers {
-		out = append(out, meshPeerFPEntry{Name: p.Name, Enabled: p.Enabled, OverlayIP: p.OverlayIP, ListenPort: p.ListenPort, ExitOffered: p.ExitOffered})
+		out = append(out, meshPeerFPEntry{HWID: p.HWID, Name: p.Name, Enabled: p.Enabled, OverlayIP: p.OverlayIP, ListenPort: p.ListenPort, ExitOffered: p.ExitOffered})
 	}
 	return out
 }

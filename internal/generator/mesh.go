@@ -36,6 +36,7 @@ func meshFriends(c config.Config) []friendProxy {
 		return nil
 	}
 	var out []friendProxy
+	seen := map[string]bool{}
 	for _, p := range c.MeshPeers {
 		if !p.Enabled || !p.ExitOffered || p.OverlayIP == "" || !friendNameRE.MatchString(p.Name) {
 			continue
@@ -48,8 +49,19 @@ func meshFriends(c config.Config) []friendProxy {
 		if port <= 0 {
 			port = c.Mesh.ListenPort
 		}
+		// Identity is the hwid; the display name may collide (two friends
+		// both called "openwrt"). Suffix later duplicates so mihomo proxy
+		// names stay unique.
+		name := "friend_" + p.Name
+		if seen[name] && len(p.HWID) >= 4 {
+			name += "_" + p.HWID[:4]
+		}
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
 		out = append(out, friendProxy{
-			Name:     "friend_" + p.Name,
+			Name:     name,
 			IP:       p.OverlayIP,
 			Port:     port,
 			Password: mesh.DeriveSSPassword(psk, salt),

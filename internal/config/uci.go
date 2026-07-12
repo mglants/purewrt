@@ -388,6 +388,7 @@ func applySection(c *Config, x struct {
 		d := DefaultMesh()
 		c.Mesh.Enabled = b(x.opts, "enabled", d.Enabled)
 		c.Mesh.Code = one(x.opts, "code", "")
+		c.Mesh.HWID = one(x.opts, "hwid", d.HWID)
 		c.Mesh.NodeName = one(x.opts, "node_name", d.NodeName)
 		c.Mesh.ExitEnabled = b(x.opts, "exit_enabled", d.ExitEnabled)
 		c.Mesh.ListenPort = i(x.opts, "listen_port", d.ListenPort)
@@ -416,6 +417,7 @@ func applySection(c *Config, x struct {
 		c.Mesh.ExtraPeers = list(x.opts, "extra_peer", codeExtras)
 	case "mesh_peer":
 		p := MeshPeer{
+			HWID:        one(x.opts, "hwid", ""),
 			Name:        one(x.opts, "name", x.name),
 			Enabled:     b(x.opts, "enabled", true),
 			OverlayIP:   one(x.opts, "overlay_ip", ""),
@@ -424,7 +426,7 @@ func applySection(c *Config, x struct {
 			LastSeen:    one(x.opts, "last_seen", ""),
 			LastError:   one(x.opts, "last_error", ""),
 		}
-		if p.Name != "" {
+		if p.HWID != "" && p.Name != "" {
 			c.MeshPeers = append(c.MeshPeers, p)
 		}
 	case "ooni":

@@ -12,10 +12,12 @@ import (
 
 // MeshInfo is the /mesh/v1/info payload: the material fields a friend needs
 // to consume this router's exit. No credential material travels — the ss
-// password derives from (group PSK, node_name), both of which the peer
-// already holds.
+// password derives from (group PSK, hwid), both of which the peer already
+// holds after this exchange. hwid is the immutable identity; node_name is a
+// display label that may change.
 type MeshInfo struct {
 	V           int    `json:"v"`
+	HWID        string `json:"hwid"`
 	NodeName    string `json:"node_name"`
 	ExitOffered bool   `json:"exit_offered"`
 	ListenPort  int    `json:"listen_port"`
@@ -52,7 +54,7 @@ func (m Manager) MeshInfoHandler() http.Handler {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		body, err := json.Marshal(MeshInfo{V: 1, NodeName: c.Mesh.NodeName, ExitOffered: c.Mesh.ExitEnabled, ListenPort: c.Mesh.ListenPort})
+		body, err := json.Marshal(MeshInfo{V: 1, HWID: c.Mesh.HWID, NodeName: c.Mesh.NodeName, ExitOffered: c.Mesh.ExitEnabled, ListenPort: c.Mesh.ListenPort})
 		if err != nil {
 			http.Error(w, "internal", http.StatusInternalServerError)
 			return

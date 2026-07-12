@@ -43,9 +43,11 @@ func DeriveAPIKey(psk []byte) []byte {
 }
 
 // DeriveCredSalt derives a router's credential salt from the group PSK and
-// its node name, so the salt needs no storage or exchange: any group member
-// can compute any other member's listener password from the name alone.
-// Salts were public-by-design anyway; secrecy lives entirely in the PSK.
-func DeriveCredSalt(psk []byte, nodeName string) string {
-	return hex.EncodeToString(hkdfSHA256(psk, nil, append([]byte("purewrt-mesh/salt-v1:"), nodeName...), 16))
+// its hardware id (base MAC), so the salt needs no storage or exchange: any
+// group member can compute any other member's listener password from the
+// hwid alone. The hwid is immutable per device — unlike a node name, leaving
+// and rejoining can never mint a new identity. Salts were public-by-design
+// anyway; secrecy lives entirely in the PSK.
+func DeriveCredSalt(psk []byte, hwid string) string {
+	return hex.EncodeToString(hkdfSHA256(psk, nil, append([]byte("purewrt-mesh/salt-v1:"), hwid...), 16))
 }

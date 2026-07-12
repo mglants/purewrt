@@ -53,6 +53,8 @@ type Manager struct {
 	mihomoReachable func(config.Config) bool
 	mihomoReload    func(config.Config) error
 
+	// hwidReader overrides hardware-id detection in tests.
+	hwidReader func() (string, error)
 	// meshRunner / meshProbeBase are mesh test seams: fake easytier-cli
 	// output and redirect peer-info probes at an httptest server.
 	meshRunner    mesh.Runner

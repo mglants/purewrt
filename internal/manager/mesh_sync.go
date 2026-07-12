@@ -23,6 +23,9 @@ import (
 // before it can land in UCI or generated YAML.
 var meshPeerNameRE = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
+// meshHWIDRE guards advertised hardware ids: 12 lowercase hex (base MAC).
+var meshHWIDRE = regexp.MustCompile(`^[0-9a-f]{12}$`)
+
 const meshProbeTimeout = 5 * time.Second
 
 // MeshSyncReport is the mesh-sync outcome. Errors are per-peer and
@@ -81,11 +84,17 @@ func (m Manager) MeshSync() (MeshSyncReport, error) {
 
 	now := time.Now().UTC()
 	status := meshRuntimeStatus{SyncedAt: now.Format(time.RFC3339), Peers: map[string]meshRuntimePeerState{}}
-	byName := map[string]int{}
-	for i, p := range c.MeshPeers {
-		byName[p.Name] = i
-	}
 	changed := false
+	// Self-heal the stored hwid: a config restored onto different hardware
+	// would otherwise keep deriving the old device's credentials forever.
+	if hw, err := m.meshHWID(); err == nil && hw != c.Mesh.HWID {
+		c.Mesh.HWID = hw
+		changed = true
+	}
+	byHWID := map[string]int{}
+	for i, p := range c.MeshPeers {
+		byHWID[p.HWID] = i
+	}
 	for _, op := range overlay {
 		if op.IPv4 == "" {
 			continue
@@ -99,25 +108,29 @@ func (m Manager) MeshSync() (MeshSyncReport, error) {
 			}
 			continue
 		}
-		if info.NodeName == c.Mesh.NodeName {
+		if info.HWID == c.Mesh.HWID {
 			continue // self via a hairpin route
+		}
+		if !meshHWIDRE.MatchString(info.HWID) {
+			rep.Errors = append(rep.Errors, op.IPv4+": missing or malformed hwid")
+			continue
 		}
 		if !meshPeerNameRE.MatchString(info.NodeName) {
 			rep.Errors = append(rep.Errors, op.IPv4+": hostile node name")
 			continue
 		}
 		status.Peers[info.NodeName] = meshRuntimePeerState{LastSeen: now.Format(time.RFC3339)}
-		if i, ok := byName[info.NodeName]; ok {
+		if i, ok := byHWID[info.HWID]; ok {
 			p := &c.MeshPeers[i]
-			if p.OverlayIP != op.IPv4 || p.ListenPort != info.ListenPort || p.ExitOffered != info.ExitOffered {
-				p.OverlayIP, p.ListenPort, p.ExitOffered = op.IPv4, info.ListenPort, info.ExitOffered
+			if p.Name != info.NodeName || p.OverlayIP != op.IPv4 || p.ListenPort != info.ListenPort || p.ExitOffered != info.ExitOffered {
+				p.Name, p.OverlayIP, p.ListenPort, p.ExitOffered = info.NodeName, op.IPv4, info.ListenPort, info.ExitOffered
 				rep.Updated++
 				changed = true
 			}
 			continue
 		}
-		c.MeshPeers = append(c.MeshPeers, config.MeshPeer{Name: info.NodeName, Enabled: true, OverlayIP: op.IPv4, ListenPort: info.ListenPort, ExitOffered: info.ExitOffered})
-		byName[info.NodeName] = len(c.MeshPeers) - 1
+		c.MeshPeers = append(c.MeshPeers, config.MeshPeer{HWID: info.HWID, Name: info.NodeName, Enabled: true, OverlayIP: op.IPv4, ListenPort: info.ListenPort, ExitOffered: info.ExitOffered})
+		byHWID[info.HWID] = len(c.MeshPeers) - 1
 		rep.Added++
 		changed = true
 	}
