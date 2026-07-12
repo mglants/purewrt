@@ -546,7 +546,7 @@ type Mesh struct {
 	NetworkName   string   // decoded from Code at parse, never serialized
 	NetworkSecret string   // decoded from Code at parse (base64), never serialized
 	PSK           string   // decoded from Code at parse (hex 32B), never serialized
-	HWID          string   // device identity (provider.AutomaticHWID, "purewrt-<hex24>"); set at init/join, self-healed by mesh-sync
+	HWID          string   // device identity (provider.AutomaticHWID, "purewrt-<hex24>"); write-once at init/join, never rewritten
 	NodeName      string   // display label only (hostname by default) — safe to rename
 	ExitEnabled   bool     // offer this router's proxies as an exit to friends
 	ListenPort    int      // mihomo ss mesh listener port

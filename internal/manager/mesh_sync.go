@@ -86,11 +86,17 @@ func (m Manager) MeshSync() (MeshSyncReport, error) {
 	now := time.Now().UTC()
 	status := meshRuntimeStatus{SyncedAt: now.Format(time.RFC3339), Peers: map[string]meshRuntimePeerState{}}
 	changed := false
-	// Self-heal the stored hwid: a config restored onto different hardware
-	// would otherwise keep deriving the old device's credentials forever.
-	if hw, err := m.meshHWID(); err == nil && hw != c.Mesh.HWID {
-		c.Mesh.HWID = hw
-		changed = true
+	// The stored hwid is write-once: computed at init/join, never rewritten.
+	// The computed value has drift edge cases (interface renames, bridge MAC
+	// overrides change the hash seed) and mesh identity must survive them —
+	// friends key credentials on this id. Backfill only when a pre-hwid
+	// config left it empty. A config restored onto replacement hardware
+	// deliberately KEEPS its identity.
+	if c.Mesh.HWID == "" {
+		if hw, err := m.meshHWID(); err == nil {
+			c.Mesh.HWID = hw
+			changed = true
+		}
 	}
 	byHWID := map[string]int{}
 	for i, p := range c.MeshPeers {
