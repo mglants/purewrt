@@ -1097,6 +1097,16 @@ var commands = []command{
 				printJSON(map[string]bool{"saved": true})
 			})
 		}},
+	{name: "mesh-peer-remove", group: "Friend mesh",
+		args: "<name>",
+		desc: "Forget a persisted friend (orphans from a leave/rejoin under a new name)",
+		run: func(m manager.Manager) {
+			need(3)
+			withOperationLockCoalesce(func() {
+				fatal(m.MeshPeerRemove(os.Args[2]))
+				printJSON(map[string]bool{"removed": true})
+			})
+		}},
 	{name: "ooni-installed", group: "OONI",
 		args: "",
 		desc: "Report whether ooniprobe is installed (JSON)",

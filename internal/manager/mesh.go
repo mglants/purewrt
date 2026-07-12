@@ -223,6 +223,24 @@ func (m Manager) MeshPeerSet(name string, enabled bool) error {
 	return fmt.Errorf("mesh peer %q not found", name)
 }
 
+// MeshPeerRemove forgets a persisted peer entirely. Needed for orphans a
+// friend leaves behind by leaving/rejoining under a new node name — the new
+// identity is discovered as a fresh peer and the old one never comes back.
+// If the peer is actually still alive, the next mesh-sync simply re-adds it.
+func (m Manager) MeshPeerRemove(name string) error {
+	c, err := m.Load()
+	if err != nil {
+		return err
+	}
+	for i := range c.MeshPeers {
+		if c.MeshPeers[i].Name == name {
+			c.MeshPeers = append(c.MeshPeers[:i], c.MeshPeers[i+1:]...)
+			return m.meshSaveApply(c)
+		}
+	}
+	return fmt.Errorf("mesh peer %q not found", name)
+}
+
 // MeshStatusReport merges config state with live easytier daemon state.
 // Liveness is best-effort: a dead daemon yields DaemonRunning=false and
 // config-only peer rows, never an error — the LuCI page must render either

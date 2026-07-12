@@ -20,6 +20,7 @@ var callLeave = rpc.declare({ object: 'purewrt', method: 'mesh_leave' });
 var callCode = rpc.declare({ object: 'purewrt', method: 'mesh_code' });
 var callRotate = rpc.declare({ object: 'purewrt', method: 'mesh_rotate' });
 var callPeerSet = rpc.declare({ object: 'purewrt', method: 'mesh_peer_set', params: [ 'name', 'enabled' ] });
+var callPeerRemove = rpc.declare({ object: 'purewrt', method: 'mesh_peer_remove', params: [ 'name' ] });
 
 var joinJob = bgJob.make({
   startMethod: 'mesh_join_start',
@@ -311,11 +312,12 @@ return view.extend({
         E('th', { 'class': 'th' }, _('Link')),
         E('th', { 'class': 'th' }, _('Latency')),
         E('th', { 'class': 'th' }, _('Offers exit')),
-        E('th', { 'class': 'th' }, _('Use exit'))
+        E('th', { 'class': 'th' }, _('Use exit')),
+        E('th', { 'class': 'th' }, '')
       ])
     ]);
     if (!peers.length) {
-      table.appendChild(E('tr', { 'class': 'tr' }, E('td', { 'class': 'td', 'colspan': 6 },
+      table.appendChild(E('tr', { 'class': 'tr' }, E('td', { 'class': 'td', 'colspan': 7 },
         E('em', {}, _('No friends discovered yet. Have a friend join with your sync-code, then click "Sync now".')))));
     }
     peers.forEach(function(p) {
@@ -332,13 +334,33 @@ return view.extend({
           }
         });
       });
+      // Forget only offline peers: the usual orphan is a friend who left and
+      // rejoined under a new node name. A live peer would just be re-added by
+      // the next sync, so the button stays hidden for those.
+      var forget = '';
+      if (!p.live) {
+        forget = E('button', { 'class': 'btn cbi-button cbi-button-remove', 'title': _('Remove this peer from the config. If it is actually alive, the next sync re-adds it.') }, _('Forget'));
+        forget.addEventListener('click', function(ev) {
+          ev.preventDefault();
+          forget.disabled = true;
+          callPeerRemove(p.name).then(function(r) {
+            if (r && r.error) {
+              ui.addNotification(null, E('p', r.error), 'error');
+              forget.disabled = false;
+            } else {
+              ui.addNotification(null, E('p', _('Peer forgotten.')), 'info');
+            }
+          });
+        });
+      }
       table.appendChild(E('tr', { 'class': 'tr' }, [
         E('td', { 'class': 'td' }, p.name),
         E('td', { 'class': 'td', 'style': 'font-family:monospace' }, p.overlay_ip || '-'),
         E('td', { 'class': 'td' }, link),
         E('td', { 'class': 'td' }, p.live && p.latency_ms ? (Math.round(p.latency_ms) + ' ms') : '-'),
         E('td', { 'class': 'td' }, p.exit_offered ? _('yes') : _('no')),
-        E('td', { 'class': 'td' }, en)
+        E('td', { 'class': 'td' }, en),
+        E('td', { 'class': 'td' }, forget)
       ]));
     });
     return E('div', { 'class': 'cbi-section' }, [
