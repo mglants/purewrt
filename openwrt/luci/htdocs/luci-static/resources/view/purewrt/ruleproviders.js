@@ -52,7 +52,11 @@ function providerStatus(stats, name) {
 }
 
 function sectionTitle(sid) {
-  return uci.get('purewrt', sid, 'name') || sid || _('New rule provider');
+  var name = uci.get('purewrt', sid, 'name');
+  if (name) return name;
+  // Anonymous sections get generated cfgXXXXXX ids — meaningless to show.
+  if (!sid || /^cfg[0-9a-f]{6}/.test(sid)) return _('New rule provider');
+  return sid;
 }
 
 function preserveExistingOption(opt) {
@@ -323,11 +327,14 @@ return view.extend({
 
     var s = m.section(form.TypedSection, 'rule_provider', _('Rule providers'));
     s.addremove = true;
+    // Named sections: the section id IS the provider name (the Go parser
+    // falls back to it when no `name` option is present), same as routing
+    // sections — one name, no separate field to drift.
     s.anonymous = false;
     s.sectiontitle = sectionTitle;
 
-    s.option(form.Flag, 'enabled', _('Enabled'));
-    s.option(form.Value, 'name', _('Name'));
+    var rpEnabled = s.option(form.Flag, 'enabled', _('Enabled'));
+    rpEnabled.default = '1'; // Go side treats an absent option as enabled
 
     var behavior = s.option(form.ListValue, 'behavior', _('Behavior'));
     behavior.value('domain', _('Domain'));

@@ -130,11 +130,17 @@ function profileTitle(sid) {
   var ifaces = uci.get('purewrt', sid, 'interface');
   if (Array.isArray(ifaces)) ifaces = ifaces[0];
   if (ifaces) return ifaces;
-  return sid || _('New profile');
+  // Anonymous sections get generated cfgXXXXXX ids — meaningless to show.
+  if (!sid || /^cfg[0-9a-f]{6}/.test(sid)) return _('New profile');
+  return sid;
 }
 
 function strategyTitle(sid) {
-  return uci.get('purewrt', sid, 'name') || sid || _('New strategy');
+  var name = uci.get('purewrt', sid, 'name');
+  if (name) return name;
+  // Anonymous sections get generated cfgXXXXXX ids — meaningless to show.
+  if (!sid || /^cfg[0-9a-f]{6}/.test(sid)) return _('New strategy');
+  return sid;
 }
 
 function strategyProtocols(sid) {
@@ -972,10 +978,13 @@ return view.extend({
     // ---- Runtime profiles (folded into a table after m.render) ----
     var p = m.section(form.TypedSection, 'zapret_profile', _('Zapret runtime profiles'));
     p.addremove = true;
+    // Named sections: the section id IS the profile name (the Go parser
+    // falls back to it when no `name` option is present), same as routing
+    // sections — one name, no separate field to drift.
     p.anonymous = false;
     p.sectiontitle = profileTitle;
-    p.option(form.Flag, 'enabled', _('Enabled'));
-    p.option(form.Value, 'name', _('Name'));
+    var profEnabled = p.option(form.Flag, 'enabled', _('Enabled'));
+    profEnabled.default = '1'; // Go side treats an absent option as enabled
     var mode = p.option(form.ListValue, 'interface_mode', _('Interface matching mode'));
     mode.value('single', _('Single interface'));
     mode.value('network', _('OpenWrt network'));
@@ -1047,10 +1056,11 @@ return view.extend({
     // ---- Strategies (folded into a table after m.render) ----
     var zs = m.section(form.TypedSection, 'zapret_strategy', _('Zapret strategies'));
     zs.addremove = true;
+    // Named for the same reason as profiles above: section id is the name.
     zs.anonymous = false;
     zs.sectiontitle = strategyTitle;
-    zs.option(form.Flag, 'enabled', _('Enabled'));
-    zs.option(form.Value, 'name', _('Name'));
+    var stratEnabled = zs.option(form.Flag, 'enabled', _('Enabled'));
+    stratEnabled.default = '1'; // Go side treats an absent option as enabled
     var preset = zs.option(form.ListValue, 'preset', _('Preset'));
     preset.value('custom', _('custom'));
     // Preset options come from the fetched candidate list, labelled by ISP.

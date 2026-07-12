@@ -70,7 +70,7 @@ rules:
 		if rp.Name == "youtube" {
 			youtube = rp
 		}
-		if rp.Name == "ru-inline" {
+		if rp.Name == "ru_inline" {
 			ruInline = rp
 		}
 	}
@@ -203,22 +203,22 @@ rules:
 	if got := providers["ai"]; got.Priority != 60 {
 		t.Fatalf("ai priority = %d, want subscription rule order priority 60", got.Priority)
 	}
-	if got := providers["blocked-itdog-domains"]; got.Section != "common" || got.RouteAction != "proxy" {
+	if got := providers["blocked_itdog_domains"]; got.Section != "common" || got.RouteAction != "proxy" {
 		t.Fatalf("blocked provider mapped incorrectly: %+v", got)
 	}
-	if got := providers["cloudflare-ips"]; got.Section != "common" || got.RouteAction != "proxy" {
+	if got := providers["cloudflare_ips"]; got.Section != "common" || got.RouteAction != "proxy" {
 		t.Fatalf("logical rule provider target mapped incorrectly: %+v", got)
 	}
-	if got := providers["cloudflare-ips"]; got.Priority != 40 {
+	if got := providers["cloudflare_ips"]; got.Priority != 40 {
 		t.Fatalf("cloudflare priority = %d, want logical rule order priority 40", got.Priority)
 	}
-	if got := providers["custom-provider"]; got.Section != "messengers" || got.RouteAction != "proxy" {
+	if got := providers["custom_provider"]; got.Section != "messengers" || got.RouteAction != "proxy" {
 		t.Fatalf("custom provider mapped incorrectly: %+v", got)
 	}
-	if got := providers["remote-control"]; got.Section != "direct" || got.RouteAction != "direct" {
+	if got := providers["remote_control"]; got.Section != "direct" || got.RouteAction != "direct" {
 		t.Fatalf("direct provider mapped incorrectly: %+v", got)
 	}
-	if got := providers["reject-quic"]; got.Section != "reject" || got.RouteAction != "reject" {
+	if got := providers["reject_quic"]; got.Section != "reject" || got.RouteAction != "reject" {
 		t.Fatalf("reject provider mapped incorrectly: %+v", got)
 	}
 	groups := map[string]config.Section{}

@@ -156,3 +156,58 @@ func TestValidateRejectsInvalidDNSListenAndPriority(t *testing.T) {
 		t.Fatalf("expected priority validation error, got %v", err)
 	}
 }
+
+func TestValidateRejectsReservedProxyProviderName(t *testing.T) {
+	c := config.Default()
+	c.ProxyProviders = []config.ProxyProvider{{Name: "default", Enabled: true, URL: "https://example.com/sub", Path: "/etc/purewrt/providers/main.yaml"}}
+	err := validateConfigHardening(c)
+	if err == nil || !strings.Contains(err.Error(), "reserved") {
+		t.Fatalf("expected reserved provider name error, got %v", err)
+	}
+}
+
+func TestValidateRejectsDuplicateProxyProviderNames(t *testing.T) {
+	c := config.Default()
+	c.ProxyProviders = []config.ProxyProvider{
+		{Name: "main", Enabled: true, URL: "https://example.com/a", Path: "/etc/purewrt/providers/a.yaml"},
+		{Name: "main", Enabled: true, URL: "https://example.com/b", Path: "/etc/purewrt/providers/b.yaml"},
+	}
+	err := validateConfigHardening(c)
+	if err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("expected duplicate provider name error, got %v", err)
+	}
+}
+
+func TestValidateRejectsReservedProxyGroupNames(t *testing.T) {
+	for _, group := range []string{"GLOBAL", "DIRECT", "REJECT", "REJECT-DROP", "PASS", "COMPATIBLE", "DNSProxy", "NetCheckProbe"} {
+		c := config.Default()
+		c.Sections = []config.Section{{Name: "media", Enabled: true, Action: "proxy", TPROXYPort: 7894, ProxyGroup: group, IPv4Enabled: true, IPv6Enabled: true}}
+		err := validateConfigHardening(c)
+		if err == nil || !strings.Contains(err.Error(), "reserved") {
+			t.Fatalf("group %q: expected reserved group name error, got %v", group, err)
+		}
+	}
+}
+
+func TestValidateRejectsDuplicateProxyGroupNames(t *testing.T) {
+	c := config.Default()
+	c.Sections = []config.Section{
+		{Name: "media", Enabled: true, Action: "proxy", TPROXYPort: 7894, ProxyGroup: "Media", IPv4Enabled: true, IPv6Enabled: true},
+		{Name: "ai", Enabled: true, Action: "proxy", TPROXYPort: 7895, ProxyGroup: "Media", IPv4Enabled: true, IPv6Enabled: true},
+	}
+	err := validateConfigHardening(c)
+	if err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("expected duplicate group name error, got %v", err)
+	}
+}
+
+func TestValidateAllowsDuplicateGroupOnDisabledSection(t *testing.T) {
+	c := config.Default()
+	c.Sections = []config.Section{
+		{Name: "media", Enabled: true, Action: "proxy", TPROXYPort: 7894, ProxyGroup: "Media", IPv4Enabled: true, IPv6Enabled: true},
+		{Name: "old", Enabled: false, Action: "proxy", TPROXYPort: 7895, ProxyGroup: "Media", IPv4Enabled: true, IPv6Enabled: true},
+	}
+	if err := validateConfigHardening(c); err != nil {
+		t.Fatalf("disabled section duplicate group should pass, got %v", err)
+	}
+}

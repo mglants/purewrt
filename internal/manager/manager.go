@@ -1010,6 +1010,15 @@ var (
 	unsafePathParts = regexp.MustCompile(`(^|/)\.\.(/|$)`)
 )
 
+// mihomoReservedGroupNames are proxy-group names the generated mihomo.yaml
+// cannot use: mihomo's built-in proxies/groups plus the groups PureWRT itself
+// always emits (DNSProxy, NetCheckProbe). A section proxy_group colliding with
+// any of these fails mihomo config validation after apply.
+var mihomoReservedGroupNames = map[string]bool{
+	"GLOBAL": true, "DIRECT": true, "REJECT": true, "REJECT-DROP": true,
+	"PASS": true, "COMPATIBLE": true, "DNSProxy": true, "NetCheckProbe": true,
+}
+
 func validateConfigHardening(c config.Config) error {
 	if err := validateHexField("fwmark", c.Settings.FwMark, true); err != nil {
 		return err
@@ -1038,9 +1047,19 @@ func validateConfigHardening(c config.Config) error {
 			return err
 		}
 	}
+	groupOwner := map[string]string{}
 	for _, s := range c.Sections {
 		if !safeIdentRE.MatchString(s.Name) {
 			return fmt.Errorf("section %q has unsafe name", s.Name)
+		}
+		if s.Enabled && s.Action == "proxy" {
+			if mihomoReservedGroupNames[s.ProxyGroup] {
+				return fmt.Errorf("section %q proxy_group %q is a reserved mihomo/PureWRT group name; choose another", s.Name, s.ProxyGroup)
+			}
+			if prev := groupOwner[s.ProxyGroup]; prev != "" {
+				return fmt.Errorf("section %q proxy_group %q duplicates section %q — mihomo group names must be unique", s.Name, s.ProxyGroup, prev)
+			}
+			groupOwner[s.ProxyGroup] = s.Name
 		}
 		if !safeNFTIdentRE.MatchString(s.NFTSet4()) || !safeNFTIdentRE.MatchString(s.NFTSet6()) {
 			return fmt.Errorf("section %q generates unsafe nft set name", s.Name)
@@ -1076,10 +1095,21 @@ func validateConfigHardening(c config.Config) error {
 			return err
 		}
 	}
+	providerSeen := map[string]bool{}
 	for _, pp := range c.ProxyProviders {
 		if err := validateProviderSafety("proxy provider", pp.Name, pp.Path); err != nil {
 			return err
 		}
+		// mihomo hard-rejects a proxy-provider named "default" (its internal
+		// provider holding all static proxies) — fail here with a clear
+		// message instead of the post-apply rollback loop.
+		if pp.Name == "default" {
+			return fmt.Errorf("proxy provider name %q is reserved by mihomo; rename the provider (e.g. \"main\")", pp.Name)
+		}
+		if providerSeen[pp.Name] {
+			return fmt.Errorf("duplicate proxy provider name %q — provider names must be unique", pp.Name)
+		}
+		providerSeen[pp.Name] = true
 	}
 	for _, v := range c.VPNs {
 		if !safeProviderRE.MatchString(v.Name) {

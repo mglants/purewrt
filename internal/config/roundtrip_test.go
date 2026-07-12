@@ -66,8 +66,11 @@ func TestConfigRoundTripPreservesKeyFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(written), "config zapret_profile '") {
-		t.Fatalf("zapret profile must be anonymous for UCI interface names with dash, got:\n%s", written)
+	// Safe identifiers become named sections (id carries the name); names
+	// with dashes/dots fall back to anonymous + option name — that case is
+	// covered by TestSerializeFallsBackToAnonymousForUnsafeIDs.
+	if !strings.Contains(string(written), "config zapret_profile 'wan_a'") {
+		t.Fatalf("zapret profile with safe id must serialize as a named section, got:\n%s", written)
 	}
 	got, err := Load(path)
 	if err != nil {

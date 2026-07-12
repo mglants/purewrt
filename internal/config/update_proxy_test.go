@@ -86,7 +86,7 @@ func TestZapretProfilesLoadAndSave(t *testing.T) {
 	if strings.Contains(string(written), "config zapret 'zapret'") || strings.Contains(string(written), "--legacy-ignored") {
 		t.Fatalf("saved config must drop legacy single zapret config:\n%s", string(written))
 	}
-	if !strings.Contains(string(written), "config zapret_profile\n") || strings.Contains(string(written), "config zapret_profile '") || !strings.Contains(string(written), "list interface 'wan_b'") || strings.Contains(string(written), "option interface '") {
+	if !strings.Contains(string(written), "config zapret_profile 'wan_a'") || !strings.Contains(string(written), "config zapret_profile 'wan_b'") || !strings.Contains(string(written), "list interface 'wan_b'") || strings.Contains(string(written), "option interface '") {
 		t.Fatalf("saved config missing zapret profiles:\n%s", string(written))
 	}
 }

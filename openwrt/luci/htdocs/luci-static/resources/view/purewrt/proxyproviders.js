@@ -13,7 +13,11 @@ var callUpdateProxyProvider = rpc.declare({ object: 'purewrt', method: 'update_p
 var callReload = rpc.declare({ object: 'purewrt', method: 'reload' });
 
 function sectionTitle(sid) {
-  return uci.get('purewrt', sid, 'name') || sid || _('New proxy provider');
+  var name = uci.get('purewrt', sid, 'name');
+  if (name) return name;
+  // Anonymous sections get generated cfgXXXXXX ids — meaningless to show.
+  if (!sid || /^cfg[0-9a-f]{6}/.test(sid)) return _('New proxy provider');
+  return sid;
 }
 
 function updateProxyProvider(sid) {
@@ -42,11 +46,22 @@ return view.extend({
     var m = new form.Map('purewrt', _('PureWRT Proxy Providers'));
     var s = m.section(form.TypedSection, 'proxy_provider', _('Proxy providers'));
     s.addremove = true;
+    // Named sections: the section id IS the provider name (the Go parser
+    // falls back to it when no `name` option is present), same as routing
+    // sections — one name, no separate field to drift.
     s.anonymous = false;
     s.sectiontitle = sectionTitle;
+    var origHandleAdd = s.handleAdd;
+    s.handleAdd = function(ev, name) {
+      if (name === 'default') {
+        ui.addNotification(null, E('p', _('"default" is reserved by mihomo; pick another name')), 'warning');
+        return Promise.resolve();
+      }
+      return origHandleAdd.call(this, ev, name);
+    };
 
-    s.option(form.Flag, 'enabled', _('Enabled'));
-    s.option(form.Value, 'name', _('Name'));
+    var enabled = s.option(form.Flag, 'enabled', _('Enabled'));
+    enabled.default = '1'; // Go side treats an absent option as enabled
 
     var type = s.option(form.ListValue, 'type', _('Type'));
     type.value('http', _('HTTP'));

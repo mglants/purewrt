@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -35,11 +36,12 @@ func Serialize(c Config) []byte {
 	writeMain(&b, c.Settings)
 	writeDNS(&b, c.DNS)
 	writeMwan3(&b, c.Mwan3)
+	seenZP, seenZS := map[string]bool{}, map[string]bool{}
 	for _, p := range c.ZapretProfiles {
-		writeZapretProfile(&b, p)
+		writeZapretProfile(&b, p, seenZP)
 	}
 	for _, s := range c.ZapretStrategies {
-		writeZapretStrategy(&b, s)
+		writeZapretStrategy(&b, s, seenZS)
 	}
 	for _, v := range c.VPNs {
 		writeVPN(&b, v)
@@ -53,11 +55,12 @@ func Serialize(c Config) []byte {
 	for _, s := range c.Subscriptions {
 		writeSubscription(&b, s)
 	}
+	seenPP, seenRP := map[string]bool{}, map[string]bool{}
 	for _, p := range c.ProxyProviders {
-		writeProxyProvider(&b, p)
+		writeProxyProvider(&b, p, seenPP)
 	}
 	for _, p := range c.RuleProviders {
-		writeRuleProvider(&b, p)
+		writeRuleProvider(&b, p, seenRP)
 	}
 	writeBypass(&b, c.Bypass)
 	writeOONI(&b, c.OONI)
@@ -231,6 +234,31 @@ func UpsertSectionProxyGroup(c Config, s Section) Config {
 }
 
 func q(v string) string { return "'" + strings.ReplaceAll(v, "'", "'\\''") + "'" }
+
+// uciIDRE matches names usable as UCI section identifiers (libuci rejects
+// anything outside [A-Za-z0-9_]).
+var uciIDRE = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+
+// sectionHeader writes `config <typ> '<name>'` when the name is a valid UCI
+// identifier — the section id then carries the name, the same way routing
+// sections (`config section 'ai'`) work — and reports false: no name option
+// needed, the parser falls back to the section id. Names with dots/dashes
+// can't be section ids, so those keep the legacy anonymous header and report
+// true so the caller emits `option name`. Repeated names also fall back to
+// anonymous: libuci merges duplicate section ids last-wins, which would
+// silently drop all but one entry (our validate rejects duplicates, but
+// Serialize must never lose data on its own).
+func sectionHeader(b *bytes.Buffer, typ, name string, seen map[string]bool) (needNameOpt bool) {
+	if !seen[name] && uciIDRE.MatchString(name) {
+		seen[name] = true
+		fmt.Fprintf(b, "config %s %s\n", typ, q(name))
+		return false
+	}
+	seen[name] = true
+	fmt.Fprintln(b, "config "+typ)
+	return true
+}
+
 func yn(v bool) string {
 	if v {
 		return "1"
@@ -390,9 +418,10 @@ func writeMwan3(b *bytes.Buffer, m Mwan3) {
 	fmt.Fprintln(b)
 }
 
-func writeZapretProfile(b *bytes.Buffer, p ZapretProfile) {
-	fmt.Fprintln(b, "config zapret_profile")
-	opt(b, "name", p.Name)
+func writeZapretProfile(b *bytes.Buffer, p ZapretProfile, seen map[string]bool) {
+	if sectionHeader(b, "zapret_profile", p.Name, seen) {
+		opt(b, "name", p.Name)
+	}
 	optb(b, "enabled", p.Enabled)
 	opt(b, "network", p.Network)
 	opt(b, "device", p.Device)
@@ -406,9 +435,10 @@ func writeZapretProfile(b *bytes.Buffer, p ZapretProfile) {
 	fmt.Fprintln(b)
 }
 
-func writeZapretStrategy(b *bytes.Buffer, s ZapretStrategy) {
-	fmt.Fprintf(b, "config zapret_strategy %s\n", q(s.Name))
-	opt(b, "name", s.Name)
+func writeZapretStrategy(b *bytes.Buffer, s ZapretStrategy, seen map[string]bool) {
+	if sectionHeader(b, "zapret_strategy", s.Name, seen) {
+		opt(b, "name", s.Name)
+	}
 	optb(b, "enabled", s.Enabled)
 	opt(b, "profile", s.Profile)
 	opt(b, "preset", s.Preset)
@@ -496,9 +526,10 @@ func writeSubscription(b *bytes.Buffer, s Subscription) {
 	optb(b, "suppress_hwid", s.SuppressHWID)
 	fmt.Fprintln(b)
 }
-func writeProxyProvider(b *bytes.Buffer, p ProxyProvider) {
-	fmt.Fprintln(b, "config proxy_provider")
-	opt(b, "name", p.Name)
+func writeProxyProvider(b *bytes.Buffer, p ProxyProvider, seen map[string]bool) {
+	if sectionHeader(b, "proxy_provider", p.Name, seen) {
+		opt(b, "name", p.Name)
+	}
 	optb(b, "enabled", p.Enabled)
 	opt(b, "type", p.Type)
 	opt(b, "url", p.URL)
@@ -517,9 +548,10 @@ func writeProxyProvider(b *bytes.Buffer, p ProxyProvider) {
 	optb(b, "suppress_hwid", p.SuppressHWID)
 	fmt.Fprintln(b)
 }
-func writeRuleProvider(b *bytes.Buffer, p RuleProvider) {
-	fmt.Fprintln(b, "config rule_provider")
-	opt(b, "name", p.Name)
+func writeRuleProvider(b *bytes.Buffer, p RuleProvider, seen map[string]bool) {
+	if sectionHeader(b, "rule_provider", p.Name, seen) {
+		opt(b, "name", p.Name)
+	}
 	optb(b, "enabled", p.Enabled)
 	opt(b, "behavior", p.Behavior)
 	opt(b, "format", p.Format)
