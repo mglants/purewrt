@@ -4,6 +4,24 @@ All notable changes to PureWRT are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are the `purewrt`
 package version.
 
+## [0.4.0] - 2026-07-12
+
+### Changed
+- **Type-prefixed UCI section ids.** libuci section ids share one namespace
+  per config file across all types, and `uci set purewrt.<existing>=<type>`
+  silently *retypes* an existing section — creating a rule provider in LuCI
+  named after a routing section quietly destroyed the routing section. The
+  section id is now the display name behind a per-type prefix
+  (`sec_youtube` / `rp_youtube` / `zs_youtube` coexist, all shown as
+  "youtube"), the pattern device sections already used with `dev_<mac>`.
+  VPNs and subscriptions are now named sections too. Legacy configs load
+  unchanged and migrate automatically on the first save; unsafe names
+  (dashes/dots) keep the anonymous + `option name` form.
+- LuCI gained a shared `naming.js`: prefixed create flows with duplicate
+  rejection across all types, and name/sid resolution used by every view —
+  cross-references (a section's zapret strategies, device/CIDR routing
+  targets, wizard routing) always store display names, never section ids.
+
 ## [0.3.2] - 2026-07-12
 
 ### Added

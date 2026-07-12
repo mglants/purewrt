@@ -6,4 +6,4 @@ package version
 // `-ldflags -X github.com/purewrt/purewrt/internal/version.Version=$(PKG_VERSION)`.
 // The default tracks the repo VERSION file for plain `go build` binaries —
 // TestDefaultVersionMatchesVersionFile fails a release bump that forgets it.
-var Version = "0.3.2"
+var Version = "0.4.0"
