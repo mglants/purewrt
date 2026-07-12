@@ -250,6 +250,58 @@ type MeshPeerStatus struct {
 	LastError   string  `json:"last_error,omitempty"`
 }
 
+// MeshDiagnosticsReport is the overlay-formation debugging view: per-
+// rendezvous dial status plus the STUN NAT classification. Everything is
+// best-effort — a dead daemon yields empty sections, never an error, so the
+// LuCI card renders in every state.
+type MeshDiagnosticsReport struct {
+	Active        bool                `json:"active"`
+	DaemonRunning bool                `json:"daemon_running"`
+	OverlayIP     string              `json:"overlay_ip,omitempty"`
+	Connectors    []MeshConnectorInfo `json:"connectors"`
+	NatUDP        string              `json:"nat_udp,omitempty"`
+	NatTCP        string              `json:"nat_tcp,omitempty"`
+	PublicIPs     []string            `json:"public_ips,omitempty"`
+}
+
+type MeshConnectorInfo struct {
+	URL    string `json:"url"`
+	Status string `json:"status"`
+}
+
+// MeshDiagnostics reports why the overlay is (not) forming: which rendezvous
+// peers connect and what NAT the node sits behind. Symmetric NAT means
+// punching usually fails and friends fall back to relay through the
+// rendezvous.
+func (m Manager) MeshDiagnostics() MeshDiagnosticsReport {
+	rep := MeshDiagnosticsReport{Connectors: []MeshConnectorInfo{}}
+	c, err := m.Load()
+	if err != nil {
+		return rep
+	}
+	rep.Active = c.MeshActive()
+	if !rep.Active || !m.MeshInstalled() {
+		return rep
+	}
+	cli := m.meshCLI(c)
+	if ip, err := cli.NodeIP(); err == nil {
+		rep.DaemonRunning = true
+		rep.OverlayIP = ip
+	}
+	if conns, err := cli.Connectors(); err == nil {
+		rep.DaemonRunning = true
+		for _, cn := range conns {
+			rep.Connectors = append(rep.Connectors, MeshConnectorInfo{URL: cn.URL, Status: cn.Status})
+		}
+	}
+	if nat, err := cli.NAT(); err == nil {
+		rep.NatUDP = nat.UDPNatType
+		rep.NatTCP = nat.TCPNatType
+		rep.PublicIPs = nat.PublicIPs
+	}
+	return rep
+}
+
 func (m Manager) meshCLI(c config.Config) mesh.CLI {
 	bin := c.Mesh.EasytierBin
 	if bin == "" {

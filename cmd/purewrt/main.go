@@ -1062,6 +1062,12 @@ var commands = []command{
 			// Stat-based gate for the LuCI mesh page — zapret_installed twin.
 			printJSON(map[string]bool{"installed": m.MeshInstalled()})
 		}},
+	{name: "mesh-diagnostics", group: "Friend mesh",
+		args: "",
+		desc: "Overlay diagnostics: rendezvous dial status + STUN NAT type (JSON)",
+		run: func(m manager.Manager) {
+			printJSON(m.MeshDiagnostics())
+		}},
 	{name: "mesh-sync", group: "Friend mesh",
 		args: "",
 		desc: "Discover friends on the overlay and persist their exit material",

@@ -14,6 +14,7 @@
 // field-level edits.
 var callInstalled = rpc.declare({ object: 'purewrt', method: 'mesh_installed', expect: { installed: false } });
 var callStatus = rpc.declare({ object: 'purewrt', method: 'mesh_status' });
+var callDiagnostics = rpc.declare({ object: 'purewrt', method: 'mesh_diagnostics' });
 var callInit = rpc.declare({ object: 'purewrt', method: 'mesh_init', params: [ 'name' ] });
 var callLeave = rpc.declare({ object: 'purewrt', method: 'mesh_leave' });
 var callCode = rpc.declare({ object: 'purewrt', method: 'mesh_code' });
@@ -209,6 +210,23 @@ return view.extend({
       });
     }));
 
+    var diagBtn = E('button', { 'class': 'btn cbi-button' }, _('Diagnostics'));
+    var diagBox = E('div', { 'style': 'display:none;margin-top:.7em' });
+    diagBtn.addEventListener('click', function(ev) {
+      ev.preventDefault();
+      if (diagBox.style.display !== 'none') { diagBox.style.display = 'none'; return; }
+      diagBox.style.display = '';
+      diagBox.innerHTML = '';
+      diagBox.appendChild(E('em', {}, _('Querying overlay…')));
+      callDiagnostics().then(function(d) {
+        diagBox.innerHTML = '';
+        diagBox.appendChild(self.renderDiagnostics(d || {}));
+      }).catch(function(e) {
+        diagBox.innerHTML = '';
+        diagBox.appendChild(E('em', {}, e.message));
+      });
+    });
+
     return E('div', { 'class': 'cbi-section' }, [
       E('h3', {}, _('Mesh status')),
       E('div', {}, [
@@ -224,7 +242,44 @@ return view.extend({
           fmt.pill(st.exit_enabled ? _('yes') : _('no'), st.exit_enabled ? 'ok' : 'muted')
         ])
       ]),
-      E('div', { 'style': 'margin-top:.7em' }, [ showCodeBtn, ' ', syncBtn, ' ', rotateBtn, ' ', leaveBtn ])
+      E('div', { 'style': 'margin-top:.7em' }, [ showCodeBtn, ' ', syncBtn, ' ', diagBtn, ' ', rotateBtn, ' ', leaveBtn ]),
+      diagBox
+    ]);
+  },
+
+  // Diagnostics: per-rendezvous dial status + STUN NAT classification —
+  // "why is the overlay not forming?" in one glance.
+  renderDiagnostics: function(d) {
+    var connStatus = function(s) {
+      if (s === 'connected') return fmt.pill(_('connected'), 'ok');
+      if (s === 'connecting') return fmt.pill(_('connecting'), 'warn');
+      return fmt.pill(s || _('unknown'), 'danger');
+    };
+    // Symmetric-and-worse NAT defeats hole punching: friends fall back to
+    // relaying through the rendezvous.
+    var natPill = function(t) {
+      if (!t || t === 'Unknown') return fmt.pill(_('unknown'), 'muted');
+      var punchable = [ 'OpenInternet', 'NoPAT', 'FullCone', 'Restricted', 'PortRestricted' ].indexOf(t) >= 0;
+      return fmt.pill(t, punchable ? 'ok' : 'warn');
+    };
+    var rows = (d.connectors || []).map(function(c) {
+      return E('div', { 'style': 'margin-top:.2em' }, [
+        E('span', { 'style': 'font-family:monospace;margin-right:.6em' }, c.url), connStatus(c.status)
+      ]);
+    });
+    return E('div', { 'style': 'border-top:1px solid #ccc;padding-top:.5em' }, [
+      E('div', {}, [ E('strong', {}, _('Rendezvous: ')),
+        rows.length ? '' : E('em', {}, d.daemon_running ? _('none configured') : _('overlay daemon not running')) ]),
+      E('div', {}, rows),
+      E('div', { 'style': 'margin-top:.5em' }, [
+        E('strong', {}, _('NAT: ')), 'UDP ', natPill(d.nat_udp), ' TCP ', natPill(d.nat_tcp),
+        E('span', { 'style': 'margin-left:1.5em' }, [
+          E('strong', {}, _('Public IP: ')),
+          E('span', { 'style': 'font-family:monospace' }, (d.public_ips || []).join(', ') || '-')
+        ])
+      ]),
+      E('div', { 'class': 'cbi-section-descr', 'style': 'margin-top:.4em' },
+        _('A symmetric NAT usually defeats hole punching — friend traffic then relays through the rendezvous node instead of flowing directly.'))
     ]);
   },
 

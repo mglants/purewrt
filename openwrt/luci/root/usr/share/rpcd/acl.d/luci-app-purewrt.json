@@ -39,6 +39,7 @@
           "zapret_status",
           "mesh_installed",
           "mesh_status",
+          "mesh_diagnostics",
           "mesh_join_status",
           "mesh_sync_status",
           "ooni_installed",
