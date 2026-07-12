@@ -2,6 +2,7 @@
 'require view';
 'require rpc';
 'require ui';
+'require uci';
 'require poll';
 'require purewrt.bg_job as bgJob';
 'require purewrt.format as fmt';
@@ -21,7 +22,6 @@ var callCode = rpc.declare({ object: 'purewrt', method: 'mesh_code' });
 var callRotate = rpc.declare({ object: 'purewrt', method: 'mesh_rotate' });
 var callPeerSet = rpc.declare({ object: 'purewrt', method: 'mesh_peer_set', params: [ 'name', 'enabled' ] });
 var callPeerRemove = rpc.declare({ object: 'purewrt', method: 'mesh_peer_remove', params: [ 'name' ] });
-var callRendezvousSet = rpc.declare({ object: 'purewrt', method: 'mesh_rendezvous_set', params: [ 'peers' ] });
 
 var joinJob = bgJob.make({
   startMethod: 'mesh_join_start',
@@ -120,9 +120,10 @@ return view.extend({
 
   // --- joined: rendezvous servers editor -----------------------------------
   renderRendezvousCard: function(st) {
-    // Same dynamic-list widget the DoH-upstreams field uses: one input per
-    // server, × to remove, + to add. mesh.js is a custom (non-CBI) view, so
-    // we drive ui.DynamicList directly instead of form.DynamicList.
+    // Rendezvous is plain UCI plumbing (option community_peer): edit it like
+    // any list field via the native uci rpc + apply — no bespoke command.
+    // Same dynamic-list widget the DoH-upstreams field uses; mesh.js is a
+    // custom (non-CBI) view, so we drive ui.DynamicList directly.
     var dl = new ui.DynamicList(st.community_peers || [], null, {
       placeholder: 'wss://your.example.org/pwmesh'
     });
@@ -132,11 +133,15 @@ return view.extend({
       var vals = dl.getValue();
       if (!Array.isArray(vals)) vals = vals ? [ vals ] : [];
       saveBtn.disabled = true;
-      callRendezvousSet(vals.join('\n')).then(function(r) {
-        saveBtn.disabled = false;
-        if (r && r.error) ui.addNotification(null, E('p', r.error), 'error');
-        else ui.addNotification(null, E('p', _('Rendezvous servers saved. Overlay restarts to apply.')), 'info');
-      }).catch(function(e) { saveBtn.disabled = false; ui.addNotification(null, E('p', e.message), 'error'); });
+      // Empty list → remove the option so the parse-time default reapplies.
+      uci.set('purewrt', 'mesh', 'community_peer', vals.length ? vals : null);
+      uci.save()
+        .then(function() { return uci.apply(); })
+        .then(function() {
+          saveBtn.disabled = false;
+          ui.addNotification(null, E('p', _('Rendezvous servers saved. The overlay restarts to apply.')), 'info');
+        })
+        .catch(function(e) { saveBtn.disabled = false; ui.addNotification(null, E('p', e.message), 'error'); });
     });
     return E('div', { 'class': 'cbi-section' }, [
       E('h3', {}, _('Rendezvous servers')),

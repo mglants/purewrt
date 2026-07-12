@@ -109,8 +109,7 @@
           "mesh_rotate",
           "mesh_sync_start",
           "mesh_peer_set",
-          "mesh_peer_remove",
-          "mesh_rendezvous_set"
+          "mesh_peer_remove"
         ]
       },
       "uci": ["purewrt"],

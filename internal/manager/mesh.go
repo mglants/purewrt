@@ -269,30 +269,6 @@ func (m Manager) MeshPeerRemove(name string) error {
 	return fmt.Errorf("mesh peer %q not found", name)
 }
 
-// MeshRendezvousSet replaces this node's rendezvous server list. An empty
-// list restores the shipped defaults (so a user can't strand themselves with
-// no way to bootstrap). Trims blanks; requires the mesh to be active.
-func (m Manager) MeshRendezvousSet(peers []string) error {
-	c, err := m.Load()
-	if err != nil {
-		return err
-	}
-	if !c.MeshActive() {
-		return fmt.Errorf("mesh not active")
-	}
-	clean := make([]string, 0, len(peers))
-	for _, p := range peers {
-		if p = strings.TrimSpace(p); p != "" {
-			clean = append(clean, p)
-		}
-	}
-	if len(clean) == 0 {
-		clean = config.DefaultCommunityPeers()
-	}
-	c.Mesh.CommunityPeers = clean
-	return m.meshSaveApply(c)
-}
-
 // MeshStatusReport merges config state with live easytier daemon state.
 // Liveness is best-effort: a dead daemon yields DaemonRunning=false and
 // config-only peer rows, never an error — the LuCI page must render either
