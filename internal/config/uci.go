@@ -394,6 +394,7 @@ func applySection(c *Config, x struct {
 		c.Mesh.ListenPort = i(x.opts, "listen_port", d.ListenPort)
 		c.Mesh.APIMeshPort = i(x.opts, "api_mesh_port", d.APIMeshPort)
 		c.Mesh.DeviceName = one(x.opts, "device_name", d.DeviceName)
+		c.Mesh.CommunityPeers = list(x.opts, "community_peer", d.CommunityPeers)
 		c.Mesh.EasytierBin = one(x.opts, "easytier_bin", d.EasytierBin)
 		c.Mesh.RPCPortal = one(x.opts, "rpc_portal", d.RPCPortal)
 		c.Mesh.SyncCron = one(x.opts, "sync_cron", d.SyncCron)

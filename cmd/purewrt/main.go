@@ -1107,6 +1107,15 @@ var commands = []command{
 				printJSON(map[string]bool{"removed": true})
 			})
 		}},
+	{name: "mesh-rendezvous-set", group: "Friend mesh",
+		args: "<peer-url>...",
+		desc: "Replace the rendezvous server list (no args = restore defaults)",
+		run: func(m manager.Manager) {
+			withOperationLockCoalesce(func() {
+				fatal(m.MeshRendezvousSet(os.Args[2:]))
+				printJSON(map[string]bool{"saved": true})
+			})
+		}},
 	{name: "ooni-installed", group: "OONI",
 		args: "",
 		desc: "Report whether ooniprobe is installed (JSON)",

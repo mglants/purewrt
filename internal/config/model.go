@@ -110,50 +110,50 @@ type Config struct {
 }
 
 type Settings struct {
-	ConfigVersion           int
-	Enabled                 bool
-	Workdir                 string
-	RuntimeDir              string
-	GeneratedDir            string
-	DNSMasqIncludeDir       string
-	MihomoBin               string
-	MihomoConfig            string
+	ConfigVersion     int
+	Enabled           bool
+	Workdir           string
+	RuntimeDir        string
+	GeneratedDir      string
+	DNSMasqIncludeDir string
+	MihomoBin         string
+	MihomoConfig      string
 	// MihomoAllowLAN controls mihomo's allow-lan. Default false binds the
 	// mixed-port HTTP/SOCKS proxy to 127.0.0.1 only, so a LAN scan can't
 	// detect or use the router as an open proxy. The download-via-proxy
 	// fallback uses the loopback listener, so it keeps working. Set true
 	// to let LAN clients point at the router as an explicit proxy.
-	MihomoAllowLAN          bool
-	ExternalController      string
-	Secret                  string
-	DNSBackend              string
-	FirewallBackend         string
-	FwMark                  string
-	FwMarkMask              string
-	RouteTable              string
-	IPRulePriority          string
-	IPv6                    bool
-	FakeIP                  bool
-	Sniffer                 bool
-	DNSListen               string
-	AutoReload              bool
-	SafeApply               bool
-	RollbackOnFail          bool
-	BackupRetention         int
-	ApplyBackupMaxBytes     int64
-	MihomoChannel           string
-	MihomoReleaseAPI        string // alpha-channel GitHub API URL (kept for back-compat — defaults to the Prerelease-Alpha tag URL)
-	MihomoStableReleaseAPI  string // stable-channel GitHub API URL (latest release)
-	MihomoVersion           string
-	MihomoArch              string
-	MihomoAssetURL          string
-	MihomoSHA256URL         string
-	MihomoGeodataEnabled    bool
+	MihomoAllowLAN         bool
+	ExternalController     string
+	Secret                 string
+	DNSBackend             string
+	FirewallBackend        string
+	FwMark                 string
+	FwMarkMask             string
+	RouteTable             string
+	IPRulePriority         string
+	IPv6                   bool
+	FakeIP                 bool
+	Sniffer                bool
+	DNSListen              string
+	AutoReload             bool
+	SafeApply              bool
+	RollbackOnFail         bool
+	BackupRetention        int
+	ApplyBackupMaxBytes    int64
+	MihomoChannel          string
+	MihomoReleaseAPI       string // alpha-channel GitHub API URL (kept for back-compat — defaults to the Prerelease-Alpha tag URL)
+	MihomoStableReleaseAPI string // stable-channel GitHub API URL (latest release)
+	MihomoVersion          string
+	MihomoArch             string
+	MihomoAssetURL         string
+	MihomoSHA256URL        string
+	MihomoGeodataEnabled   bool
 	// MihomoMixinEnabled gates the user-mixin merge in generator.Mihomo.
 	// When true, <Workdir>/mihomo-mixin.yaml gets deep-merged into the
 	// generated base on every apply. Off by default — existing installs
 	// get the same generated YAML as before.
-	MihomoMixinEnabled      bool
+	MihomoMixinEnabled bool
 	// MihomoAutoUpdateEnabled drives the cron entry that periodically
 	// re-runs `purewrt mihomo-auto-update`. Off by default — auto-
 	// updating a routing daemon is opt-in. When the post-install warmup
@@ -164,7 +164,7 @@ type Settings struct {
 	// /etc/crontabs/root. Default is once a day at 04:23 — different
 	// minute from the subscription-update entry (17 */6) so the two
 	// jobs don't fight over flash I/O on the same boundary.
-	MihomoAutoUpdateCron    string
+	MihomoAutoUpdateCron string
 	// NetCheckEnabled gates the cron entry that periodically runs
 	// `purewrt net-check`, recording throughput/verdict metrics. Off by
 	// default — the probe transfers real bytes through the proxy, so it
@@ -175,27 +175,27 @@ type Settings struct {
 	NetCheckCron string
 	// NetCheckBytes is the per-probe transfer size for the cron run, smaller
 	// than the interactive default to bound quota (default ~2 MiB).
-	NetCheckBytes           int
-	UpdateViaProxy          bool
+	NetCheckBytes  int
+	UpdateViaProxy bool
 	// SuppressHWID globally disables router-identity injection (HWID /
 	// device-name in URLs and headers) for every download, overriding the
 	// per-subscription / per-proxy-provider opt-in. The per-entity
 	// suppress_hwid flags remain for opting out a single panel.
-	SuppressHWID bool
-	UpdateProxyURL          string
-	UpdateConcurrency       int
-	AutoUpdateEnabled       bool
-	AutoUpdateCron          string
-	ReloadAfterUpdate       bool
-	BackgroundUpdates       bool
-	BootUpdateDelay         int
-	UpdateNice              int
-	UpdateIONiceClass       int
-	UpdateIONiceLevel       int
-	DashboardEnabled        bool
-	DashboardListen         string
-	DashboardPath           string
-	DashboardURL            string
+	SuppressHWID      bool
+	UpdateProxyURL    string
+	UpdateConcurrency int
+	AutoUpdateEnabled bool
+	AutoUpdateCron    string
+	ReloadAfterUpdate bool
+	BackgroundUpdates bool
+	BootUpdateDelay   int
+	UpdateNice        int
+	UpdateIONiceClass int
+	UpdateIONiceLevel int
+	DashboardEnabled  bool
+	DashboardListen   string
+	DashboardPath     string
+	DashboardURL      string
 	// DefaultListsBaseURL is the release base for nftset-builder's pre-built
 	// native lists. The wizard reads <base>/catalog.json and derives each
 	// list's URL as <base>/<file>. Empty disables the wizard's default-lists
@@ -229,14 +229,14 @@ type Settings struct {
 	// SHA expectations are optional — when present, the downloaded file's
 	// SHA-256 must match before atomic swap. Defaults pull from the
 	// MetaCubeX project (same source mihomo expects).
-	GeoRefreshGeoIPURL     string
-	GeoRefreshGeoIPSHA     string
-	GeoRefreshGeoSiteURL   string
-	GeoRefreshGeoSiteSHA   string
-	GeoRefreshMMDBURL      string
-	GeoRefreshMMDBSHA      string
-	GeoRefreshGeoIPDir     string // where to write geoip.dat (default /etc/purewrt/geo)
-	GeoRefreshCron         string // "" disables the cron (manual only); default "7 3 * * *"
+	GeoRefreshGeoIPURL      string
+	GeoRefreshGeoIPSHA      string
+	GeoRefreshGeoSiteURL    string
+	GeoRefreshGeoSiteSHA    string
+	GeoRefreshMMDBURL       string
+	GeoRefreshMMDBSHA       string
+	GeoRefreshGeoIPDir      string // where to write geoip.dat (default /etc/purewrt/geo)
+	GeoRefreshCron          string // "" disables the cron (manual only); default "7 3 * * *"
 	BootstrapDoHEnabled     bool
 	BootstrapDoHResolvers   []string
 	BootstrapDoHTimeoutMs   int
@@ -245,7 +245,7 @@ type Settings struct {
 	BootstrapTOFUPath       string // empty -> default; "off" disables
 	BootstrapTOFUTTLSec     int    // 0 -> default (7 days)
 	BootstrapHealthGate     bool   // run resolvers probe before apply; abort if zero endpoints answer
-	IPv6Mode string // "" / "auto" (default), "on", "off"
+	IPv6Mode                string // "" / "auto" (default), "on", "off"
 	IPv6RejectWhenOff       bool
 	// RouterOutputProxy gates the OUTPUT chain that proxies router-originated
 	// traffic through mihomo using the same destination-set match as the
@@ -293,9 +293,9 @@ type Settings struct {
 }
 
 type DNS struct {
-	Enabled            bool
-	Backend            string
-	UpstreamMode       string
+	Enabled      bool
+	Backend      string
+	UpstreamMode string
 	// VPNs lists VPN names whose interfaces join the DNSProxy pool, so mihomo's
 	// DNS-upstream egress can route out a VPN — lets a no-subscription setup
 	// reach censored DoH/DoT/DoQ resolvers. Empty = today (providers/direct).
@@ -497,7 +497,7 @@ type RuleProvider struct {
 	// Format is "geosite" or "geoip"; ignored otherwise. URL and Path
 	// stay empty for geo-backed providers — the local dat file is the
 	// source.
-	GeoTarget             string
+	GeoTarget string
 }
 
 type Bypass struct {
@@ -541,22 +541,23 @@ type OONI struct {
 // internal/mesh). The feature is fully dormant until mesh-init or mesh-join
 // stores a code.
 type Mesh struct {
-	Enabled       bool
-	Code          string   // sync-code verbatim — the ONLY stored secret
-	NetworkName   string   // decoded from Code at parse, never serialized
-	NetworkSecret string   // decoded from Code at parse (base64), never serialized
-	PSK           string   // decoded from Code at parse (hex 32B), never serialized
-	HWID          string   // device identity (provider.AutomaticHWID, "purewrt-<hex24>"); write-once at init/join, never rewritten
-	NodeName      string   // display label only (hostname by default) — safe to rename
-	ExitEnabled   bool     // offer this router's proxies as an exit to friends
-	ListenPort    int      // mihomo ss mesh listener port
-	APIMeshPort   int      // purewrt-api mesh endpoint port (overlay-only via fw4 zone)
-	DeviceName    string   // easytier TUN device
-	ExtraPeers    []string // custom rendezvous/relay peer URLs (from sync-code TLVs or UCI)
-	EasytierBin   string   // easytier-core path; presence gates the feature like zapret's nfqws
-	RPCPortal     string   // easytier RPC portal easytier-cli talks to
-	SyncCron      string   // mesh-sync cron schedule; empty disables the cron block
-	PeerTTLDays   int      // GC: drop peers unseen for this many days (0 = never)
+	Enabled        bool
+	Code           string   // sync-code verbatim — the ONLY stored secret
+	NetworkName    string   // decoded from Code at parse, never serialized
+	NetworkSecret  string   // decoded from Code at parse (base64), never serialized
+	PSK            string   // decoded from Code at parse (hex 32B), never serialized
+	HWID           string   // device identity (provider.AutomaticHWID, "purewrt-<hex24>"); write-once at init/join, never rewritten
+	NodeName       string   // display label only (hostname by default) — safe to rename
+	ExitEnabled    bool     // offer this router's proxies as an exit to friends
+	ListenPort     int      // mihomo ss mesh listener port
+	APIMeshPort    int      // purewrt-api mesh endpoint port (overlay-only via fw4 zone)
+	DeviceName     string   // easytier TUN device
+	CommunityPeers []string // rendezvous/relay servers this node dials; ships with a default, fully user-overridable
+	ExtraPeers     []string // extra peer URLs from sync-code TLVs (group-wide custom rendezvous)
+	EasytierBin    string   // easytier-core path; presence gates the feature like zapret's nfqws
+	RPCPortal      string   // easytier RPC portal easytier-cli talks to
+	SyncCron       string   // mesh-sync cron schedule; empty disables the cron block
+	PeerTTLDays    int      // GC: drop peers unseen for this many days (0 = never)
 }
 
 // MeshPeer is a persisted friend router discovered by mesh-sync. Material
@@ -616,17 +617,39 @@ func (c Config) MeshPeerByName(name string) (MeshPeer, bool) {
 	return MeshPeer{}, false
 }
 
+// DefaultCommunityPeers are the rendezvous/relay servers a fresh mesh ships
+// with. They are written into UCI at mesh-init/join so they are visible and
+// editable — a user running their own rendezvous replaces the list entirely.
+//
+// Order is preference. The wss entry rides the purewrt shared node's nginx
+// front on real 443 (SNI-routed to a localhost easytier ws listener) so
+// rendezvous traffic is indistinguishable from ordinary HTTPS — the
+// DPI-resistant path; pwmesh.glants.xyz is a dedicated A record to the
+// rendezvous node(s) only. easytier does not validate the wss TLS cert
+// (overlay auth is the network_secret). The tcp:11010 entry (IP-pinned) is
+// the fallback when 11010 is open but the wss front is unreachable. Upstream
+// public.easytier.top is deliberately NOT here: it CNAMEs into .cn and
+// NXDOMAINs under RU DNS — dead in exactly the censored environments this
+// feature targets.
+func DefaultCommunityPeers() []string {
+	return []string{
+		"wss://pwmesh.glants.xyz/pwmesh",
+		"tcp://150.241.85.145:11010",
+	}
+}
+
 // DefaultMesh returns the dormant mesh defaults (also applied to unset
 // options when parsing a joined config).
 func DefaultMesh() Mesh {
 	return Mesh{
-		ListenPort:  7897,
-		APIMeshPort: 8788,
-		DeviceName:  "pwmesh0",
-		EasytierBin: "/usr/bin/easytier-core",
-		RPCPortal:   "127.0.0.1:15888",
-		SyncCron:    "*/5 * * * *",
-		PeerTTLDays: 30,
+		ListenPort:     7897,
+		APIMeshPort:    8788,
+		DeviceName:     "pwmesh0",
+		CommunityPeers: DefaultCommunityPeers(),
+		EasytierBin:    "/usr/bin/easytier-core",
+		RPCPortal:      "127.0.0.1:15888",
+		SyncCron:       "*/5 * * * *",
+		PeerTTLDays:    30,
 	}
 }
 
@@ -643,12 +666,12 @@ func Default() Config {
 		// finding a disabled stub in their config and wondering whether
 		// it was theirs, vs. being able to add VPNs explicitly when they
 		// want one.
-		VPNs:             []VPN{},
-		Sections:         []Section{{Name: "media", Enabled: true, Action: "proxy", TPROXYPort: 7894, ProxyGroup: "Media", ProxyGroupType: "url-test", ProxyStrategy: "sticky-sessions", IPv4Enabled: true, IPv6Enabled: true, UDPMode: "proxy", Priority: 10}, {Name: "ai", Enabled: true, Action: "proxy", TPROXYPort: 7895, ProxyGroup: "AI", ProxyGroupType: "url-test", ProxyStrategy: "sticky-sessions", IPv4Enabled: true, IPv6Enabled: true, UDPMode: "proxy", Priority: 20}, {Name: "common", Enabled: true, Action: "proxy", TPROXYPort: 7893, ProxyGroup: "Common", ProxyGroupType: "url-test", ProxyStrategy: "sticky-sessions", IPv4Enabled: true, IPv6Enabled: true, UDPMode: "proxy", Priority: 60}},
-		Bypass:           Bypass{Name: "bypass"},
-		OONI:             OONI{Enabled: false, Upload: true, Schedule: "0 */6 * * *", Proxy: "socks5://127.0.0.1:7890", Home: "/tmp/ooni", User: "ooniprobe"},
-		Mesh:             DefaultMesh(),
-		MeshPeers:        []MeshPeer{},
+		VPNs:      []VPN{},
+		Sections:  []Section{{Name: "media", Enabled: true, Action: "proxy", TPROXYPort: 7894, ProxyGroup: "Media", ProxyGroupType: "url-test", ProxyStrategy: "sticky-sessions", IPv4Enabled: true, IPv6Enabled: true, UDPMode: "proxy", Priority: 10}, {Name: "ai", Enabled: true, Action: "proxy", TPROXYPort: 7895, ProxyGroup: "AI", ProxyGroupType: "url-test", ProxyStrategy: "sticky-sessions", IPv4Enabled: true, IPv6Enabled: true, UDPMode: "proxy", Priority: 20}, {Name: "common", Enabled: true, Action: "proxy", TPROXYPort: 7893, ProxyGroup: "Common", ProxyGroupType: "url-test", ProxyStrategy: "sticky-sessions", IPv4Enabled: true, IPv6Enabled: true, UDPMode: "proxy", Priority: 60}},
+		Bypass:    Bypass{Name: "bypass"},
+		OONI:      OONI{Enabled: false, Upload: true, Schedule: "0 */6 * * *", Proxy: "socks5://127.0.0.1:7890", Home: "/tmp/ooni", User: "ooniprobe"},
+		Mesh:      DefaultMesh(),
+		MeshPeers: []MeshPeer{},
 	}
 }
 

@@ -21,6 +21,7 @@ var callCode = rpc.declare({ object: 'purewrt', method: 'mesh_code' });
 var callRotate = rpc.declare({ object: 'purewrt', method: 'mesh_rotate' });
 var callPeerSet = rpc.declare({ object: 'purewrt', method: 'mesh_peer_set', params: [ 'name', 'enabled' ] });
 var callPeerRemove = rpc.declare({ object: 'purewrt', method: 'mesh_peer_remove', params: [ 'name' ] });
+var callRendezvousSet = rpc.declare({ object: 'purewrt', method: 'mesh_rendezvous_set', params: [ 'peers' ] });
 
 var joinJob = bgJob.make({
   startMethod: 'mesh_join_start',
@@ -113,7 +114,35 @@ return view.extend({
       return;
     }
     body.appendChild(self.renderStatusCard(st));
+    body.appendChild(self.renderRendezvousCard(st));
     body.appendChild(self.renderPeerTable(st));
+  },
+
+  // --- joined: rendezvous servers editor -----------------------------------
+  renderRendezvousCard: function(st) {
+    var peers = st.community_peers || [];
+    var area = E('textarea', {
+      'class': 'cbi-input-textarea',
+      'style': 'width:100%;height:5em;font-family:monospace',
+      'placeholder': 'wss://your.example.org/pwmesh\ntcp://203.0.113.9:11010'
+    }, peers.join('\n'));
+    var saveBtn = E('button', { 'class': 'btn cbi-button cbi-button-action' }, _('Save rendezvous'));
+    saveBtn.addEventListener('click', function(ev) {
+      ev.preventDefault();
+      saveBtn.disabled = true;
+      callRendezvousSet(area.value || '').then(function(r) {
+        saveBtn.disabled = false;
+        if (r && r.error) ui.addNotification(null, E('p', r.error), 'error');
+        else ui.addNotification(null, E('p', _('Rendezvous servers saved. Overlay restarts to apply.')), 'info');
+      }).catch(function(e) { saveBtn.disabled = false; ui.addNotification(null, E('p', e.message), 'error'); });
+    });
+    return E('div', { 'class': 'cbi-section' }, [
+      E('h3', {}, _('Rendezvous servers')),
+      E('div', { 'class': 'cbi-section-descr' },
+        _('Servers that introduce your router to friends and punch the direct P2P link (data never flows through them once punched). Ships with the PureWRT shared node; replace with your own easytier nodes for full independence. One URL per line (wss:// / tcp:// / udp://). Empty restores defaults.')),
+      area,
+      E('div', { 'style': 'margin-top:.5em' }, [ saveBtn ])
+    ]);
   },
 
   // --- not joined: create / join ------------------------------------------

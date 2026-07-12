@@ -87,6 +87,12 @@ func (m Manager) fillMeshFromCode(c *config.Config, code mesh.Code, nodeName str
 	if mc.SyncCron == "" {
 		mc.SyncCron = d.SyncCron
 	}
+	// Seed the rendezvous list so it lands in UCI, visible and editable —
+	// users point it at their own servers. Preserve an existing custom list
+	// across rotate/re-fill.
+	if len(mc.CommunityPeers) == 0 {
+		mc.CommunityPeers = d.CommunityPeers
+	}
 	mc.Enabled = true
 	mc.Code = code.Encode()
 	mc.NetworkName = code.NetworkName()
@@ -263,6 +269,30 @@ func (m Manager) MeshPeerRemove(name string) error {
 	return fmt.Errorf("mesh peer %q not found", name)
 }
 
+// MeshRendezvousSet replaces this node's rendezvous server list. An empty
+// list restores the shipped defaults (so a user can't strand themselves with
+// no way to bootstrap). Trims blanks; requires the mesh to be active.
+func (m Manager) MeshRendezvousSet(peers []string) error {
+	c, err := m.Load()
+	if err != nil {
+		return err
+	}
+	if !c.MeshActive() {
+		return fmt.Errorf("mesh not active")
+	}
+	clean := make([]string, 0, len(peers))
+	for _, p := range peers {
+		if p = strings.TrimSpace(p); p != "" {
+			clean = append(clean, p)
+		}
+	}
+	if len(clean) == 0 {
+		clean = config.DefaultCommunityPeers()
+	}
+	c.Mesh.CommunityPeers = clean
+	return m.meshSaveApply(c)
+}
+
 // MeshStatusReport merges config state with live easytier daemon state.
 // Liveness is best-effort: a dead daemon yields DaemonRunning=false and
 // config-only peer rows, never an error — the LuCI page must render either
@@ -272,10 +302,11 @@ type MeshStatusReport struct {
 	Installed     bool             `json:"installed"`
 	NetworkName   string           `json:"network_name,omitempty"`
 	NodeName      string           `json:"node_name,omitempty"`
-	ExitEnabled   bool             `json:"exit_enabled"`
-	DaemonRunning bool             `json:"daemon_running"`
-	OverlayIP     string           `json:"overlay_ip,omitempty"`
-	Peers         []MeshPeerStatus `json:"peers"`
+	ExitEnabled    bool             `json:"exit_enabled"`
+	DaemonRunning  bool             `json:"daemon_running"`
+	OverlayIP      string           `json:"overlay_ip,omitempty"`
+	CommunityPeers []string         `json:"community_peers"`
+	Peers          []MeshPeerStatus `json:"peers"`
 }
 
 type MeshPeerStatus struct {
@@ -369,6 +400,7 @@ func (m Manager) MeshStatus() MeshStatusReport {
 	rep.NetworkName = c.Mesh.NetworkName
 	rep.NodeName = c.Mesh.NodeName
 	rep.ExitEnabled = c.Mesh.ExitEnabled
+	rep.CommunityPeers = c.Mesh.CommunityPeers
 	live := map[string]mesh.OverlayPeer{}
 	if rep.Active && rep.Installed {
 		cli := m.meshCLI(c)

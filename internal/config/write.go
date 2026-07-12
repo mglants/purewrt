@@ -652,6 +652,9 @@ func writeMesh(b *bytes.Buffer, m Mesh) {
 	if m.DeviceName != d.DeviceName {
 		opt(b, "device_name", m.DeviceName)
 	}
+	// community_peer is always written when active: it is the rendezvous list
+	// users are meant to see and edit to point at their own servers.
+	listv(b, "community_peer", m.CommunityPeers)
 	if !meshExtrasMatchCode(m.Code, m.ExtraPeers) {
 		listv(b, "extra_peer", m.ExtraPeers)
 	}

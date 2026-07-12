@@ -79,10 +79,41 @@ func TestMeshSerializeMinimal(t *testing.T) {
 			t.Errorf("minimal mesh config still writes %q:\n%s", banned, out)
 		}
 	}
-	for _, required := range []string{"option code", "option node_name 'alpha'", "config mesh_peer", "option overlay_ip '10.126.126.2'"} {
+	for _, required := range []string{
+		"option code", "option node_name 'alpha'", "config mesh_peer", "option overlay_ip '10.126.126.2'",
+		// The rendezvous list is always written when active — users must see
+		// and be able to edit it to point at their own servers.
+		"list community_peer 'wss://pwmesh.glants.xyz/pwmesh'",
+		"list community_peer 'tcp://150.241.85.145:11010'",
+	} {
 		if !strings.Contains(out, required) {
 			t.Errorf("minimal mesh config missing %q:\n%s", required, out)
 		}
+	}
+}
+
+func TestMeshCommunityPeersCustomRoundTrip(t *testing.T) {
+	// A user replacing the rendezvous list with their own servers survives
+	// a round-trip verbatim — no default re-injection.
+	code := testCode(t)
+	c := Default()
+	c.Mesh = DefaultMesh()
+	c.Mesh.Enabled = true
+	c.Mesh.Code = code.Encode()
+	c.Mesh.NodeName = "alpha"
+	c.Mesh.HWID = "purewrt-aaaaaaaaaaaaaaaaaaaaaaaa"
+	c.Mesh.CommunityPeers = []string{"wss://my.example.org/mesh", "tcp://203.0.113.9:11010"}
+
+	path := filepath.Join(t.TempDir(), "purewrt")
+	if err := Save(path, c); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Mesh.CommunityPeers, c.Mesh.CommunityPeers) {
+		t.Fatalf("custom rendezvous lost: %#v", got.Mesh.CommunityPeers)
 	}
 }
 
