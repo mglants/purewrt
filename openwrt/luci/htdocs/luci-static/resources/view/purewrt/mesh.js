@@ -1,5 +1,6 @@
 'use strict';
 'require view';
+'require form';
 'require rpc';
 'require ui';
 'require uci';
@@ -10,9 +11,12 @@
 
 // Friend Mesh page. easytier is an optional companion package (like zapret /
 // ooniprobe), so the page gates on mesh_installed and renders an install
-// hint when absent. Everything else is CLI-backed via rpcd: no CBI map —
-// the mesh section is managed by mesh-init/join/leave/rotate, not by
-// field-level edits.
+// hint when absent. Membership actions (init/join/leave/rotate) are
+// CLI-backed via rpcd; the editable settings are a standard CBI map over
+// the `mesh` UCI section so the page saves like every other PureWRT page —
+// one Save & Apply at the bottom. The 10s poll refreshes ONLY the live
+// containers (status line, exit pool, peer table); form inputs are never
+// rebuilt, so typing can't be clobbered.
 var callInstalled = rpc.declare({ object: 'purewrt', method: 'mesh_installed', expect: { installed: false } });
 var callStatus = rpc.declare({ object: 'purewrt', method: 'mesh_status' });
 var callDiagnostics = rpc.declare({ object: 'purewrt', method: 'mesh_diagnostics' });
@@ -87,9 +91,13 @@ function rpcError(r, fallback) {
 }
 
 return view.extend({
-  handleSaveApply: null,
-  handleSave: null,
-  handleReset: null,
+  joined: false,
+
+  // Standard CBI footer (Save & Apply) only when the settings map is on the
+  // page; the setup (not-joined) screen has nothing to save.
+  addFooter: function() {
+    return this.joined ? this.super('addFooter', arguments) : E('div');
+  },
 
   load: function() {
     return Promise.all([
@@ -101,157 +109,277 @@ return view.extend({
   render: function(data) {
     if (!data[0]) return notInstalled();
     var self = this;
-    var status = data[1] || {};
-    var root = E('div', {}, [ E('h2', {}, _('Friend Mesh')) ]);
-    var body = E('div');
-    root.appendChild(body);
-    self.renderBody(body, status);
+    var st = data[1] || {};
+
+    if (!st.active) {
+      self.joined = false;
+      // The setup screen has no live containers — this poll only watches
+      // for a completed join/create (possibly from another tab) and swaps
+      // to the joined view by reloading.
+      poll.add(function() {
+        return callStatus().then(function(cur) {
+          // Never reload under an open modal — the freshly minted sync-code
+          // is displayed in one and must not be yanked away mid-copy.
+          if (cur && cur.active && !document.body.classList.contains('modal-overlay-active'))
+            window.location.reload();
+        }).catch(function() {});
+      }, 5);
+      return E('div', {}, [ E('h2', {}, _('Friend Mesh')), self.renderSetup() ]);
+    }
+    self.joined = true;
+
+    // Live containers — the ONLY nodes the poll touches.
+    var statusLine = E('div');
+    var previewBox = E('div');
+    var peerBox = E('div');
+    self.updateStatusLine(statusLine, st);
+    self.updatePeerBox(peerBox, st);
+    previewBox.appendChild(E('em', {}, _('Loading exit pool…')));
+    callProxyGroups()
+      .then(function(g) { self.updatePreview(previewBox, g, st); })
+      .catch(function() { self.updatePreview(previewBox, null, st); });
+
     poll.add(function() {
-      // renderBody rebuilds the whole card tree — skip the refresh while the
-      // user is typing in any of our inputs (exit filters, rendezvous list,
-      // sync-code) or the rebuild wipes their edit mid-keystroke.
-      var ae = document.activeElement;
-      if (ae && body.contains(ae) && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA'))
-        return Promise.resolve();
-      return callStatus().then(function(st) {
-        self.renderBody(body, st || {});
+      return Promise.all([
+        callStatus().catch(function() { return null; }),
+        callProxyGroups().catch(function() { return null; })
+      ]).then(function(r) {
+        var cur = r[0];
+        if (cur && cur.active) {
+          self.updateStatusLine(statusLine, cur);
+          self.updatePeerBox(peerBox, cur);
+        }
+        self.updatePreview(previewBox, r[1], cur || st);
       });
     }, 10);
-    return root;
+
+    var m = new form.Map('purewrt');
+    var s = m.section(form.NamedSection, 'mesh', 'mesh', _('Exit settings'),
+      _('What this router offers to friends. Traffic from friends always leaves through your proxies below — never your home connection.'));
+
+    var en = s.option(form.Flag, 'exit_enabled', _('Offer exit to friends'),
+      _('When off, this router stops being an exit: the mesh listener and firewall rule disappear and friends drop it on their next sync (~5 min). You still use friends\' exits; you remain in the mesh.'));
+    en.rmempty = false;
+
+    var flt = s.option(form.Value, 'exit_filter', _('Exit node filter'),
+      _('Mihomo regex include filter scoping which of your provider nodes friends may exit through. Empty offers all nodes. VPN outbounds are always offered.'));
+    flt.placeholder = _('include regex — empty matches all');
+    flt.depends('exit_enabled', '1');
+
+    var exc = s.option(form.Value, 'exit_exclude_filter', _('Exit node exclude-filter'),
+      _('Mihomo regex exclude filter applied after the include filter.'));
+    exc.placeholder = _('exclude regex — empty excludes none');
+    exc.depends('exit_enabled', '1');
+
+    var cap = s.option(form.Value, 'exit_max_mbit', _('Max throughput (Mbit/s)'),
+      _('Per-direction cap on friend traffic, enforced in nftables. 0 or empty = unlimited.'));
+    cap.datatype = 'uinteger';
+    cap.placeholder = '0';
+    cap.depends('exit_enabled', '1');
+
+    // Live view of the applied MeshExit pool, updated by the poll.
+    var preview = s.option(form.DummyValue, '_exit_pool', _('Exit pool (live)'));
+    preview.renderWidget = function() { return previewBox; };
+
+    var rdv = s.option(form.DynamicList, 'community_peer', _('Rendezvous servers'),
+      _('Servers that introduce your router to friends and punch the direct P2P link (data never flows through them once punched). Ships with the PureWRT shared node; replace with your own easytier nodes for full independence (wss:// / tcp:// / udp://). Leaving the list empty restores the defaults.'));
+    rdv.placeholder = 'wss://your.example.org/pwmesh';
+
+    return m.render().then(function(mapNode) {
+      return E('div', {}, [
+        E('h2', {}, _('Friend Mesh')),
+        E('div', { 'class': 'cbi-section' }, [
+          E('h3', {}, _('Mesh status')),
+          statusLine,
+          self.renderActions()
+        ]),
+        mapNode,
+        self.renderPeerSection(peerBox)
+      ]);
+    });
   },
 
-  renderBody: function(body, st) {
-    var self = this;
-    body.innerHTML = '';
-    if (!st.active) {
-      body.appendChild(self.renderSetup());
+  // --- live containers (poll-updated, never contain form inputs) -----------
+  updateStatusLine: function(box, st) {
+    while (box.firstChild) box.removeChild(box.firstChild);
+    box.appendChild(E('div', {}, [
+      E('strong', {}, _('Network: ')), st.network_name || '-',
+      E('span', { 'style': 'margin-left:1.5em' }, [ E('strong', {}, _('Node: ')), st.node_name || '-' ])
+    ]));
+    box.appendChild(E('div', { 'style': 'margin-top:.3em' }, [
+      E('strong', {}, _('Overlay: ')),
+      fmt.pill(st.daemon_running ? _('running') : _('down'), st.daemon_running ? 'ok' : 'danger'),
+      st.overlay_ip ? E('span', { 'style': 'margin-left:.6em;font-family:monospace' }, st.overlay_ip) : '',
+      E('span', { 'style': 'margin-left:1.5em' }, [
+        E('strong', {}, _('Exit offered: ')),
+        fmt.pill(st.exit_enabled ? _('yes') : _('no'), st.exit_enabled ? 'ok' : 'muted')
+      ])
+    ]));
+  },
+
+  updatePreview: function(box, groups, st) {
+    while (box.firstChild) box.removeChild(box.firstChild);
+    var g = (groups || []).filter(function(x) { return x && x.name === 'MeshExit'; })[0];
+    if (!g || !g.members || !g.members.length) {
+      box.appendChild(E('em', { 'class': 'cbi-section-note' },
+        (st && st.exit_enabled === false)
+          ? _('Exit disabled — no MeshExit group is generated.')
+          : _('Exit pool unavailable — apply the config and ensure mihomo is running.')));
       return;
     }
-    body.appendChild(self.renderStatusCard(st));
-    body.appendChild(self.renderExitCard(st));
-    body.appendChild(self.renderRendezvousCard(st));
-    body.appendChild(self.renderPeerTable(st));
+    var chips = g.members.map(function(mem) {
+      return E('span', {
+        'style': 'display:inline-block;margin:0 .4em .3em 0;padding:.1em .45em;border-radius:.3em;background:rgba(127,127,127,.15)'
+      }, proxyMemberLabel(mem));
+    });
+    box.appendChild(E('div', {}, chips));
+    box.appendChild(E('div', { 'class': 'cbi-section-note' },
+      _('%d node(s) friends can exit through — reflects the applied config (edits show after Save & Apply).').format(g.members.length)));
   },
 
-  // --- joined: exit settings -------------------------------------------------
-  renderExitCard: function(st) {
-    // Exit settings are plain UCI plumbing on the mesh section — edited via
-    // the native uci rpc + apply, same as the rendezvous list (no bespoke
-    // rpcd methods). Apply regenerates mihomo/nftables and friends learn a
-    // flipped exit_enabled on their next mesh-sync.
-    var enToggle = E('input', { 'type': 'checkbox' });
-    enToggle.checked = !!st.exit_enabled;
-    var filterIn = E('input', { 'class': 'cbi-input-text', 'style': 'width:22em', 'placeholder': _('include regex — empty matches all') });
-    filterIn.value = st.exit_filter || '';
-    var excludeIn = E('input', { 'class': 'cbi-input-text', 'style': 'width:22em', 'placeholder': _('exclude regex — empty excludes none') });
-    excludeIn.value = st.exit_exclude_filter || '';
-    var capIn = E('input', { 'class': 'cbi-input-text', 'type': 'number', 'min': '0', 'style': 'width:8em', 'placeholder': '0' });
-    capIn.value = st.exit_max_mbit ? String(st.exit_max_mbit) : '';
-
-    var saveBtn = E('button', { 'class': 'btn cbi-button cbi-button-action' }, _('Save exit settings'));
-    saveBtn.addEventListener('click', function(ev) {
-      ev.preventDefault();
-      var cap = parseInt(capIn.value, 10);
-      saveBtn.disabled = true;
-      // Empty / zero → drop the option so defaults reapply.
-      uci.set('purewrt', 'mesh', 'exit_enabled', enToggle.checked ? '1' : '0');
-      uci.set('purewrt', 'mesh', 'exit_filter', filterIn.value.trim() || null);
-      uci.set('purewrt', 'mesh', 'exit_exclude_filter', excludeIn.value.trim() || null);
-      uci.set('purewrt', 'mesh', 'exit_max_mbit', (cap > 0) ? String(cap) : null);
-      uci.save()
-        .then(function() { return uci.apply(); })
-        .then(function() {
-          saveBtn.disabled = false;
-          ui.addNotification(null, E('p', _('Exit settings saved. Friends pick up an offer change on their next sync (~5 min).')), 'info');
-        })
-        .catch(function(e) { saveBtn.disabled = false; ui.addNotification(null, E('p', e.message), 'error'); });
-    });
-
-    // Live view of the applied MeshExit pool — what friends can actually
-    // exit through right now (reflects the applied config, not unsaved
-    // edits). Reuses the proxy_groups rpc the sections page uses.
-    var preview = E('div', { 'style': 'margin-top:.5em' }, E('em', {}, _('Loading exit pool…')));
-    callProxyGroups().then(function(groups) {
-      var g = (groups || []).filter(function(x) { return x && x.name === 'MeshExit'; })[0];
-      preview.innerHTML = '';
-      if (!g || !g.members || !g.members.length) {
-        preview.appendChild(E('em', { 'class': 'cbi-section-note' },
-          st.exit_enabled
-            ? _('Exit pool unavailable — apply the config and ensure mihomo is running.')
-            : _('Exit disabled — no MeshExit group is generated.')));
-        return;
-      }
-      var chips = g.members.map(function(mem) {
-        return E('span', {
-          'style': 'display:inline-block;margin:0 .4em .3em 0;padding:.1em .45em;border-radius:.3em;background:rgba(127,127,127,.15)'
-        }, proxyMemberLabel(mem));
+  updatePeerBox: function(box, st) {
+    var self = this;
+    var peers = st.peers || [];
+    var table = E('table', { 'class': 'table cbi-section-table' }, [
+      E('tr', { 'class': 'tr table-titles' }, [
+        E('th', { 'class': 'th' }, _('Friend')),
+        E('th', { 'class': 'th' }, _('Overlay IP')),
+        E('th', { 'class': 'th' }, _('Link')),
+        E('th', { 'class': 'th' }, _('Latency')),
+        E('th', { 'class': 'th' }, _('Offers exit')),
+        E('th', { 'class': 'th' }, _('Use exit')),
+        E('th', { 'class': 'th' }, '')
+      ])
+    ]);
+    if (!peers.length) {
+      table.appendChild(E('tr', { 'class': 'tr' }, E('td', { 'class': 'td', 'colspan': 7 },
+        E('em', {}, _('No friends discovered yet. Have a friend join with your sync-code, then click "Sync now".')))));
+    }
+    peers.forEach(function(p) {
+      var link = p.live ? (p.relay ? fmt.pill(_('relay'), 'warn') : fmt.pill('p2p', 'ok')) : fmt.pill(_('offline'), 'muted');
+      var en = E('input', { 'type': 'checkbox' });
+      en.checked = !!p.enabled;
+      en.addEventListener('change', function() {
+        en.disabled = true;
+        callPeerSet(p.hwid, en.checked ? '1' : '0').then(function(r) {
+          en.disabled = false;
+          if (r && r.error) {
+            ui.addNotification(null, E('p', r.error), 'error');
+            en.checked = !en.checked;
+          }
+        });
       });
-      preview.appendChild(E('div', {}, chips));
-      preview.appendChild(E('div', { 'class': 'cbi-section-note' },
-        _('%d node(s) friends can exit through — reflects the applied config (edits show after Save).').format(g.members.length)));
-    }).catch(function() {
-      preview.innerHTML = '';
-      preview.appendChild(E('em', { 'class': 'cbi-section-note' }, _('Exit pool unavailable — mihomo not reachable.')));
+      // Forget only offline peers: the usual orphan is a friend who left the
+      // mesh for good. A live peer would just be re-added by the next sync,
+      // so the button stays hidden for those.
+      var forget = '';
+      if (!p.live) {
+        forget = E('button', { 'class': 'btn cbi-button cbi-button-remove', 'title': _('Remove this peer from the config. If it is actually alive, the next sync re-adds it.') }, _('Forget'));
+        forget.addEventListener('click', function(ev) {
+          ev.preventDefault();
+          forget.disabled = true;
+          callPeerRemove(p.hwid).then(function(r) {
+            if (r && r.error) {
+              ui.addNotification(null, E('p', r.error), 'error');
+              forget.disabled = false;
+            } else {
+              ui.addNotification(null, E('p', _('Peer forgotten.')), 'info');
+            }
+          });
+        });
+      }
+      // Display label = cosmetic name + short hwid tail — the hwid is the
+      // identity peer commands address, so keep it visible.
+      var hwTail = (p.hwid || '').replace(/^purewrt-/, '').slice(0, 6);
+      table.appendChild(E('tr', { 'class': 'tr' }, [
+        E('td', { 'class': 'td', 'title': p.hwid || '' }, [
+          p.name || '-', ' ',
+          E('span', { 'style': 'opacity:.6;font-family:monospace;font-size:.85em' }, hwTail ? '(' + hwTail + ')' : '')
+        ]),
+        E('td', { 'class': 'td', 'style': 'font-family:monospace' }, p.overlay_ip || '-'),
+        E('td', { 'class': 'td' }, link),
+        E('td', { 'class': 'td' }, p.live && p.latency_ms ? (Math.round(p.latency_ms) + ' ms') : '-'),
+        E('td', { 'class': 'td' }, p.exit_offered ? _('yes') : _('no')),
+        E('td', { 'class': 'td' }, en),
+        E('td', { 'class': 'td' }, forget)
+      ]));
     });
+    while (box.firstChild) box.removeChild(box.firstChild);
+    box.appendChild(table);
+  },
 
-    var row = function(label, ctl, hint) {
-      return E('div', { 'style': 'margin-top:.5em' }, [
-        E('label', {}, [ E('strong', {}, label + ' '), ctl ]),
-        hint ? E('div', { 'class': 'cbi-section-descr' }, hint) : ''
-      ]);
-    };
+  renderPeerSection: function(peerBox) {
     return E('div', { 'class': 'cbi-section' }, [
-      E('h3', {}, _('Exit settings')),
-      row(_('Offer exit to friends'), enToggle,
-        _('When off, this router stops being an exit: the mesh listener and firewall rule disappear and friends drop it on their next sync. You still use friends\' exits; you remain in the mesh.')),
-      row(_('Exit node filter'), filterIn,
-        _('Mihomo regex include filter scoping which of your provider nodes friends may exit through. Empty offers all nodes. VPN outbounds are always offered.')),
-      row(_('Exit node exclude-filter'), excludeIn,
-        _('Mihomo regex exclude filter applied after the include filter.')),
-      row(_('Max throughput (Mbit/s)'), capIn,
-        _('Per-direction cap on friend traffic, enforced in nftables. 0 or empty = unlimited.')),
-      E('div', { 'style': 'margin-top:.7em' }, [ saveBtn ]),
-      preview
+      E('h3', {}, _('Friends')),
+      E('div', { 'class': 'cbi-section-descr' },
+        _('Discovered PureWRT routers in this mesh. "Use exit" adds that friend as an automatic fallback for your proxy sections — traffic only shifts there when all of your own nodes are dead, and it always leaves through the friend\'s proxies, never their home connection.')),
+      peerBox
     ]);
   },
 
-  // --- joined: rendezvous servers editor -----------------------------------
-  renderRendezvousCard: function(st) {
-    // Rendezvous is plain UCI plumbing (option community_peer): edit it like
-    // any list field via the native uci rpc + apply — no bespoke command.
-    // Same dynamic-list widget the DoH-upstreams field uses; mesh.js is a
-    // custom (non-CBI) view, so we drive ui.DynamicList directly.
-    var dl = new ui.DynamicList(st.community_peers || [], null, {
-      placeholder: 'wss://your.example.org/pwmesh'
-    });
-    var saveBtn = E('button', { 'class': 'btn cbi-button cbi-button-action' }, _('Save rendezvous'));
-    saveBtn.addEventListener('click', function(ev) {
+  // --- static action row (rendered once — poll never touches it) -----------
+  renderActions: function() {
+    var self = this;
+    var showCodeBtn = E('button', { 'class': 'btn cbi-button' }, _('Show sync-code'));
+    showCodeBtn.addEventListener('click', function(ev) {
       ev.preventDefault();
-      var vals = dl.getValue();
-      if (!Array.isArray(vals)) vals = vals ? [ vals ] : [];
-      saveBtn.disabled = true;
-      // Empty list → remove the option so the parse-time default reapplies.
-      uci.set('purewrt', 'mesh', 'community_peer', vals.length ? vals : null);
-      uci.save()
-        .then(function() { return uci.apply(); })
-        .then(function() {
-          saveBtn.disabled = false;
-          ui.addNotification(null, E('p', _('Rendezvous servers saved. The overlay restarts to apply.')), 'info');
-        })
-        .catch(function(e) { saveBtn.disabled = false; ui.addNotification(null, E('p', e.message), 'error'); });
+      callCode().then(function(r) {
+        if (r && r.code) showCodeModal(_('Group sync-code'), r.code, r.network_name);
+        else ui.addNotification(null, E('p', rpcError(r, _('mesh-code failed'))), 'error');
+      });
     });
-    return E('div', { 'class': 'cbi-section' }, [
-      E('h3', {}, _('Rendezvous servers')),
-      E('div', { 'class': 'cbi-section-descr' },
-        _('Servers that introduce your router to friends and punch the direct P2P link (data never flows through them once punched). Ships with the PureWRT shared node; replace with your own easytier nodes for full independence (wss:// / tcp:// / udp://). Leaving the list empty restores the defaults.')),
-      dl.render(),
-      E('div', { 'style': 'margin-top:.5em' }, [ saveBtn ])
+    var syncBtn = E('button', { 'class': 'btn cbi-button' }, _('Sync now'));
+    syncBtn.addEventListener('click', function(ev) {
+      ev.preventDefault();
+      syncBtn.disabled = true;
+      syncJob.run().then(function(res) {
+        syncBtn.disabled = false;
+        ui.addNotification(null, res.ok
+          ? E('p', _('Peer sync finished.'))
+          : E('pre', {}, res.output || _('sync failed')), res.ok ? 'info' : 'warning');
+      }).catch(function(e) { syncBtn.disabled = false; ui.addNotification(null, E('p', e.message), 'error'); });
+    });
+    var rotateBtn = E('button', { 'class': 'btn cbi-button cbi-button-remove' }, _('Rotate secrets'));
+    rotateBtn.addEventListener('click', this.twoClick(rotateBtn, _('Rotate secrets'), function() {
+      callRotate().then(function(r) {
+        if (r && r.code) showCodeModal(_('Secrets rotated — everyone must re-join with this new code'), r.code, r.network_name);
+        else ui.addNotification(null, E('p', rpcError(r, _('mesh-rotate failed'))), 'error');
+      });
+    }));
+    var leaveBtn = E('button', { 'class': 'btn cbi-button-negative' }, _('Leave mesh'));
+    leaveBtn.addEventListener('click', this.twoClick(leaveBtn, _('Leave mesh'), function() {
+      callLeave().then(function(r) {
+        if (r && r.error) { ui.addNotification(null, E('p', r.error), 'error'); return; }
+        ui.addNotification(null, E('p', _('Left the mesh.')), 'info');
+        window.setTimeout(function() { window.location.reload(); }, 1200);
+      });
+    }));
+
+    var diagBtn = E('button', { 'class': 'btn cbi-button' }, _('Diagnostics'));
+    var diagBox = E('div', { 'style': 'display:none;margin-top:.7em' });
+    diagBtn.addEventListener('click', function(ev) {
+      ev.preventDefault();
+      if (diagBox.style.display !== 'none') { diagBox.style.display = 'none'; return; }
+      diagBox.style.display = '';
+      diagBox.innerHTML = '';
+      diagBox.appendChild(E('em', {}, _('Querying overlay…')));
+      callDiagnostics().then(function(d) {
+        diagBox.innerHTML = '';
+        diagBox.appendChild(self.renderDiagnostics(d || {}));
+      }).catch(function(e) {
+        diagBox.innerHTML = '';
+        diagBox.appendChild(E('em', {}, e.message));
+      });
+    });
+
+    return E('div', {}, [
+      E('div', { 'style': 'margin-top:.7em' }, [ showCodeBtn, ' ', syncBtn, ' ', diagBtn, ' ', rotateBtn, ' ', leaveBtn ]),
+      diagBox
     ]);
   },
 
   // --- not joined: create / join ------------------------------------------
   renderSetup: function() {
-    var self = this;
     var nameInput = E('input', { 'class': 'cbi-input-text', 'placeholder': _('node name (default: hostname)'), 'style': 'width:16em' });
     var createBtn = E('button', { 'class': 'btn cbi-button cbi-button-action important' }, _('Create new mesh'));
     createBtn.addEventListener('click', function(ev) {
@@ -307,76 +435,6 @@ return view.extend({
     ]);
   },
 
-  // --- joined: status card --------------------------------------------------
-  renderStatusCard: function(st) {
-    var self = this;
-    var showCodeBtn = E('button', { 'class': 'btn cbi-button' }, _('Show sync-code'));
-    showCodeBtn.addEventListener('click', function(ev) {
-      ev.preventDefault();
-      callCode().then(function(r) {
-        if (r && r.code) showCodeModal(_('Group sync-code'), r.code, r.network_name);
-        else ui.addNotification(null, E('p', rpcError(r, _('mesh-code failed'))), 'error');
-      });
-    });
-    var syncBtn = E('button', { 'class': 'btn cbi-button' }, _('Sync now'));
-    syncBtn.addEventListener('click', function(ev) {
-      ev.preventDefault();
-      syncBtn.disabled = true;
-      syncJob.run().then(function(res) {
-        syncBtn.disabled = false;
-        ui.addNotification(null, res.ok
-          ? E('p', _('Peer sync finished.'))
-          : E('pre', {}, res.output || _('sync failed')), res.ok ? 'info' : 'warning');
-      }).catch(function(e) { syncBtn.disabled = false; ui.addNotification(null, E('p', e.message), 'error'); });
-    });
-    var rotateBtn = E('button', { 'class': 'btn cbi-button cbi-button-remove' }, _('Rotate secrets'));
-    rotateBtn.addEventListener('click', this.twoClick(rotateBtn, _('Rotate secrets'), function() {
-      callRotate().then(function(r) {
-        if (r && r.code) showCodeModal(_('Secrets rotated — everyone must re-join with this new code'), r.code, r.network_name);
-        else ui.addNotification(null, E('p', rpcError(r, _('mesh-rotate failed'))), 'error');
-      });
-    }));
-    var leaveBtn = E('button', { 'class': 'btn cbi-button-negative' }, _('Leave mesh'));
-    leaveBtn.addEventListener('click', this.twoClick(leaveBtn, _('Leave mesh'), function() {
-      callLeave().then(function(r) {
-        if (r && r.error) ui.addNotification(null, E('p', r.error), 'error');
-        else ui.addNotification(null, E('p', _('Left the mesh.')), 'info');
-      });
-    }));
-
-    var diagBtn = E('button', { 'class': 'btn cbi-button' }, _('Diagnostics'));
-    var diagBox = E('div', { 'style': 'display:none;margin-top:.7em' });
-    diagBtn.addEventListener('click', function(ev) {
-      ev.preventDefault();
-      if (diagBox.style.display !== 'none') { diagBox.style.display = 'none'; return; }
-      diagBox.style.display = '';
-      diagBox.innerHTML = '';
-      diagBox.appendChild(E('em', {}, _('Querying overlay…')));
-      callDiagnostics().then(function(d) {
-        diagBox.innerHTML = '';
-        diagBox.appendChild(self.renderDiagnostics(d || {}));
-      }).catch(function(e) {
-        diagBox.innerHTML = '';
-        diagBox.appendChild(E('em', {}, e.message));
-      });
-    });
-
-    return E('div', { 'class': 'cbi-section' }, [
-      E('h3', {}, _('Mesh status')),
-      E('div', {}, [
-        E('strong', {}, _('Network: ')), st.network_name || '-',
-        E('span', { 'style': 'margin-left:1.5em' }, [ E('strong', {}, _('Node: ')), st.node_name || '-' ])
-      ]),
-      E('div', { 'style': 'margin-top:.3em' }, [
-        E('strong', {}, _('Overlay: ')),
-        fmt.pill(st.daemon_running ? _('running') : _('down'), st.daemon_running ? 'ok' : 'danger'),
-        st.overlay_ip ? E('span', { 'style': 'margin-left:.6em;font-family:monospace' }, st.overlay_ip) : ''
-      ]),
-      E('div', { 'style': 'margin-top:.7em' }, [ showCodeBtn, ' ', syncBtn, ' ', diagBtn, ' ', rotateBtn, ' ', leaveBtn ]),
-      diagBox
-    ]);
-  },
-
   // Diagnostics: per-rendezvous dial status + STUN NAT classification —
   // "why is the overlay not forming?" in one glance.
   renderDiagnostics: function(d) {
@@ -429,80 +487,5 @@ return view.extend({
       btn.textContent = label;
       fire();
     };
-  },
-
-  // --- joined: peer table ----------------------------------------------------
-  renderPeerTable: function(st) {
-    var peers = st.peers || [];
-    var table = E('table', { 'class': 'table cbi-section-table' }, [
-      E('tr', { 'class': 'tr table-titles' }, [
-        E('th', { 'class': 'th' }, _('Friend')),
-        E('th', { 'class': 'th' }, _('Overlay IP')),
-        E('th', { 'class': 'th' }, _('Link')),
-        E('th', { 'class': 'th' }, _('Latency')),
-        E('th', { 'class': 'th' }, _('Offers exit')),
-        E('th', { 'class': 'th' }, _('Use exit')),
-        E('th', { 'class': 'th' }, '')
-      ])
-    ]);
-    if (!peers.length) {
-      table.appendChild(E('tr', { 'class': 'tr' }, E('td', { 'class': 'td', 'colspan': 7 },
-        E('em', {}, _('No friends discovered yet. Have a friend join with your sync-code, then click "Sync now".')))));
-    }
-    peers.forEach(function(p) {
-      var link = p.live ? (p.relay ? fmt.pill(_('relay'), 'warn') : fmt.pill('p2p', 'ok')) : fmt.pill(_('offline'), 'muted');
-      var en = E('input', { 'type': 'checkbox' });
-      en.checked = !!p.enabled;
-      en.addEventListener('change', function() {
-        en.disabled = true;
-        callPeerSet(p.hwid, en.checked ? '1' : '0').then(function(r) {
-          en.disabled = false;
-          if (r && r.error) {
-            ui.addNotification(null, E('p', r.error), 'error');
-            en.checked = !en.checked;
-          }
-        });
-      });
-      // Forget only offline peers: the usual orphan is a friend who left and
-      // rejoined under a new node name. A live peer would just be re-added by
-      // the next sync, so the button stays hidden for those.
-      var forget = '';
-      if (!p.live) {
-        forget = E('button', { 'class': 'btn cbi-button cbi-button-remove', 'title': _('Remove this peer from the config. If it is actually alive, the next sync re-adds it.') }, _('Forget'));
-        forget.addEventListener('click', function(ev) {
-          ev.preventDefault();
-          forget.disabled = true;
-          callPeerRemove(p.hwid).then(function(r) {
-            if (r && r.error) {
-              ui.addNotification(null, E('p', r.error), 'error');
-              forget.disabled = false;
-            } else {
-              ui.addNotification(null, E('p', _('Peer forgotten.')), 'info');
-            }
-          });
-        });
-      }
-      // Display label = cosmetic name + short hwid tail — the hwid is the
-      // identity peer commands address, so keep it visible.
-      var hwTail = (p.hwid || '').replace(/^purewrt-/, '').slice(0, 6);
-      table.appendChild(E('tr', { 'class': 'tr' }, [
-        E('td', { 'class': 'td', 'title': p.hwid || '' }, [
-          p.name || '-', ' ',
-          E('span', { 'style': 'opacity:.6;font-family:monospace;font-size:.85em' }, hwTail ? '(' + hwTail + ')' : '')
-        ]),
-        E('td', { 'class': 'td', 'style': 'font-family:monospace' }, p.overlay_ip || '-'),
-        E('td', { 'class': 'td' }, link),
-        E('td', { 'class': 'td' }, p.live && p.latency_ms ? (Math.round(p.latency_ms) + ' ms') : '-'),
-        E('td', { 'class': 'td' }, p.exit_offered ? _('yes') : _('no')),
-        E('td', { 'class': 'td' }, en),
-        E('td', { 'class': 'td' }, forget)
-      ]));
-    });
-    return E('div', { 'class': 'cbi-section' }, [
-      E('h3', {}, _('Friends')),
-      E('div', { 'class': 'cbi-section-descr' },
-        _('Discovered PureWRT routers in this mesh. "Use exit" adds that friend as an automatic fallback for your proxy sections — traffic only shifts there when all of your own nodes are dead, and it always leaves through the friend\'s proxies, never their home connection.')),
-      table
-    ]);
   }
 });
