@@ -33,15 +33,33 @@ func DefaultGeoSources() map[string]string {
 // feature can produce a portable config bundle without touching disk.
 func Serialize(c Config) []byte {
 	var b bytes.Buffer
+	// libuci section ids share one namespace per file across ALL types — a
+	// duplicate id under a different type is a hard parse error that bricks
+	// every uci consumer. Reserve the ids of every unconditionally-named
+	// section up front (fixed singletons, routing sections whose parser
+	// reads the id only, device sections), then let sectionHeader hand out
+	// the rest first-come-first-served with anonymous + `option name`
+	// fallback for the losers.
+	seen := map[string]bool{
+		"settings": true, "dns": true, "mwan3": true, "ooni": true,
+	}
+	if c.Bypass.Name != "" {
+		seen[c.Bypass.Name] = true
+	}
+	for _, d := range c.Devices {
+		seen[deviceSectionName(d.MAC)] = true
+	}
+	for _, s := range c.Sections {
+		seen[s.Name] = true
+	}
 	writeMain(&b, c.Settings)
 	writeDNS(&b, c.DNS)
 	writeMwan3(&b, c.Mwan3)
-	seenZP, seenZS := map[string]bool{}, map[string]bool{}
 	for _, p := range c.ZapretProfiles {
-		writeZapretProfile(&b, p, seenZP)
+		writeZapretProfile(&b, p, seen)
 	}
 	for _, s := range c.ZapretStrategies {
-		writeZapretStrategy(&b, s, seenZS)
+		writeZapretStrategy(&b, s, seen)
 	}
 	for _, v := range c.VPNs {
 		writeVPN(&b, v)
@@ -55,12 +73,11 @@ func Serialize(c Config) []byte {
 	for _, s := range c.Subscriptions {
 		writeSubscription(&b, s)
 	}
-	seenPP, seenRP := map[string]bool{}, map[string]bool{}
 	for _, p := range c.ProxyProviders {
-		writeProxyProvider(&b, p, seenPP)
+		writeProxyProvider(&b, p, seen)
 	}
 	for _, p := range c.RuleProviders {
-		writeRuleProvider(&b, p, seenRP)
+		writeRuleProvider(&b, p, seen)
 	}
 	writeBypass(&b, c.Bypass)
 	writeOONI(&b, c.OONI)

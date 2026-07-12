@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -70,6 +71,76 @@ func TestNamedSectionRoundTripPreservesNames(t *testing.T) {
 	}
 }
 
+
+// libuci section ids share ONE namespace per config file across ALL section
+// types — `config zapret_strategy 'youtube'` followed by
+// `config rule_provider 'youtube'` is a hard parse error ("section of
+// different type overwrites prior section with same name"), bricking every
+// uci consumer of the file. Later claimants of a taken id must fall back to
+// the anonymous + `option name` form. Fixed-id singletons (settings, dns,
+// mwan3, bypass, ooni) and routing section names (whose parser reads the
+// section id only) are reserved up front.
+func TestSerializeSectionIDsAreUniqueAcrossTypes(t *testing.T) {
+	c := Default()
+	c.ZapretStrategies = []ZapretStrategy{{Name: "youtube", Enabled: true, Profile: "wan"}}
+	c.RuleProviders = []RuleProvider{{Name: "youtube", Enabled: true, Path: "/tmp/y.txt", Section: "media"}}
+	// Collides with the fixed `config bypass 'bypass'` singleton emitted later.
+	c.ProxyProviders = []ProxyProvider{{Name: "bypass", Enabled: true, URL: "https://example.com/s", Path: "/tmp/b.yaml"}}
+	// Routing section parses its name from the section id only — it must win
+	// over the earlier-serialized zapret strategy of the same name.
+	c.Sections = append(c.Sections, Section{Name: "ai2", Enabled: true, Action: "proxy", TPROXYPort: 7899, ProxyGroup: "AI2"})
+	c.ZapretStrategies = append(c.ZapretStrategies, ZapretStrategy{Name: "ai2", Enabled: true, Profile: "wan"})
+
+	out := string(Serialize(c))
+	ids := map[string]string{}
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.HasPrefix(line, "config ") {
+			continue
+		}
+		f := strings.Fields(line)
+		if len(f) != 3 {
+			continue
+		}
+		id := strings.Trim(f[2], "'")
+		if prev, ok := ids[id]; ok {
+			t.Errorf("section id %q used by both %q and %q — libuci parse error", id, prev, f[1])
+		}
+		ids[id] = f[1]
+	}
+	if ids["youtube"] != "zapret_strategy" {
+		t.Errorf("first claimant should keep the name, got %q", ids["youtube"])
+	}
+	if ids["ai2"] != "section" {
+		t.Errorf("routing section must keep its id, got %q", ids["ai2"])
+	}
+	if ids["bypass"] != "bypass" {
+		t.Errorf("fixed bypass id must stay reserved, got %q", ids["bypass"])
+	}
+	// Nothing lost: displaced entries fall back to option name.
+	dir := t.TempDir()
+	if err := os.WriteFile(dir+"/purewrt", []byte(out), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(dir + "/purewrt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.RuleProviders) != 1 || got.RuleProviders[0].Name != "youtube" {
+		t.Fatalf("displaced rule provider lost: %+v", got.RuleProviders)
+	}
+	if len(got.ProxyProviders) != 1 || got.ProxyProviders[0].Name != "bypass" {
+		t.Fatalf("displaced proxy provider lost: %+v", got.ProxyProviders)
+	}
+	var strat *ZapretStrategy
+	for i := range got.ZapretStrategies {
+		if got.ZapretStrategies[i].Name == "ai2" {
+			strat = &got.ZapretStrategies[i]
+		}
+	}
+	if strat == nil {
+		t.Fatalf("displaced zapret strategy lost: %+v", got.ZapretStrategies)
+	}
+}
 
 // Duplicate names cannot both become named sections — libuci silently merges
 // duplicate section ids (last wins), losing data. The second occurrence must
