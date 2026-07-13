@@ -22,17 +22,19 @@ start_service() {
     # Restart when purewrt regenerates the TOML (procd config trigger).
     procd_set_param file "$CONF"
     procd_set_param respawn 3600 5 5
-    # Logs go to syslog (procd stdout+stderr capture), console level warn
-    # by default: easytier's INFO stream is an unfilterable ~1.7 lines/s
-    # retry loop (no module filters in 2.6.4 — directive syntax panics,
-    # RUST_LOG directives are ignored) that would flood the ring buffer,
-    # and its INFO startup banner echoes network_secret. Setting
+    # Logs go to syslog (procd stdout+stderr capture), console level ERROR
+    # by default: easytier 2.6.4 has no module filters (directive syntax
+    # panics, RUST_LOG directives are ignored) and both its INFO stream
+    # (~1.7 lines/s retry loop) and its WARN stream (~0.5 lines/s — the
+    # udp candidate probes are mislabeled WARN upstream) would cycle the
+    # 64 KB syslog ring buffer in minutes, evicting every other daemon's
+    # history. Overlay health lives in the peer table + mesh-diagnostics;
     # purewrt.settings.log_level=debug opts into console info for a
     # debugging session — one knob with purewrt's own logging; accept that
-    # the banner (incl. the secret) reaches syslog for that session and
-    # rotate the code afterwards if it matters. Via environment because
-    # easytier 2.6.4 ignores logger sections in the TOML.
-    et_level=warn
+    # the info banner (incl. network_secret) reaches syslog for that
+    # session and rotate the code afterwards if it matters. Via
+    # environment because easytier ignores logger sections in the TOML.
+    et_level=error
     [ "$(uci -q get purewrt.settings.log_level)" = "debug" ] && et_level=info
     procd_set_param env ET_CONSOLE_LOG_LEVEL="$et_level"
     procd_set_param stdout 1

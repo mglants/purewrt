@@ -62,9 +62,10 @@ func EasytierConfig(c config.Config) []byte {
 	b.WriteString("enable_kcp_proxy = false\n")
 	// Log config deliberately absent from the TOML: easytier 2.6.4 ignores
 	// logger sections here (verified live — no file appears). The init
-	// script drives console level via ET_CONSOLE_LOG_LEVEL: warn by
-	// default (the INFO stream is an unfilterable ~1.7 lines/s retry loop
-	// and its startup banner echoes network_secret), info when purewrt's
-	// log_level=debug opts a debugging session in.
+	// script drives console level via ET_CONSOLE_LOG_LEVEL: error by
+	// default (both the INFO and WARN streams are unfilterable retry-loop
+	// spam that cycles the syslog ring buffer, and the info banner echoes
+	// network_secret), info when purewrt's log_level=debug opts a
+	// debugging session in.
 	return []byte(b.String())
 }
