@@ -191,20 +191,12 @@ call)
         update) read_logread 'purewrt-bg|purewrt-cron|update-rule-provider|update-proxy-provider|providers.*updated|provider.*updated' ;;
         mihomo) read_logread 'mihomo|clash' ;;
         zapret) read_logread 'purewrt-zapret|zapret|nfqws|tpws' ;;
-        # Overlay daemon INFO lives in a capped tmpfs file (console INFO
-        # floods syslog and its banner echoes network_secret — see the
-        # easytier init script). Tail the newest rolling file, strip the
-        # secret line the startup banner echoes, fall back to syslog
-        # (stderr warnings + init logger lines) when no file exists yet.
+        # Overlay daemon logs live in syslog (warn by default; console info
+        # when purewrt log_level=debug — see the easytier init script).
+        # Strip the network_secret line the info-level startup banner
+        # echoes so the panel never displays the group credential.
         easytier)
-          f=$(ls -t /tmp/purewrt/log/easytier* 2>/dev/null | head -n1)
-          if [ -n "$f" ]; then
-            printf '{"path":"%s","output":"' "$f"
-            tail -n 300 "$f" 2>/dev/null | grep -v 'network_secret' | json_string
-            printf '"}'
-          else
-            read_logread 'easytier'
-          fi ;;
+          read_logread 'easytier' 'network_secret' ;;
         ooni) read_logread 'ooniprobe' ;;
         *) read_logread 'purewrt|purewrt-bg|purewrt-cron|mihomo|clash|zapret|nfqws|tpws|easytier' ;;
       esac ;;
