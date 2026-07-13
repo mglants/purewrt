@@ -106,9 +106,11 @@ func meshNFTFP(m config.Mesh) meshNFTFPEntry {
 	return meshNFTFPEntry{Enabled: m.Enabled, NetworkName: m.NetworkName, ExitEnabled: m.ExitEnabled, ListenPort: m.ListenPort, DeviceName: m.DeviceName, ExitMaxMbit: m.ExitMaxMbit}
 }
 
-// easytierFPEntry is exactly the Mesh material easytier.toml is rendered
-// from — the restart gate for the overlay daemon (see GenerationGroups.
-// Easytier for why peers and mihomo-only fields must stay out).
+// easytierFPEntry is exactly the material the overlay daemon's runtime is
+// built from — the restart gate for it (see GenerationGroups.Easytier for
+// why peers and mihomo-only fields must stay out). LogLevel is included
+// because the init script maps purewrt's log_level onto ET_FILE_LOG_LEVEL:
+// flipping it must restart the daemon for the new level to take effect.
 type easytierFPEntry struct {
 	Enabled        bool     `json:"enabled"`
 	NetworkName    string   `json:"network_name"`
@@ -118,10 +120,12 @@ type easytierFPEntry struct {
 	DeviceName     string   `json:"device_name"`
 	CommunityPeers []string `json:"community_peers"`
 	ExtraPeers     []string `json:"extra_peers"`
+	LogLevel       string   `json:"log_level"`
 }
 
-func easytierFP(m config.Mesh) easytierFPEntry {
-	return easytierFPEntry{Enabled: m.Enabled, NetworkName: m.NetworkName, NetworkSecret: m.NetworkSecret, HWID: m.HWID, RPCPortal: m.RPCPortal, DeviceName: m.DeviceName, CommunityPeers: m.CommunityPeers, ExtraPeers: m.ExtraPeers}
+func easytierFP(c config.Config) easytierFPEntry {
+	m := c.Mesh
+	return easytierFPEntry{Enabled: m.Enabled, NetworkName: m.NetworkName, NetworkSecret: m.NetworkSecret, HWID: m.HWID, RPCPortal: m.RPCPortal, DeviceName: m.DeviceName, CommunityPeers: m.CommunityPeers, ExtraPeers: m.ExtraPeers, LogLevel: c.Settings.LogLevel}
 }
 
 type ruleProviderFPEntry struct {
@@ -217,7 +221,7 @@ func generationGroupHashes(c config.Config, in generationFingerprintInput) (map[
 		"zapret":         map[string]any{"zapret": in.Zapret, "sections": openWrtSections},
 		"policy":         map[string]any{"settings": in.Settings, "vpns": in.VPNs, "devices": in.Devices, "sections": openWrtSections},
 		"mesh":           map[string]any{"mesh": in.Mesh, "mesh_peers": in.MeshPeers},
-		"easytier":       map[string]any{"easytier": easytierFP(in.Mesh)},
+		"easytier":       map[string]any{"easytier": easytierFP(c)},
 	}
 	out := map[string]string{}
 	for name, v := range groups {

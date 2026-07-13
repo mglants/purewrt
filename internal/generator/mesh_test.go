@@ -425,6 +425,14 @@ func TestEasytierFingerprintIgnoresPeerChurn(t *testing.T) {
 	if hashes(filtered)["easytier"] != base["easytier"] {
 		t.Error("exit_filter change dirtied the easytier group")
 	}
+
+	// log_level maps onto ET_FILE_LOG_LEVEL in the init script — flipping
+	// it must restart the daemon for the new level to take effect.
+	leveled := c
+	leveled.Settings.LogLevel = "debug"
+	if hashes(leveled)["easytier"] == base["easytier"] {
+		t.Error("log_level change did not dirty the easytier group")
+	}
 }
 
 func TestMeshExitCapFingerprintSemantics(t *testing.T) {

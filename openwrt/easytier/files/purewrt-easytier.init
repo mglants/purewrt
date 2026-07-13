@@ -22,16 +22,23 @@ start_service() {
     # Restart when purewrt regenerates the TOML (procd config trigger).
     procd_set_param file "$CONF"
     procd_set_param respawn 3600 5 5
-    # INFO to a capped tmpfs file for the LuCI Friend Mesh log panel; the
-    # console stays at warn so syslog only gets real problems. Via
-    # environment because easytier 2.6.4 ignores logger sections in the
-    # TOML. Console INFO was tried and reverted: easytier has no module
-    # filters (directive syntax panics, RUST_LOG directives are ignored)
-    # and its direct-connect retry loop logs ~1.7 lines/s forever, flooding
-    # the ring buffer — and the INFO startup banner echoes network_secret.
+    # Capped tmpfs file for the LuCI Friend Mesh log panel; the console
+    # stays at warn so syslog only gets real problems. Via environment
+    # because easytier 2.6.4 ignores logger sections in the TOML. Console
+    # INFO was tried and reverted: easytier has no module filters
+    # (directive syntax panics, RUST_LOG directives are ignored) and its
+    # direct-connect retry loop logs ~1.7 lines/s forever, flooding the
+    # ring buffer — and the INFO startup banner echoes network_secret.
     # Rolling files capped well below the 100 MB default: /tmp is RAM.
+    #
+    # File level follows purewrt's log_level with a floor at info: debug
+    # bumps easytier to debug too (one knob for a debugging session), but
+    # warn/error must NOT quiet the file — INFO detail is the panel's whole
+    # point and the file is rotation-capped anyway.
+    et_level=info
+    [ "$(uci -q get purewrt.settings.log_level)" = "debug" ] && et_level=debug
     mkdir -p /tmp/purewrt/log
-    procd_set_param env ET_FILE_LOG_LEVEL=info ET_FILE_LOG_DIR=/tmp/purewrt/log ET_FILE_LOG_SIZE=5 ET_FILE_LOG_COUNT=2
+    procd_set_param env ET_FILE_LOG_LEVEL="$et_level" ET_FILE_LOG_DIR=/tmp/purewrt/log ET_FILE_LOG_SIZE=5 ET_FILE_LOG_COUNT=2
     procd_set_param stderr 1
     procd_close_instance
 }
