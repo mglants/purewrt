@@ -552,8 +552,6 @@ type Mesh struct {
 	ExitFilter        string   // mihomo regex include filter scoping which provider nodes MeshExit uses ("" = all)
 	ExitExcludeFilter string   // mihomo regex exclude filter for MeshExit, applied after ExitFilter
 	ExitMaxMbit       int      // per-direction cap on friend exit throughput in Mbit/s, policed in nftables (0 = unlimited)
-	OverlaySubnet     string   // group overlay CIDR, decoded from Code at parse ("" = legacy code → easytier DHCP /24); members derive static IPs from it
-	OverlayIPAttempt  int      // collision-resolution counter for the hwid-derived overlay IP; bumped by mesh-sync when two hwids hash onto one address
 	ListenPort        int      // mihomo ss mesh listener port
 	APIMeshPort       int      // purewrt-api mesh endpoint port (overlay-only via fw4 zone)
 	DeviceName        string   // easytier TUN device

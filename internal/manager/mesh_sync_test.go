@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -363,72 +362,5 @@ func TestMeshPeerGCKeepsOverlayAliveProbelessPeer(t *testing.T) {
 	c, _ = m.Load()
 	if len(c.MeshPeers) != 1 || c.MeshPeers[0].LastSeen != time.Now().UTC().Format(meshDay) {
 		t.Fatalf("overlay-alive peer not kept+stamped: %+v", c.MeshPeers)
-	}
-}
-
-func TestMeshResolveOverlayIPCollision(t *testing.T) {
-	const subnet = "10.126.0.0/16"
-	myHWID := "purewrt-bbbbbbbbbbbbbbbbbbbbbbbb"
-	mine, err := mesh.DeriveOverlayIP(subnet, myHWID, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	myIP := strings.SplitN(mine, "/", 2)[0]
-
-	base := func() config.Config {
-		c := config.Default()
-		c.Mesh.Enabled = true
-		c.Mesh.NetworkName = "pwmesh-x"
-		c.Mesh.HWID = myHWID
-		c.Mesh.OverlaySubnet = subnet
-		return c
-	}
-
-	// Peer squatting our derived IP with a LOWER hwid: we lose, we bump.
-	c := base()
-	c.MeshPeers = []config.MeshPeer{{HWID: "purewrt-aaaaaaaaaaaaaaaaaaaaaaaa", Name: "a", Enabled: true, OverlayIP: myIP}}
-	rep := MeshSyncReport{}
-	if !meshResolveOverlayIPCollision(&c, &rep, nil) || c.Mesh.OverlayIPAttempt != 1 {
-		t.Fatalf("lower-hwid collision did not bump attempt: %+v %+v", c.Mesh.OverlayIPAttempt, rep)
-	}
-
-	// Peer with a HIGHER hwid: it moves, we stay.
-	c = base()
-	c.MeshPeers = []config.MeshPeer{{HWID: "purewrt-cccccccccccccccccccccccc", Name: "c", Enabled: true, OverlayIP: myIP}}
-	rep = MeshSyncReport{}
-	if meshResolveOverlayIPCollision(&c, &rep, nil) || c.Mesh.OverlayIPAttempt != 0 {
-		t.Fatalf("higher-hwid collision moved us: %+v", c.Mesh.OverlayIPAttempt)
-	}
-	if len(rep.Errors) == 0 {
-		t.Fatal("collision not reported")
-	}
-
-	// No collision / legacy dhcp mesh: no-ops.
-	c = base()
-	c.MeshPeers = []config.MeshPeer{{HWID: "purewrt-dddddddddddddddddddddddd", Name: "d", Enabled: true, OverlayIP: "10.126.9.9"}}
-	if meshResolveOverlayIPCollision(&c, &MeshSyncReport{}, nil) {
-		t.Fatal("non-colliding peer triggered a bump")
-	}
-	c = base()
-	c.Mesh.OverlaySubnet = ""
-	c.MeshPeers = []config.MeshPeer{{HWID: "purewrt-aaaaaaaaaaaaaaaaaaaaaaaa", Name: "a", Enabled: true, OverlayIP: myIP}}
-	if meshResolveOverlayIPCollision(&c, &MeshSyncReport{}, nil) {
-		t.Fatal("legacy dhcp mesh triggered a bump")
-	}
-
-	// Overlay-list channel: a two-node collision never forms a peer record
-	// (the probe hairpins to ourselves), but the route table lists the
-	// squatter with hostname = its hwid.
-	c = base()
-	overlay := []mesh.OverlayPeer{{IPv4: myIP, Hostname: "purewrt-aaaaaaaaaaaaaaaaaaaaaaaa"}}
-	rep = MeshSyncReport{}
-	if !meshResolveOverlayIPCollision(&c, &rep, overlay) || c.Mesh.OverlayIPAttempt != 1 {
-		t.Fatalf("overlay-channel collision not detected: %+v %+v", c.Mesh.OverlayIPAttempt, rep)
-	}
-	// Hostile/legacy hostname (not an hwid) must not trigger a bump.
-	c = base()
-	overlay = []mesh.OverlayPeer{{IPv4: myIP, Hostname: "some-laptop"}}
-	if meshResolveOverlayIPCollision(&c, &MeshSyncReport{}, overlay) {
-		t.Fatal("non-hwid hostname triggered a bump")
 	}
 }

@@ -2,7 +2,6 @@ package mesh
 
 import (
 	"encoding/hex"
-	"strings"
 	"testing"
 )
 
@@ -64,52 +63,5 @@ func TestDeriveAPIKey(t *testing.T) {
 	pw := DeriveSSPassword(psk, nil)
 	if hex.EncodeToString(k[:16]) == pw {
 		t.Fatal("api key and ss password derivations not domain-separated")
-	}
-}
-
-func TestDeriveOverlayIP(t *testing.T) {
-	const hwid = "purewrt-aaaaaaaaaaaaaaaaaaaaaaaa"
-	a, err := DeriveOverlayIP("10.126.0.0/16", hwid, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Deterministic.
-	b, _ := DeriveOverlayIP("10.126.0.0/16", hwid, 0)
-	if a != b {
-		t.Fatalf("not deterministic: %q vs %q", a, b)
-	}
-	if !strings.HasPrefix(a, "10.126.") || !strings.HasSuffix(a, "/16") {
-		t.Fatalf("address outside subnet or wrong prefix: %q", a)
-	}
-	// Attempt bump moves the address (collision escape).
-	c, _ := DeriveOverlayIP("10.126.0.0/16", hwid, 1)
-	if c == a {
-		t.Fatalf("attempt bump did not move the address: %q", c)
-	}
-	// Different hwid, different address (overwhelmingly).
-	d, _ := DeriveOverlayIP("10.126.0.0/16", "purewrt-bbbbbbbbbbbbbbbbbbbbbbbb", 0)
-	if d == a {
-		t.Fatalf("distinct hwids collided in test vector: %q", d)
-	}
-	// Never the network or broadcast address.
-	for i := 0; i < 64; i++ {
-		ip, err := DeriveOverlayIP("10.200.0.0/24", "purewrt-cccccccccccccccccccccccc", i)
-		if err != nil {
-			t.Fatal(err)
-		}
-		host := strings.TrimSuffix(ip, "/24")
-		if host == "10.200.0.0" || host == "10.200.0.255" {
-			t.Fatalf("derived reserved address %q at attempt %d", ip, i)
-		}
-	}
-	// Errors on garbage.
-	if _, err := DeriveOverlayIP("not-a-cidr", hwid, 0); err == nil {
-		t.Fatal("garbage cidr accepted")
-	}
-	if _, err := DeriveOverlayIP("2001:db8::/64", hwid, 0); err == nil {
-		t.Fatal("ipv6 cidr accepted")
-	}
-	if _, err := DeriveOverlayIP("10.0.0.0/31", hwid, 0); err == nil {
-		t.Fatal("too-small cidr accepted")
 	}
 }

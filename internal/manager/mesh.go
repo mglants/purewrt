@@ -226,12 +226,6 @@ func (m Manager) MeshRotate() (MeshInitResult, error) {
 	}
 	fresh.NameEntropy = old.NameEntropy // keep the network name
 	fresh.ExtraPeers = old.ExtraPeers
-	// Keep a custom overlay subnet; a legacy code (no subnet TLV) upgrades
-	// to the default /16 here — rotate IS the documented migration path
-	// from easytier-DHCP /24 to static hwid-derived addressing.
-	if old.OverlaySubnet != "" {
-		fresh.OverlaySubnet = old.OverlaySubnet
-	}
 	nodeName := c.Mesh.NodeName
 	if err := m.fillMeshFromCode(&c, fresh, nodeName); err != nil {
 		return MeshInitResult{}, err

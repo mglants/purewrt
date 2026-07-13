@@ -652,10 +652,6 @@ func writeMesh(b *bytes.Buffer, m Mesh) {
 	if m.ExitMaxMbit != d.ExitMaxMbit {
 		opti(b, "exit_max_mbit", m.ExitMaxMbit)
 	}
-	// OverlaySubnet is never written: it decodes from the sync-code.
-	if m.OverlayIPAttempt != d.OverlayIPAttempt {
-		opti(b, "overlay_ip_attempt", m.OverlayIPAttempt)
-	}
 	if m.ListenPort != d.ListenPort {
 		opti(b, "listen_port", m.ListenPort)
 	}

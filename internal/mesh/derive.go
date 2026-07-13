@@ -3,10 +3,7 @@ package mesh
 import (
 	"crypto/hmac"
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/hex"
-	"fmt"
-	"net"
 )
 
 // hkdfSHA256 implements RFC 5869 extract-and-expand. Hand-rolled because the
@@ -53,35 +50,4 @@ func DeriveAPIKey(psk []byte) []byte {
 // anyway; secrecy lives entirely in the PSK.
 func DeriveCredSalt(psk []byte, hwid string) string {
 	return hex.EncodeToString(hkdfSHA256(psk, nil, append([]byte("purewrt-mesh/salt-v1:"), hwid...), 16))
-}
-
-// DeriveOverlayIP deterministically maps a router's hwid into a static
-// overlay address inside the group's subnet — stateless DHCP: zero config,
-// no allocator to race, and the address never changes across restarts.
-// attempt breaks the rare hash collision: when two hwids land on one host
-// index, mesh-sync bumps the deterministic loser's attempt counter and the
-// next derivation lands elsewhere. Returns "a.b.c.d/prefix" (easytier TOML
-// ipv4 form). Host indexes stay in [1, hosts-2], skipping the network and
-// broadcast addresses.
-func DeriveOverlayIP(cidr, hwid string, attempt int) (string, error) {
-	_, ipnet, err := net.ParseCIDR(cidr)
-	if err != nil {
-		return "", fmt.Errorf("mesh: overlay subnet %q: %w", cidr, err)
-	}
-	base := ipnet.IP.To4()
-	if base == nil {
-		return "", fmt.Errorf("mesh: overlay subnet %q is not IPv4", cidr)
-	}
-	ones, bits := ipnet.Mask.Size()
-	hostBits := bits - ones
-	if hostBits < 2 {
-		return "", fmt.Errorf("mesh: overlay subnet %q too small", cidr)
-	}
-	hosts := uint64(1)<<uint(hostBits) - 2 // usable: excludes network + broadcast
-	h := sha256.Sum256([]byte(fmt.Sprintf("purewrt-mesh/overlay-ip-v1:%s:%d", hwid, attempt)))
-	idx := binary.BigEndian.Uint64(h[:8])%hosts + 1
-	addr := binary.BigEndian.Uint32(base) + uint32(idx)
-	var out [4]byte
-	binary.BigEndian.PutUint32(out[:], addr)
-	return fmt.Sprintf("%d.%d.%d.%d/%d", out[0], out[1], out[2], out[3], ones), nil
 }

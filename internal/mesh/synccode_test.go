@@ -122,31 +122,3 @@ func TestExtraPeersRoundTrip(t *testing.T) {
 		t.Fatalf("ExtraPeers round-trip mismatch: %#v", got.ExtraPeers)
 	}
 }
-
-func TestOverlaySubnetRoundTrip(t *testing.T) {
-	code, err := GenerateCode()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if code.OverlaySubnet != DefaultOverlaySubnet {
-		t.Fatalf("new codes must carry the default subnet, got %q", code.OverlaySubnet)
-	}
-	got, err := DecodeCode(code.Encode())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.OverlaySubnet != DefaultOverlaySubnet {
-		t.Fatalf("subnet lost in round-trip: %q", got.OverlaySubnet)
-	}
-
-	// Legacy code without the TLV decodes to empty subnet (DHCP mode).
-	legacy := code
-	legacy.OverlaySubnet = ""
-	got, err = DecodeCode(legacy.Encode())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.OverlaySubnet != "" {
-		t.Fatalf("legacy code grew a subnet: %q", got.OverlaySubnet)
-	}
-}

@@ -394,7 +394,6 @@ func applySection(c *Config, x struct {
 		c.Mesh.ExitFilter = one(x.opts, "exit_filter", d.ExitFilter)
 		c.Mesh.ExitExcludeFilter = one(x.opts, "exit_exclude_filter", d.ExitExcludeFilter)
 		c.Mesh.ExitMaxMbit = i(x.opts, "exit_max_mbit", d.ExitMaxMbit)
-		c.Mesh.OverlayIPAttempt = i(x.opts, "overlay_ip_attempt", d.OverlayIPAttempt)
 		c.Mesh.ListenPort = i(x.opts, "listen_port", d.ListenPort)
 		c.Mesh.APIMeshPort = i(x.opts, "api_mesh_port", d.APIMeshPort)
 		c.Mesh.DeviceName = one(x.opts, "device_name", d.DeviceName)
@@ -412,7 +411,6 @@ func applySection(c *Config, x struct {
 				c.Mesh.NetworkName = code.NetworkName()
 				c.Mesh.NetworkSecret = base64.StdEncoding.EncodeToString(code.NetworkSecret[:])
 				c.Mesh.PSK = hex.EncodeToString(code.PSK[:])
-				c.Mesh.OverlaySubnet = code.OverlaySubnet
 				codeExtras = code.ExtraPeers
 			} else {
 				fmt.Fprintf(os.Stderr, "warning: mesh code invalid (%v) — mesh stays dormant\n", err)

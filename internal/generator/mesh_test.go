@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/purewrt/purewrt/internal/config"
-	"github.com/purewrt/purewrt/internal/mesh"
 )
 
 // joinedMesh returns a Default config joined to a mesh, with one enabled
@@ -453,52 +452,6 @@ func TestEasytierFingerprintIgnoresPeerChurn(t *testing.T) {
 	ported.Mesh.ListenPort = 7911
 	if hashes(ported)["easytier"] == base["easytier"] {
 		t.Error("listen_port change did not dirty the easytier group")
-	}
-
-	// The static overlay address derives from subnet + attempt — both must
-	// restart the daemon.
-	subnetted := c
-	subnetted.Mesh.OverlaySubnet = "10.126.0.0/16"
-	if hashes(subnetted)["easytier"] == base["easytier"] {
-		t.Error("overlay_subnet change did not dirty the easytier group")
-	}
-	bumped := c
-	bumped.Mesh.OverlayIPAttempt = 1
-	if hashes(bumped)["easytier"] == base["easytier"] {
-		t.Error("overlay_ip_attempt change did not dirty the easytier group")
-	}
-}
-
-func TestEasytierStaticOverlayIP(t *testing.T) {
-	// Codes with a subnet get a deterministic hwid-derived static address
-	// and NO dhcp line; legacy codes keep dhcp.
-	c := joinedMesh()
-	legacy := string(EasytierConfig(c))
-	if !strings.Contains(legacy, "dhcp = true") || strings.Contains(legacy, "ipv4 = ") {
-		t.Fatalf("legacy mesh not in dhcp mode:\n%s", legacy)
-	}
-	c.Mesh.OverlaySubnet = "10.126.0.0/16"
-	got := string(EasytierConfig(c))
-	if strings.Contains(got, "dhcp = true") {
-		t.Fatalf("subnet mesh still emits dhcp:\n%s", got)
-	}
-	want, err := mesh.DeriveOverlayIP("10.126.0.0/16", c.Mesh.HWID, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(got, `ipv4 = "`+want+`"`) {
-		t.Fatalf("static ipv4 missing (want %s):\n%s", want, got)
-	}
-	// Attempt bump moves it.
-	c.Mesh.OverlayIPAttempt = 1
-	moved := string(EasytierConfig(c))
-	if strings.Contains(moved, `ipv4 = "`+want+`"`) {
-		t.Fatalf("attempt bump did not move the address:\n%s", moved)
-	}
-	// Broken subnet falls back to dhcp — never brick generation.
-	c.Mesh.OverlaySubnet = "garbage"
-	if out := string(EasytierConfig(c)); !strings.Contains(out, "dhcp = true") {
-		t.Fatalf("broken subnet did not fall back to dhcp:\n%s", out)
 	}
 }
 
