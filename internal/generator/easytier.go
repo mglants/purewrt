@@ -45,7 +45,16 @@ func EasytierConfig(c config.Config) []byte {
 	// restart could renegotiate a fresh IP, staleing persisted peer records
 	// until the next mesh-sync.
 	fmt.Fprintf(&b, "machine_id = %q\n", m.HWID)
-	b.WriteString("dhcp = true\n")
+	// The mesh creator carries a static seed address (mesh.CreatorSeedIPv4,
+	// set once by mesh-init): easytier's DHCP allocates inside the subnet of
+	// already-used member IPs, so the seed is what pins the mesh to a /16
+	// instead of the upstream 10.126.126.0/24 default. Everyone else stays
+	// DHCP — the allocator handles conflicts in-band.
+	if m.OverlayIPv4 != "" {
+		fmt.Fprintf(&b, "ipv4 = %q\n", m.OverlayIPv4)
+	} else {
+		b.WriteString("dhcp = true\n")
+	}
 	// Fixed listener ports: friends punch/relay to these. Kept off the UCI
 	// surface until someone actually needs to change them.
 	b.WriteString("listeners = [\"tcp://0.0.0.0:11010\", \"udp://0.0.0.0:11010\"]\n")

@@ -54,6 +54,10 @@ func TestMeshInitJoinRoundTrip(t *testing.T) {
 	if ca.Mesh.Code == "" || ca.Mesh.PSK == "" || ca.Mesh.CredSalt() == "" {
 		t.Fatal("credentials not derivable after init")
 	}
+	// The creator seeds the /16 subnet with its static address.
+	if ca.Mesh.OverlayIPv4 != mesh.CreatorSeedIPv4 {
+		t.Fatalf("creator missing overlay seed: %q", ca.Mesh.OverlayIPv4)
+	}
 	// Second init must refuse.
 	if _, err := a.MeshInit(""); err == nil {
 		t.Fatal("second mesh-init did not refuse")
@@ -78,6 +82,10 @@ func TestMeshInitJoinRoundTrip(t *testing.T) {
 	}
 	if cb.Mesh.CredSalt() == ca.Mesh.CredSalt() {
 		t.Fatal("joiner must derive its OWN cred salt (name-scoped)")
+	}
+	// Joiners stay DHCP — only the creator carries the static seed.
+	if cb.Mesh.OverlayIPv4 != "" {
+		t.Fatalf("joiner unexpectedly got a static overlay address: %q", cb.Mesh.OverlayIPv4)
 	}
 	if _, err := mesh.DecodeCode(jres.Code); err != nil {
 		t.Fatalf("re-printed code does not decode: %v", err)

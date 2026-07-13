@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/purewrt/purewrt/internal/config"
+	"github.com/purewrt/purewrt/internal/mesh"
 )
 
 // joinedMesh returns a Default config joined to a mesh, with one enabled
@@ -452,6 +453,30 @@ func TestEasytierFingerprintIgnoresPeerChurn(t *testing.T) {
 	ported.Mesh.ListenPort = 7911
 	if hashes(ported)["easytier"] == base["easytier"] {
 		t.Error("listen_port change did not dirty the easytier group")
+	}
+
+	// The creator's seed address is rendered into easytier.toml.
+	seeded := c
+	seeded.Mesh.OverlayIPv4 = "10.126.0.1/16"
+	if hashes(seeded)["easytier"] == base["easytier"] {
+		t.Error("overlay_ipv4 change did not dirty the easytier group")
+	}
+}
+
+func TestEasytierCreatorSeedAddress(t *testing.T) {
+	// Joiners (no seed) stay DHCP; the creator's static seed pins the /16.
+	c := joinedMesh()
+	joiner := string(EasytierConfig(c))
+	if !strings.Contains(joiner, "dhcp = true") || strings.Contains(joiner, "ipv4 = ") {
+		t.Fatalf("joiner not in dhcp mode:\n%s", joiner)
+	}
+	c.Mesh.OverlayIPv4 = mesh.CreatorSeedIPv4
+	creator := string(EasytierConfig(c))
+	if strings.Contains(creator, "dhcp = true") {
+		t.Fatalf("creator still emits dhcp:\n%s", creator)
+	}
+	if !strings.Contains(creator, `ipv4 = "10.126.0.1/16"`) {
+		t.Fatalf("creator seed address missing:\n%s", creator)
 	}
 }
 

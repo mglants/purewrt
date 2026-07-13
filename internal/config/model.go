@@ -552,6 +552,7 @@ type Mesh struct {
 	ExitFilter        string   // mihomo regex include filter scoping which provider nodes MeshExit uses ("" = all)
 	ExitExcludeFilter string   // mihomo regex exclude filter for MeshExit, applied after ExitFilter
 	ExitMaxMbit       int      // per-direction cap on friend exit throughput in Mbit/s, policed in nftables (0 = unlimited)
+	OverlayIPv4       string   // static overlay address ("a.b.c.d/prefix"); set by mesh-init on the creator to seed the /16 — everyone else stays DHCP and inherits its subnet
 	ListenPort        int      // mihomo ss mesh listener port
 	APIMeshPort       int      // purewrt-api mesh endpoint port (overlay-only via fw4 zone)
 	DeviceName        string   // easytier TUN device

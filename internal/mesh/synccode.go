@@ -16,6 +16,14 @@ import (
 	"strings"
 )
 
+// CreatorSeedIPv4 is the static overlay address mesh-init assigns to the
+// mesh CREATOR. easytier's DHCP allocates inside the subnet of already-used
+// member IPs and only falls back to its hardwired 10.126.126.0/24 default
+// when none exist — so one statically-seeded /16 member makes every joiner
+// (plain DHCP) inherit the /16 (~65k members). Joiners never set a static
+// address; the DHCP allocator keeps handling conflicts in-band.
+const CreatorSeedIPv4 = "10.126.0.1/16"
+
 const (
 	codePrefix  = "PWMESH1-"
 	codeVersion = 0x01

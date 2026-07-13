@@ -652,6 +652,9 @@ func writeMesh(b *bytes.Buffer, m Mesh) {
 	if m.ExitMaxMbit != d.ExitMaxMbit {
 		opti(b, "exit_max_mbit", m.ExitMaxMbit)
 	}
+	if m.OverlayIPv4 != d.OverlayIPv4 {
+		opt(b, "overlay_ipv4", m.OverlayIPv4)
+	}
 	if m.ListenPort != d.ListenPort {
 		opti(b, "listen_port", m.ListenPort)
 	}

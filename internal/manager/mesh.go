@@ -136,6 +136,10 @@ func (m Manager) MeshInit(nodeName string) (MeshInitResult, error) {
 	if err := m.fillMeshFromCode(&c, code, meshNodeName(nodeName)); err != nil {
 		return MeshInitResult{}, err
 	}
+	// The creator seeds the /16: its static address is the subnet reference
+	// every DHCP joiner inherits (see mesh.CreatorSeedIPv4). Joiners never
+	// get one — MeshJoin leaves OverlayIPv4 empty.
+	c.Mesh.OverlayIPv4 = mesh.CreatorSeedIPv4
 	if err := m.meshSaveApply(c); err != nil {
 		return MeshInitResult{}, err
 	}

@@ -125,11 +125,13 @@ type easytierFPEntry struct {
 	// changes must restart the daemon.
 	ListenPort  int `json:"listen_port"`
 	APIMeshPort int `json:"api_mesh_port"`
+	// The creator's static seed address (subnet reference for DHCP joiners).
+	OverlayIPv4 string `json:"overlay_ipv4"`
 }
 
 func easytierFP(c config.Config) easytierFPEntry {
 	m := c.Mesh
-	return easytierFPEntry{Enabled: m.Enabled, NetworkName: m.NetworkName, NetworkSecret: m.NetworkSecret, HWID: m.HWID, RPCPortal: m.RPCPortal, DeviceName: m.DeviceName, CommunityPeers: m.CommunityPeers, ExtraPeers: m.ExtraPeers, LogLevel: c.Settings.LogLevel, ListenPort: m.ListenPort, APIMeshPort: m.APIMeshPort}
+	return easytierFPEntry{Enabled: m.Enabled, NetworkName: m.NetworkName, NetworkSecret: m.NetworkSecret, HWID: m.HWID, RPCPortal: m.RPCPortal, DeviceName: m.DeviceName, CommunityPeers: m.CommunityPeers, ExtraPeers: m.ExtraPeers, LogLevel: c.Settings.LogLevel, ListenPort: m.ListenPort, APIMeshPort: m.APIMeshPort, OverlayIPv4: m.OverlayIPv4}
 }
 
 type ruleProviderFPEntry struct {
