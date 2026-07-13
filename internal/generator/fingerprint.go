@@ -115,17 +115,21 @@ type easytierFPEntry struct {
 	Enabled        bool     `json:"enabled"`
 	NetworkName    string   `json:"network_name"`
 	NetworkSecret  string   `json:"network_secret"`
-	HWID           string   `json:"hwid"` // overlay hostname
+	HWID           string   `json:"hwid"` // overlay hostname + machine_id
 	RPCPortal      string   `json:"rpc_portal"`
 	DeviceName     string   `json:"device_name"`
 	CommunityPeers []string `json:"community_peers"`
 	ExtraPeers     []string `json:"extra_peers"`
 	LogLevel       string   `json:"log_level"`
+	// The overlay port whitelists are rendered into easytier.toml, so port
+	// changes must restart the daemon.
+	ListenPort  int `json:"listen_port"`
+	APIMeshPort int `json:"api_mesh_port"`
 }
 
 func easytierFP(c config.Config) easytierFPEntry {
 	m := c.Mesh
-	return easytierFPEntry{Enabled: m.Enabled, NetworkName: m.NetworkName, NetworkSecret: m.NetworkSecret, HWID: m.HWID, RPCPortal: m.RPCPortal, DeviceName: m.DeviceName, CommunityPeers: m.CommunityPeers, ExtraPeers: m.ExtraPeers, LogLevel: c.Settings.LogLevel}
+	return easytierFPEntry{Enabled: m.Enabled, NetworkName: m.NetworkName, NetworkSecret: m.NetworkSecret, HWID: m.HWID, RPCPortal: m.RPCPortal, DeviceName: m.DeviceName, CommunityPeers: m.CommunityPeers, ExtraPeers: m.ExtraPeers, LogLevel: c.Settings.LogLevel, ListenPort: m.ListenPort, APIMeshPort: m.APIMeshPort}
 }
 
 type ruleProviderFPEntry struct {

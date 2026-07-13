@@ -248,6 +248,9 @@ func TestEasytierConfigGolden(t *testing.T) {
 	out := string(EasytierConfig(c))
 	for _, want := range []string{
 		`hostname = "purewrt-aaaaaaaaaaaaaaaaaaaaaaaa"`,
+		`machine_id = "purewrt-aaaaaaaaaaaaaaaaaaaaaaaa"`,
+		`tcp_whitelist = ["7897", "8788"]`,
+		`udp_whitelist = ["7897"]`,
 		`network_name = "pwmesh-0011223344556677"`,
 		`network_secret = "c2VjcmV0"`,
 		`uri = "wss://pwmesh.glants.xyz/pwmesh"`,
@@ -426,12 +429,19 @@ func TestEasytierFingerprintIgnoresPeerChurn(t *testing.T) {
 		t.Error("exit_filter change dirtied the easytier group")
 	}
 
-	// log_level maps onto ET_FILE_LOG_LEVEL in the init script — flipping
-	// it must restart the daemon for the new level to take effect.
+	// log_level maps onto ET_CONSOLE_LOG_LEVEL in the init script —
+	// flipping it must restart the daemon for the new level to take effect.
 	leveled := c
 	leveled.Settings.LogLevel = "debug"
 	if hashes(leveled)["easytier"] == base["easytier"] {
 		t.Error("log_level change did not dirty the easytier group")
+	}
+
+	// ListenPort shapes the overlay port whitelist in easytier.toml.
+	ported := c
+	ported.Mesh.ListenPort = 7911
+	if hashes(ported)["easytier"] == base["easytier"] {
+		t.Error("listen_port change did not dirty the easytier group")
 	}
 }
 
