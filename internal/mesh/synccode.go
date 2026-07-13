@@ -22,13 +22,21 @@ const (
 
 	flagExtraPeers = 0x01
 
-	tlvExtraPeer = 0x01
+	tlvExtraPeer     = 0x01
+	tlvOverlaySubnet = 0x02
 
 	nameEntropyLen   = 8
 	networkSecretLen = 24
 	pskLen           = 32
 	macLen           = 4
 )
+
+// DefaultOverlaySubnet is the overlay CIDR minted into new sync-codes.
+// easytier's built-in DHCP is hardwired to a /24 (≤254 members, and lease
+// renegotiation churns IPs on simultaneous restarts); codes carrying a
+// subnet make every member derive a STATIC ip from its hwid instead —
+// same zero-config UX, no allocator to race, 65k addresses.
+const DefaultOverlaySubnet = "10.126.0.0/16"
 
 // Code is the decoded contents of a mesh sync-code. The code itself is the
 // group secret: anyone holding it can join the overlay and derive every
@@ -38,6 +46,10 @@ type Code struct {
 	NetworkSecret [networkSecretLen]byte
 	PSK           [pskLen]byte
 	ExtraPeers    []string // optional custom rendezvous/relay peer URLs
+	// OverlaySubnet is the group's virtual network CIDR; members derive
+	// their static overlay IP from it + their hwid. Empty (legacy codes,
+	// pre-TLV) means easytier DHCP in its built-in /24.
+	OverlaySubnet string
 }
 
 // NetworkName derives the easytier network name from the code entropy so
@@ -56,6 +68,7 @@ func GenerateCode() (Code, error) {
 	copy(c.NameEntropy[:], buf[:nameEntropyLen])
 	copy(c.NetworkSecret[:], buf[nameEntropyLen:nameEntropyLen+networkSecretLen])
 	copy(c.PSK[:], buf[nameEntropyLen+networkSecretLen:])
+	c.OverlaySubnet = DefaultOverlaySubnet
 	return c, nil
 }
 
@@ -72,6 +85,10 @@ func (c Code) Encode() string {
 	for _, p := range c.ExtraPeers {
 		payload = append(payload, tlvExtraPeer, byte(len(p)))
 		payload = append(payload, p...)
+	}
+	if c.OverlaySubnet != "" {
+		payload = append(payload, tlvOverlaySubnet, byte(len(c.OverlaySubnet)))
+		payload = append(payload, c.OverlaySubnet...)
 	}
 	payload = append(payload, codeMAC(c.PSK[:], payload)...)
 
@@ -141,8 +158,11 @@ func DecodeCode(s string) (Code, error) {
 			return Code{}, errors.New("mesh: sync-code truncated extension")
 		}
 		typ, val := tlvs[0], string(tlvs[2:2+int(tlvs[1])])
-		if typ == tlvExtraPeer {
+		switch typ {
+		case tlvExtraPeer:
 			c.ExtraPeers = append(c.ExtraPeers, val)
+		case tlvOverlaySubnet:
+			c.OverlaySubnet = val
 		}
 		// Unknown TLV types are skipped for forward compatibility.
 		tlvs = tlvs[2+int(tlvs[1]):]

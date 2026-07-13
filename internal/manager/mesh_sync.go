@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/purewrt/purewrt/internal/config"
@@ -155,6 +156,10 @@ func (m Manager) MeshSync() (MeshSyncReport, error) {
 		changed = true
 	}
 
+	if meshResolveOverlayIPCollision(&c, &rep) {
+		changed = true
+	}
+
 	if b, err := json.Marshal(status); err == nil {
 		_ = os.MkdirAll(filepath.Dir(meshStatusPath(c)), 0755)
 		_, _ = system.WriteIfChanged(meshStatusPath(c), b, 0644)
@@ -166,6 +171,35 @@ func (m Manager) MeshSync() (MeshSyncReport, error) {
 		rep.Applied = true
 	}
 	return rep, nil
+}
+
+// meshResolveOverlayIPCollision breaks the rare hwid-hash collision on
+// static overlay addresses: when a persisted peer claims the address WE
+// derive, the deterministic loser (lexicographically larger hwid) bumps its
+// OverlayIPAttempt so the next derivation lands elsewhere; the winner stays
+// put. Both sides run the same rule, so exactly one moves. Peers colliding
+// with each other (not with us) resolve it between themselves.
+func meshResolveOverlayIPCollision(c *config.Config, rep *MeshSyncReport) bool {
+	if c.Mesh.OverlaySubnet == "" {
+		return false
+	}
+	mine, err := mesh.DeriveOverlayIP(c.Mesh.OverlaySubnet, c.Mesh.HWID, c.Mesh.OverlayIPAttempt)
+	if err != nil {
+		return false
+	}
+	myIP := strings.SplitN(mine, "/", 2)[0]
+	for _, p := range c.MeshPeers {
+		if p.HWID == c.Mesh.HWID || p.OverlayIP != myIP {
+			continue
+		}
+		if c.Mesh.HWID > p.HWID {
+			c.Mesh.OverlayIPAttempt++
+			rep.Errors = append(rep.Errors, fmt.Sprintf("overlay ip %s collides with peer %s — rederiving (attempt %d)", myIP, p.HWID, c.Mesh.OverlayIPAttempt))
+			return true
+		}
+		rep.Errors = append(rep.Errors, fmt.Sprintf("overlay ip %s collides with peer %s — peer re-derives (its hwid sorts higher)", myIP, p.HWID))
+	}
+	return false
 }
 
 // meshDay is the UCI last_seen granularity: one calendar day, so the stamp

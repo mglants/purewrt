@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/purewrt/purewrt/internal/config"
+	"github.com/purewrt/purewrt/internal/mesh"
 )
 
 // EasytierConfig renders the easytier-core TOML for this router's overlay
@@ -45,7 +46,16 @@ func EasytierConfig(c config.Config) []byte {
 	// restart could renegotiate a fresh IP, staleing persisted peer records
 	// until the next mesh-sync.
 	fmt.Fprintf(&b, "machine_id = %q\n", m.HWID)
-	b.WriteString("dhcp = true\n")
+	// Codes carrying an overlay subnet get a STATIC hwid-derived address —
+	// stateless DHCP: zero config, no lease renegotiation (simultaneous
+	// restarts can never churn IPs), 65k members in the default /16, and
+	// mesh-sync bumps OverlayIPAttempt on the rare hash collision. Legacy
+	// codes (no subnet TLV) keep easytier's built-in DHCP in its /24.
+	if ip, err := mesh.DeriveOverlayIP(m.OverlaySubnet, m.HWID, m.OverlayIPAttempt); m.OverlaySubnet != "" && err == nil {
+		fmt.Fprintf(&b, "ipv4 = %q\n", ip)
+	} else {
+		b.WriteString("dhcp = true\n")
+	}
 	// Fixed listener ports: friends punch/relay to these. Kept off the UCI
 	// surface until someone actually needs to change them.
 	b.WriteString("listeners = [\"tcp://0.0.0.0:11010\", \"udp://0.0.0.0:11010\"]\n")

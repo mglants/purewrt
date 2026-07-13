@@ -125,11 +125,14 @@ type easytierFPEntry struct {
 	// changes must restart the daemon.
 	ListenPort  int `json:"listen_port"`
 	APIMeshPort int `json:"api_mesh_port"`
+	// The static overlay address derives from these two.
+	OverlaySubnet    string `json:"overlay_subnet"`
+	OverlayIPAttempt int    `json:"overlay_ip_attempt"`
 }
 
 func easytierFP(c config.Config) easytierFPEntry {
 	m := c.Mesh
-	return easytierFPEntry{Enabled: m.Enabled, NetworkName: m.NetworkName, NetworkSecret: m.NetworkSecret, HWID: m.HWID, RPCPortal: m.RPCPortal, DeviceName: m.DeviceName, CommunityPeers: m.CommunityPeers, ExtraPeers: m.ExtraPeers, LogLevel: c.Settings.LogLevel, ListenPort: m.ListenPort, APIMeshPort: m.APIMeshPort}
+	return easytierFPEntry{Enabled: m.Enabled, NetworkName: m.NetworkName, NetworkSecret: m.NetworkSecret, HWID: m.HWID, RPCPortal: m.RPCPortal, DeviceName: m.DeviceName, CommunityPeers: m.CommunityPeers, ExtraPeers: m.ExtraPeers, LogLevel: c.Settings.LogLevel, ListenPort: m.ListenPort, APIMeshPort: m.APIMeshPort, OverlaySubnet: m.OverlaySubnet, OverlayIPAttempt: m.OverlayIPAttempt}
 }
 
 type ruleProviderFPEntry struct {
