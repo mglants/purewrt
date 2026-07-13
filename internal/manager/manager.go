@@ -1768,6 +1768,9 @@ func (m Manager) applyValidateStaged(c config.Config, staged generator.Generated
 		}
 		if groups.OpenWrtBundle {
 			log.Info("apply: validating staged nft rules")
+			// The ruleset's socket-cgroupv2 exemptions need their cgroup
+			// paths to exist even for a check-only load.
+			m.ensureCgroupDirs(c)
 			if out, err := r.Run("nft", "-c", "-f", staged.NFTFile); err != nil {
 				return fmt.Errorf("nft -c -f %s failed: %w: %s", staged.NFTFile, err, out)
 			}
@@ -1790,6 +1793,33 @@ func (m Manager) runApplyCommand(r commandRunner, name string, args ...string) e
 		return fmt.Errorf("%s %s failed: %w: %s", name, strings.Join(args, " "), err, out)
 	}
 	return nil
+}
+
+// ensureCgroupDirs pre-creates the cgroupv2 paths the generated ruleset's
+// `socket cgroupv2` exemptions reference. nft refuses to load a rule whose
+// cgroup path doesn't exist, and both daemons' dirs can legitimately be
+// absent when the rules load: mihomo's before its first start, easytier's on
+// the first apply after mesh-join (procd starts the service after the nft
+// load). procd happily reuses a pre-created dir. Best-effort — a failure
+// surfaces as the nft load error anyway.
+func (m Manager) ensureCgroupDirs(c config.Config) {
+	if m.DryRun {
+		return
+	}
+	log := logging.New(m.logLevel())
+	mihomo := strings.TrimPrefix(strings.TrimSpace(c.Settings.CgroupV2Path), "/")
+	if mihomo == "" {
+		mihomo = "services/mihomo"
+	}
+	paths := []string{mihomo}
+	if c.MeshActive() {
+		paths = append(paths, generator.EasytierCgroupPath)
+	}
+	for _, p := range paths {
+		if err := os.MkdirAll("/sys/fs/cgroup/"+p, 0755); err != nil {
+			log.Warn("apply: cgroup dir %s not ensured: %v", p, err)
+		}
+	}
 }
 
 func (m Manager) applyNFT(c config.Config, live generator.GeneratedPaths, groups generator.GenerationGroups, r commandRunner) error {
@@ -1817,6 +1847,7 @@ func (m Manager) applyNFT(c config.Config, live generator.GeneratedPaths, groups
 	// after the reload. Best-effort: a snapshot/restore failure must never abort
 	// the apply (worst case is the pre-existing behaviour — empty sets).
 	snap := m.snapshotDynamicDNSSets(c, r)
+	m.ensureCgroupDirs(c)
 	log.Info("apply: loading nft main path=%s", live.NFTFile)
 	if err := m.runApplyCommand(r, "nft", "-f", live.NFTFile); err != nil {
 		return err

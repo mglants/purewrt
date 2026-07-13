@@ -42,6 +42,27 @@ func cgroupExemptionRule(c config.Config) string {
 	return "    socket cgroupv2 level " + itoa(level) + " \"" + path + "\" return\n"
 }
 
+// EasytierCgroupPath is the procd-assigned cgroup of the overlay daemon
+// (service purewrt-easytier). Shared with the manager, which pre-creates the
+// directory before loading rules: nft refuses to load a `socket cgroupv2`
+// match whose path doesn't exist (verified live), and on the first apply
+// after mesh-join the rules load before procd has started the service.
+const EasytierCgroupPath = "services/purewrt-easytier"
+
+// easytierExemptionRule keeps the overlay daemon's own WAN transport
+// (rendezvous dials, hole-punch packets, relayed tunnels) out of the
+// router-output proxy — the mihomo cgroup exemption's twin. Without it a
+// proxied destination that happens to cover a rendezvous host or a friend's
+// WAN IP would TPROXY the mesh transport into mihomo, coupling the overlay's
+// liveness to the proxy's.
+func easytierExemptionRule(c config.Config) string {
+	if !c.MeshActive() {
+		return ""
+	}
+	level := strings.Count(EasytierCgroupPath, "/") + 1
+	return "    socket cgroupv2 level " + itoa(level) + " \"" + EasytierCgroupPath + "\" return\n"
+}
+
 // ooniExemptionRule keeps the OONI probe's traffic out of the proxy. The probe
 // runs as a dedicated non-root user; matching its socket owner uid and
 // returning early means its direct measurement sockets are never transparently
@@ -341,6 +362,7 @@ func writeMeshLimiterChains(b *strings.Builder, c config.Config) {
 func writeOutputChain(b *strings.Builder, c config.Config, includeIPv6 bool) {
 	b.WriteString("\n  chain output_mangle {\n    type route hook output priority mangle; policy accept;\n")
 	b.WriteString(cgroupExemptionRule(c))
+	b.WriteString(easytierExemptionRule(c))
 	b.WriteString(ooniExemptionRule(c))
 	b.WriteString("    meta mark & 0x40000000 != 0 return\n")
 	b.WriteString("    fib daddr type { local, broadcast, anycast, multicast } return\n")

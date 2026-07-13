@@ -333,16 +333,26 @@ func TestMeshFingerprintGroupSemantics(t *testing.T) {
 	}
 }
 
-// The overlay is invisible to nftables while no throughput cap is set: mesh
-// inbound terminates at the local mihomo listener (fw4 input path), and
-// overlay egress rides the friend ss proxies — TPROXY must not see any of it.
+// The overlay data plane is invisible to nftables while no throughput cap is
+// set: mesh inbound terminates at the local mihomo listener (fw4 input path),
+// and overlay egress rides the friend ss proxies — TPROXY must not see any of
+// it. The ONLY permitted difference is the easytier cgroup exemption in the
+// router-output chain (keeps the daemon's own WAN transport out of the
+// output proxy, mirroring mihomo's exemption).
 func TestMeshLeavesNFTablesUntouched(t *testing.T) {
-	off := NFTables(config.Default())
+	exemption := `    socket cgroupv2 level 2 "services/purewrt-easytier" return` + "\n"
+	off := string(NFTables(config.Default()))
 	on := joinedMesh()
 	on.MeshPeers = []config.MeshPeer{{HWID: "purewrt-bbbbbbbbbbbbbbbbbbbbbbbb", Name: "beta", Enabled: true, OverlayIP: "10.126.126.2", ListenPort: 7897, ExitOffered: true}}
-	got := NFTables(on)
-	if string(off) != string(got) {
-		t.Error("capless mesh config altered nftables output")
+	got := string(NFTables(on))
+	if !strings.Contains(got, exemption) {
+		t.Fatalf("mesh-active output chain missing easytier cgroup exemption:\n%s", got)
+	}
+	if strings.Contains(off, "purewrt-easytier") {
+		t.Fatalf("mesh-off nftables mentions easytier:\n%s", off)
+	}
+	if strings.Replace(got, exemption, "", 1) != off {
+		t.Error("capless mesh config altered nftables output beyond the cgroup exemption")
 	}
 }
 
