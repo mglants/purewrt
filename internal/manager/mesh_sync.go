@@ -156,7 +156,7 @@ func (m Manager) MeshSync() (MeshSyncReport, error) {
 		changed = true
 	}
 
-	if meshResolveOverlayIPCollision(&c, &rep) {
+	if meshResolveOverlayIPCollision(&c, &rep, overlay) {
 		changed = true
 	}
 
@@ -174,12 +174,19 @@ func (m Manager) MeshSync() (MeshSyncReport, error) {
 }
 
 // meshResolveOverlayIPCollision breaks the rare hwid-hash collision on
-// static overlay addresses: when a persisted peer claims the address WE
-// derive, the deterministic loser (lexicographically larger hwid) bumps its
+// static overlay addresses (easytier itself has NO conflict handling for
+// static ipv4 — its auto-move loop is dhcp-only, verified upstream): the
+// deterministic loser (lexicographically larger hwid) bumps its
 // OverlayIPAttempt so the next derivation lands elsewhere; the winner stays
-// put. Both sides run the same rule, so exactly one moves. Peers colliding
-// with each other (not with us) resolve it between themselves.
-func meshResolveOverlayIPCollision(c *config.Config, rep *MeshSyncReport) bool {
+// put. Both sides run the same rule, so exactly one moves.
+//
+// Detection uses TWO channels because the obvious one is blind: a squatter
+// on OUR address can never be probed (its IP == our local IP, the probe
+// hairpins to ourselves and is skipped), so in a two-node collision no peer
+// record ever forms. The overlay route table still lists the peer, and its
+// hostname IS its hwid — that's the collision signal. Persisted records
+// cover the remaining case (peer recorded first, we re-derived onto it).
+func meshResolveOverlayIPCollision(c *config.Config, rep *MeshSyncReport, overlay []mesh.OverlayPeer) bool {
 	if c.Mesh.OverlaySubnet == "" {
 		return false
 	}
@@ -188,16 +195,24 @@ func meshResolveOverlayIPCollision(c *config.Config, rep *MeshSyncReport) bool {
 		return false
 	}
 	myIP := strings.SplitN(mine, "/", 2)[0]
+	squatters := map[string]bool{}
 	for _, p := range c.MeshPeers {
-		if p.HWID == c.Mesh.HWID || p.OverlayIP != myIP {
-			continue
+		if p.HWID != c.Mesh.HWID && p.OverlayIP == myIP {
+			squatters[p.HWID] = true
 		}
-		if c.Mesh.HWID > p.HWID {
+	}
+	for _, op := range overlay {
+		if op.IPv4 == myIP && op.Hostname != c.Mesh.HWID && meshHWIDRE.MatchString(op.Hostname) {
+			squatters[op.Hostname] = true
+		}
+	}
+	for hwid := range squatters {
+		if c.Mesh.HWID > hwid {
 			c.Mesh.OverlayIPAttempt++
-			rep.Errors = append(rep.Errors, fmt.Sprintf("overlay ip %s collides with peer %s — rederiving (attempt %d)", myIP, p.HWID, c.Mesh.OverlayIPAttempt))
+			rep.Errors = append(rep.Errors, fmt.Sprintf("overlay ip %s collides with peer %s — rederiving (attempt %d)", myIP, hwid, c.Mesh.OverlayIPAttempt))
 			return true
 		}
-		rep.Errors = append(rep.Errors, fmt.Sprintf("overlay ip %s collides with peer %s — peer re-derives (its hwid sorts higher)", myIP, p.HWID))
+		rep.Errors = append(rep.Errors, fmt.Sprintf("overlay ip %s collides with peer %s — peer re-derives (its hwid sorts higher)", myIP, hwid))
 	}
 	return false
 }
