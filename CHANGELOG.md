@@ -4,6 +4,62 @@ All notable changes to PureWRT are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are the `purewrt`
 package version.
 
+## [0.5.0] - 2026-07-13
+
+### Added
+- **Friend Mesh**: friend-to-friend failover over an EasyTier P2P overlay.
+  When your own proxies get blocked, selected traffic fails over to a
+  friend's working proxies — always through THEIR proxies, never their home
+  IP (structural `MeshExit` invariant, fw4 zone with input/forward REJECT).
+  Pairing is one copy-pasted `PWMESH1-` sync-code (the only stored secret;
+  network identity, PSK and per-router shadowsocks credentials all derive
+  from it + the immutable hardware id). NAT hole-punching with a
+  DPI-resistant wss rendezvous, automatic peer discovery (`mesh-sync` cron),
+  dead-peer GC, secret rotation (`mesh-rotate`), diagnostics (rendezvous
+  dial status + STUN NAT classification). LuCI "Friend Mesh" page with
+  standard Save & Apply flow and live-updating status/peer table. `easytier`
+  ships as an optional companion package (runtime-detected, like zapret).
+- **Exit controls**: `exit_enabled` opt-out (stay in the mesh, stop being an
+  exit), `exit_filter`/`exit_exclude_filter` mihomo regexes scoping which
+  provider nodes friends may use (live pool preview in LuCI), and
+  `exit_max_mbit` — a per-direction nftables policer on friend traffic
+  (verified live: TCP settles at the cap, drop counters visible).
+- **Friends group**: friend exits aggregate into one `load-balance` group
+  with sticky sessions; section groups become `fallback: [<own pool>,
+  Friends]` — traffic shifts only when every own node is dead, spreads
+  across friends when it does. Friend exits are also NetCheckProbe members
+  (pin one friend for throughput tests).
+- Friend Mesh panel on the Logs page (easytier daemon stream, group secret
+  stripped); easytier console log level follows `log_level=debug` for
+  debugging sessions.
+- Peer table "Exit health" column: mihomo's real health-check through each
+  friend's exit (up / latency / dead), distinct from the overlay Link
+  status — answers "would failover actually carry traffic right now".
+- CI: easytier joins the build matrix, the release dep-gate, and the weekly
+  auto-bump (per-arch sha256 pins recomputed from upstream release assets).
+
+### Changed
+- **BREAKING (mesh CLI)**: `mesh-peer-set` / `mesh-peer-remove` address
+  peers by immutable hardware id, not display name (`mesh-status` lists
+  ids). Machine paths (mihomo `friend_<hwid>` proxies, easytier hostname)
+  all key on the hwid; `node_name` is a cosmetic label.
+- Overlay subnet is `10.126.0.0/16` (~65k members): the mesh creator seeds
+  it with a static address, everyone else stays on easytier DHCP and
+  inherits it. easytier's machine-id is pinned to the hwid so restarts keep
+  their overlay IP; peer-record churn from daemon restarts is gone
+  (dedicated `easytier` fingerprint group + procd trigger fix).
+- easytier's own WAN transport is exempt from the router-output proxy (the
+  mihomo cgroup exemption's twin), and overlay reachability is
+  double-gated: fw4 zone + easytier tcp/udp port whitelists.
+
+### Fixed
+- `mihomo.yaml`/`purewrt.nft` regeneration on mesh config changes
+  (fingerprint groups for mesh, nft-shaping mesh fields, easytier runtime);
+  cgroup dirs pre-created so `socket cgroupv2` exemption rules load before
+  the daemons' first start.
+- LuCI mesh page no longer rebuilds the whole body every 10 s (form inputs,
+  open diagnostics and confirm buttons survive polling).
+
 ## [0.4.0] - 2026-07-12
 
 ### Changed
