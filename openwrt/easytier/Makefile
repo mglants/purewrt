@@ -14,26 +14,18 @@ PKG_RELEASE:=1
 # OpenWrt $(ARCH) → upstream release asset arch. Mirrors upstream
 # easytier-noweb: all 32-bit arm subtargets use the lowest-common 'arm'
 # build; per-CPU tuning isn't worth per-subtarget hash bookkeeping.
-ifeq ($(ARCH),x86_64)
-  ET_ARCH:=x86_64
-  ET_HASH:=61b659eaedba658fa66fe47d17e1426cdd77e5d02fa15fed447bb4357c09dfd6
-endif
-ifeq ($(ARCH),aarch64)
-  ET_ARCH:=aarch64
-  ET_HASH:=f533ec25a7ea714e09f645615012200278058525795cc3bb690ff011aec1a70f
-endif
-ifeq ($(ARCH),arm)
-  ET_ARCH:=arm
-  ET_HASH:=6d2bd44507d7183a4fa9857ced8f89cb4eddc99cdfc8f8ddef5cc78f52caf2fd
-endif
-ifeq ($(ARCH),mips)
-  ET_ARCH:=mips
-  ET_HASH:=3b4d084aa922a4b23f5d0167b9bb4966c1593f5184061f7ff075132a2207a260
-endif
-ifeq ($(ARCH),mipsel)
-  ET_ARCH:=mipsel
-  ET_HASH:=7c93bcc9e9276f102b5299b0773941db7fd1d99ad04bac42b479a0d979ef5220
-endif
+#
+# One ET_HASH_<arch> line per asset, selected via ET_HASH_$(ET_ARCH):
+# the update-deps easytier job rewrites these lines with sed when bumping
+# PKG_VERSION — keep the `ET_HASH_<arch>:=<sha256>` shape machine-editable.
+ET_HASH_x86_64:=61b659eaedba658fa66fe47d17e1426cdd77e5d02fa15fed447bb4357c09dfd6
+ET_HASH_aarch64:=f533ec25a7ea714e09f645615012200278058525795cc3bb690ff011aec1a70f
+ET_HASH_arm:=6d2bd44507d7183a4fa9857ced8f89cb4eddc99cdfc8f8ddef5cc78f52caf2fd
+ET_HASH_mips:=3b4d084aa922a4b23f5d0167b9bb4966c1593f5184061f7ff075132a2207a260
+ET_HASH_mipsel:=7c93bcc9e9276f102b5299b0773941db7fd1d99ad04bac42b479a0d979ef5220
+
+ET_ARCH:=$(ARCH)
+ET_HASH:=$(ET_HASH_$(ET_ARCH))
 
 PKG_SOURCE:=easytier-linux-$(ET_ARCH)-v$(PKG_VERSION).zip
 PKG_SOURCE_URL:=https://github.com/EasyTier/EasyTier/releases/download/v$(PKG_VERSION)/

@@ -184,3 +184,68 @@ jobs:
             If a future probe-cli raises its Go floor past what 25.12 ships, the build CI for this PR will fail — that's the signal to hold the bump.
 
             Merge once the package build CI is green.
+
+  easytier:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Resolve latest EasyTier release tag
+        id: up
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(gh api repos/EasyTier/EasyTier/releases/latest --jq .tag_name 2>/dev/null || true)
+          if [ -z "$tag" ] || [ "$tag" = "null" ]; then
+            tag=$(gh api repos/EasyTier/EasyTier/tags --jq '.[0].name')
+          fi
+          [ -n "$tag" ] || { echo "could not resolve upstream tag"; exit 1; }
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+          echo "ver=${tag#v}" >>"$GITHUB_OUTPUT"
+      - name: Bump Makefile + recompute per-arch hashes
+        id: bump
+        run: |
+          # easytier packages prebuilt upstream release zips with one pinned
+          # sha256 per asset arch (ET_HASH_<arch> lines) — no SDK repack, so
+          # the hashes are plain sha256sums of the downloaded assets and are
+          # computed right here (a failed download fails the bump: unlike
+          # PKG_MIRROR_HASH there is no git-SHA integrity anchor behind a
+          # `skip` for prebuilt binaries).
+          set -e
+          mk=openwrt/easytier/Makefile
+          ver="${{ steps.up.outputs.ver }}"
+          cur=$(sed -nE 's/^PKG_VERSION:=//p' "$mk")
+          if [ "$cur" = "$ver" ]; then
+            echo "changed=false" >>"$GITHUB_OUTPUT"; echo "already up to date ($cur)"; exit 0
+          fi
+          base="https://github.com/EasyTier/EasyTier/releases/download/v${ver}"
+          for arch in x86_64 aarch64 arm mips mipsel; do
+            url="${base}/easytier-linux-${arch}-v${ver}.zip"
+            echo "hashing ${url}"
+            hash=$(curl -fsSL "$url" | sha256sum | cut -d' ' -f1)
+            [ -n "$hash" ] || { echo "empty hash for ${arch}"; exit 1; }
+            sed -i -E "s|^ET_HASH_${arch}:=.*|ET_HASH_${arch}:=${hash}|" "$mk"
+          done
+          sed -i -E "s|^PKG_VERSION:=.*|PKG_VERSION:=${ver}|" "$mk"
+          echo "changed=true" >>"$GITHUB_OUTPUT"
+          echo "old=$cur" >>"$GITHUB_OUTPUT"
+      - name: Open PR
+        if: steps.bump.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v8
+        with:
+          branch: deps/easytier
+          commit-message: "deps(easytier): bump to ${{ steps.up.outputs.tag }}"
+          title: "deps(easytier): bump to ${{ steps.up.outputs.tag }}"
+          labels: dependencies
+          body: |
+            Auto-bump easytier to upstream `${{ steps.up.outputs.tag }}`.
+
+            - PKG_VERSION: `${{ steps.bump.outputs.old }}` → `${{ steps.up.outputs.ver }}`
+            - ET_HASH_<arch> pins recomputed from the upstream release assets
+              (sha256 of each prebuilt musl zip — x86_64, aarch64, arm, mips, mipsel).
+
+            Review upstream release notes before merging — in particular the
+            kcp-proxy TCP-hijack RST bug (purewrt pins enable_kcp_proxy=false
+            until fixed) and any DHCP/conflict allocator changes the friend-mesh
+            relies on.
+
+            Merge once the package build CI is green.

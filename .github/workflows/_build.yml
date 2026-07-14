@@ -20,7 +20,7 @@ on:
       packages:
         description: Space-separated feed packages to build.
         type: string
-        default: mihomo-alpha zapret purewrt luci-app-purewrt
+        default: mihomo-alpha zapret easytier purewrt luci-app-purewrt
       base-ref:
         description: >-
           Git ref to build the feed from (e.g. the last v* release tag). When
