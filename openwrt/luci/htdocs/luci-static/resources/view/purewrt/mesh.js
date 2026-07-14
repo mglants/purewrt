@@ -133,10 +133,13 @@ return view.extend({
     var previewBox = E('div');
     var peerBox = E('div');
     self.updateStatusLine(statusLine, st);
-    self.updatePeerBox(peerBox, st);
+    self.updatePeerBox(peerBox, st, null);
     previewBox.appendChild(E('em', {}, _('Loading exit pool…')));
     callProxyGroups()
-      .then(function(g) { self.updatePreview(previewBox, g, st); })
+      .then(function(g) {
+        self.updatePreview(previewBox, g, st);
+        self.updatePeerBox(peerBox, st, g);
+      })
       .catch(function() { self.updatePreview(previewBox, null, st); });
 
     poll.add(function() {
@@ -147,7 +150,7 @@ return view.extend({
         var cur = r[0];
         if (cur && cur.active) {
           self.updateStatusLine(statusLine, cur);
-          self.updatePeerBox(peerBox, cur);
+          self.updatePeerBox(peerBox, cur, r[1]);
         }
         self.updatePreview(previewBox, r[1], cur || st);
       });
@@ -237,9 +240,25 @@ return view.extend({
       _('%d node(s) friends can exit through — reflects the applied config (edits show after Save & Apply).').format(g.members.length)));
   },
 
-  updatePeerBox: function(box, st) {
+  updatePeerBox: function(box, st, groups) {
     var self = this;
     var peers = st.peers || [];
+    // Exit health = mihomo's view of the friend_<hwid> proxy inside the
+    // Friends group (a real health-check THROUGH the friend's ss listener).
+    // Distinct from the Link column: the overlay can be a perfect p2p link
+    // while the friend's listener is down, creds mismatch, or its MeshExit
+    // has no healthy upstream — this is the "would failover actually carry
+    // traffic right now" signal.
+    var friendsGroup = (groups || []).filter(function(g) { return g && g.name === 'Friends'; })[0];
+    var exitHealth = function(p) {
+      if (!friendsGroup || !friendsGroup.members) return '-';
+      var tail = (p.hwid || '').replace(/^purewrt-/, '');
+      var mem = friendsGroup.members.filter(function(m) { return m.name === 'friend_' + tail; })[0];
+      if (!mem) return '-';
+      if (!mem.alive && mem.delay === 0) return fmt.pill(_('dead'), 'danger');
+      if (mem.delay > 0) return fmt.pill(mem.delay + ' ms', 'ok');
+      return fmt.pill(_('up'), 'ok');
+    };
     var table = E('table', { 'class': 'table cbi-section-table' }, [
       E('tr', { 'class': 'tr table-titles' }, [
         E('th', { 'class': 'th' }, _('Friend')),
@@ -247,12 +266,13 @@ return view.extend({
         E('th', { 'class': 'th' }, _('Link')),
         E('th', { 'class': 'th' }, _('Latency')),
         E('th', { 'class': 'th' }, _('Offers exit')),
+        E('th', { 'class': 'th' }, _('Exit health')),
         E('th', { 'class': 'th' }, _('Use exit')),
         E('th', { 'class': 'th' }, '')
       ])
     ]);
     if (!peers.length) {
-      table.appendChild(E('tr', { 'class': 'tr' }, E('td', { 'class': 'td', 'colspan': 7 },
+      table.appendChild(E('tr', { 'class': 'tr' }, E('td', { 'class': 'td', 'colspan': 8 },
         E('em', {}, _('No friends discovered yet. Have a friend join with your sync-code, then click "Sync now".')))));
     }
     peers.forEach(function(p) {
@@ -300,6 +320,7 @@ return view.extend({
         E('td', { 'class': 'td' }, link),
         E('td', { 'class': 'td' }, p.live && p.latency_ms ? (Math.round(p.latency_ms) + ' ms') : '-'),
         E('td', { 'class': 'td' }, p.exit_offered ? _('yes') : _('no')),
+        E('td', { 'class': 'td' }, exitHealth(p)),
         E('td', { 'class': 'td' }, en),
         E('td', { 'class': 'td' }, forget)
       ]));
