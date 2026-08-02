@@ -121,6 +121,9 @@ func TestDownloadFailsOverToMirror(t *testing.T) {
 	if string(res.Data) != "from-mirror" {
 		t.Fatalf("data = %q, want from-mirror", res.Data)
 	}
+	if !res.UsedMirror {
+		t.Fatalf("mirror success was not identified: %+v", res)
+	}
 }
 
 func TestDownloadFallbackProxyAfterDirectFails(t *testing.T) {
@@ -168,6 +171,9 @@ func TestDownloadFallbackProxyAfterDirectFails(t *testing.T) {
 	}
 	if string(res.Data) != "via-proxy" {
 		t.Fatalf("data = %q, want via-proxy", res.Data)
+	}
+	if !res.UsedFallbackProxy {
+		t.Fatalf("fallback proxy success was not identified: %+v", res)
 	}
 }
 

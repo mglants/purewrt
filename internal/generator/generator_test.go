@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/purewrt/purewrt/internal/config"
+	"github.com/purewrt/purewrt/internal/metrics"
 )
 
 func TestNFTPreservesMarks(t *testing.T) {
@@ -686,6 +687,46 @@ func TestWriteAllResultForceMarksAllGroups(t *testing.T) {
 	}
 }
 
+func TestGenerationMetricsCoverCompleteCallAndFractionalStages(t *testing.T) {
+	metrics.Default.ResetObservations()
+	defer metrics.Default.ResetObservations()
+
+	dir := t.TempDir()
+	c := config.Default()
+	c.Settings.RuntimeDir = filepath.Join(dir, "runtime")
+	c.Settings.GeneratedDir = filepath.Join(dir, "generated")
+	c.Settings.MihomoConfig = filepath.Join(dir, "generated", "mihomo.yaml")
+	c.Settings.DNSMasqIncludeDir = filepath.Join(dir, "dnsmasq.d")
+	c.DNS.HijackLANDNS = false
+	c.Settings.LANSourceZones = nil
+	c.Mwan3.IntegratedRules = false
+	paths := DefaultGeneratedPaths(c)
+
+	if _, err := WriteAllToResult(c, paths, WriteOptions{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := WriteAllToResult(c, paths, WriteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	out := metrics.Default.Render()
+	for _, want := range []string{
+		`purewrt_generate_duration_seconds_count{result="generated"} 1`,
+		`purewrt_generate_duration_seconds_count{result="cache_hit"} 1`,
+		`purewrt_generate_stage_duration_seconds_count{stage="rule_outputs"} 1`,
+		`purewrt_generate_stage_duration_seconds_count{stage="nft"} 1`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("generation metric missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, `purewrt_generate_stage_duration_seconds_sum{stage="nft"} 0`+"\n") {
+		t.Fatalf("sub-millisecond nft stage was truncated to zero:\n%s", out)
+	}
+	if strings.Contains(out, "purewrt_generate_duration_ms") {
+		t.Fatalf("obsolete millisecond family still rendered:\n%s", out)
+	}
+}
+
 func TestMihomoDashboardEnabled(t *testing.T) {
 	c := config.Default()
 	c.Settings.DashboardEnabled = true
@@ -813,6 +854,9 @@ func TestMihomoGeodataDisabledByDefault(t *testing.T) {
 	if !strings.Contains(mihomo, "geodata-mode: false\ngeo-auto-update: false") {
 		t.Fatalf("default Mihomo config should disable geodata:\n%s", mihomo)
 	}
+	if !strings.Contains(mihomo, "fallback-filter:\n    geoip: false") {
+		t.Fatalf("default DNS fallback must not trigger Mihomo's implicit GeoIP download:\n%s", mihomo)
+	}
 }
 
 func TestMihomoGeodataCanBeEnabled(t *testing.T) {
@@ -824,6 +868,9 @@ func TestMihomoGeodataCanBeEnabled(t *testing.T) {
 	}
 	if strings.Contains(mihomo, "geo-auto-update: false") {
 		t.Fatalf("enabled Mihomo geodata should not force geo-auto-update off:\n%s", mihomo)
+	}
+	if strings.Contains(mihomo, "fallback-filter:\n    geoip: false") {
+		t.Fatalf("enabled Mihomo geodata should retain its GeoIP fallback filter:\n%s", mihomo)
 	}
 }
 

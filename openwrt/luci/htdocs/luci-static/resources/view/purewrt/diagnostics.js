@@ -168,7 +168,8 @@ function netCheckMark(s) { return ({ ok: '✓', fail: '✗', warn: '!', na: '·'
 
 function renderNetCheck(r) {
   if (!r) return E('p', {}, _('No result.'));
-  var color = r.verdict === 'ok' ? '#5cb85c' : (r.verdict === 'degraded' ? '#f0ad4e' : '#d9534f');
+  var color = r.verdict === 'ok' ? '#5cb85c' :
+    (r.verdict === 'degraded' ? '#f0ad4e' : (r.verdict === 'skipped' ? '#5bc0de' : '#d9534f'));
   var children = [
     E('p', { 'style': 'font-weight:bold;color:' + color }, _('Mode %s — verdict: %s').format(r.mode || '?', (r.verdict || '?').toUpperCase()))
   ];

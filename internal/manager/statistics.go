@@ -2,7 +2,6 @@ package manager
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"os/exec"
 	"sort"
@@ -516,7 +515,7 @@ func countSetElements(path string) int {
 }
 
 func serviceStatuses() []ServiceStatus {
-	return []ServiceStatus{serviceStatusFor("mihomo"), serviceStatusFor("purewrt-api")}
+	return []ServiceStatus{serviceStatusFor("mihomo"), serviceStatusFor("dnsmasq"), serviceStatusFor("purewrt-api")}
 }
 
 // serviceStatusFor probes /proc/<pid>/stat to derive the wall-clock uptime of
@@ -532,12 +531,16 @@ func serviceStatuses() []ServiceStatus {
 // mihomoPID() walks /proc and confirms via /proc/<pid>/exe basename,
 // which holds the untruncated path.
 func serviceStatusFor(name string) ServiceStatus {
-	s := ServiceStatus{Name: name}
+	return serviceStatusForProcess(name, name)
+}
+
+func serviceStatusForProcess(serviceName, processName string) ServiceStatus {
+	s := ServiceStatus{Name: serviceName}
 	var pid int
-	if name == "mihomo" {
+	if processName == "mihomo" {
 		pid = mihomoPID()
 	} else {
-		out, err := exec.Command("pidof", name).Output()
+		out, err := exec.Command("pidof", processName).Output()
 		if err != nil {
 			return s
 		}
@@ -554,51 +557,17 @@ func serviceStatusFor(name string) ServiceStatus {
 	if pid <= 0 {
 		return s
 	}
+	return serviceStatusForPID(serviceName, pid)
+}
+
+func serviceStatusForPID(serviceName string, pid int) ServiceStatus {
+	s := ServiceStatus{Name: serviceName, PID: pid}
+	started, ok := procStartTime(pid)
+	if !ok {
+		return s
+	}
 	s.PID = pid
-	statBytes, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
-	if err != nil {
-		return s
-	}
-	// /proc/<pid>/stat: pid (comm) state ... — the comm field is in parens
-	// and may contain spaces, so split on the last ")".
-	line := string(statBytes)
-	closeParen := strings.LastIndex(line, ")")
-	if closeParen < 0 {
-		return s
-	}
-	rest := strings.Fields(line[closeParen+1:])
-	// starttime is field 22 of /proc/<pid>/stat. We've already consumed pid
-	// (1) and comm (2), so it's index 19 in `rest`.
-	if len(rest) < 20 {
-		return s
-	}
-	startTicks, err := strconv.ParseInt(rest[19], 10, 64)
-	if err != nil {
-		return s
-	}
-	uptimeBytes, err := os.ReadFile("/proc/uptime")
-	if err != nil {
-		return s
-	}
-	uptimeFields := strings.Fields(string(uptimeBytes))
-	if len(uptimeFields) == 0 {
-		return s
-	}
-	sysUptimeF, err := strconv.ParseFloat(uptimeFields[0], 64)
-	if err != nil {
-		return s
-	}
-	sysUptime := int64(sysUptimeF)
-	// HZ=100 is the OpenWrt default; if a custom kernel changes CONFIG_HZ
-	// the uptime will be off by a constant factor (not load-bearing).
-	const HZ int64 = 100
-	procStartSec := startTicks / HZ
-	procUptime := sysUptime - procStartSec
-	if procUptime < 0 {
-		procUptime = 0
-	}
-	bootTime := time.Now().Unix() - sysUptime
-	s.StartedUnix = bootTime + procStartSec
-	s.UptimeSec = procUptime
+	s.StartedUnix = started.Unix()
+	s.UptimeSec = max(0, int64(time.Since(started).Seconds()))
 	return s
 }

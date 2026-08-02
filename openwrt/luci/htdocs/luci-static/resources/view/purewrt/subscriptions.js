@@ -149,7 +149,10 @@ function updateSubscriptions() {
 var expiryByName = {};
 
 function subscriptionSummary(sid) {
-  var name = uci.get('purewrt', sid, 'name') || sid;
+  // Backend config canonicalizes prefixed UCI ids (sub_example) to the
+  // subscription name (example). Match the expiry/quota RPC by that same
+  // display name; using the raw sid leaves every prefixed row at "-".
+  var name = naming.displayName(sid, 'subscription') || sid;
   var ent = expiryByName[name];
   return [
     sectionTitle(sid),

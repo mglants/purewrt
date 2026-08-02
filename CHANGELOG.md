@@ -4,6 +4,61 @@ All notable changes to PureWRT are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are the `purewrt`
 package version.
 
+## [0.6.0] - 2026-08-03
+
+### Added
+- **Adaptive proxy guard.** Optional, bounded real-transfer and latency probes
+  detect throttled or unstable mihomo members, quarantine them in runtime
+  state without rewriting UCI or user filters, and automatically retest them
+  for recovery. Hidden candidate groups keep every member measurable, while a
+  configurable minimum-member floor retains the best last resorts instead of
+  falling back to `DIRECT`. Includes CLI, rpcd, LuCI status/run/reset controls,
+  cron scheduling, hot reload after validation, and a shared probe lock with
+  net-check so concurrent bandwidth tests cannot cause false quarantines.
+- **Operational metrics overhaul.** `/metrics` now reports live service health
+  and start times (including zapret instances and Friend Mesh), mihomo
+  controller reachability, Friend Mesh link/latency/exit health, subscription
+  quota and expiry, provider freshness and entry counts, geo-data freshness,
+  nftset cardinality, package upgrade availability, and proxy-guard node/group
+  state. Grafana dashboard panels and Prometheus alert examples cover the new
+  signals.
+- Apply and update latest-attempt/latest-success timestamps, success state,
+  and duration metrics, plus net-check layer/node status and resolver probe
+  status gauges.
+- Mihomo status detects when the running process still references a replaced,
+  deleted binary and exposes the condition in LuCI.
+
+### Changed
+- Metrics emitted by short-lived CLI processes are merged into a locked
+  cross-process runtime state for the API to serve. Durations use seconds and
+  include complete generation stages; time-varying values are rendered from
+  their authoritative live sources at scrape time.
+- Product counters were replaced by latest-state gauges and duration
+  histograms. Package upgrade metrics now use only the stable `package` label
+  and expose availability as a boolean, avoiding version-label cardinality.
+- Blocking diagnostics accept host, host:port, and HTTP(S) URL targets. Plain
+  HTTP probes safely follow only same-site HTTPS upgrades, preserve request
+  paths, report off-site redirects, and serialize latency in actual
+  milliseconds.
+- Client Traffic nftset badges now mirror routing-section priority: the
+  effective first match is highlighted and lower-priority overlapping matches
+  are shown as outranked.
+- Provider metadata records every attempted update, fallback/mirror usage,
+  errors, freshness, entry counts, and `subscription-userinfo` quota fields in
+  one canonical location.
+
+### Fixed
+- Disabling mihomo geodata now also disables the DNS fallback GeoIP filter, so
+  startup does not attempt an implicit MMDB download before router DNS is
+  available.
+- LuCI subscription quota lookup now resolves type-prefixed `sub_` section ids,
+  allowing header quota and expiry values to refresh from the update button.
+- The mihomo package restarts a running daemon after replacing its binary, so
+  the installed and active versions cannot silently diverge.
+- Slow dnsmasq restarts use a generous timeout and do not trigger destructive
+  apply/rollback retry loops merely because the validated daemon restart is
+  still in progress; genuine non-zero failures still roll back.
+
 ## [0.5.0] - 2026-07-13
 
 ### Added

@@ -1,57 +1,43 @@
 package metrics
 
-// Process-wide metric vars exposed by PureWRT. Defined here so call sites
-// can `metrics.ApplyTotal.WithLabelValues("ok")` without juggling registration
-// order. Adding a new metric: declare it in this file with a clear HELP
-// string, then increment / Set from the relevant package.
+// Process-wide metric vars exposed by PureWRT. Product metrics intentionally
+// use gauges for current/latest state and histograms for duration
+// distributions; cumulative event counters are not exported.
 
-// DurationBucketsMS is the shared latency bucket layout (milliseconds).
-var DurationBucketsMS = []float64{10, 50, 100, 250, 500, 1000, 5000}
+// DurationBucketsSeconds preserves sub-millisecond work while retaining
+// enough range for full generation of large provider sets on small routers.
+var DurationBucketsSeconds = []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30}
+
+// OperationDurationBucketsSeconds covers slower end-to-end router operations
+// such as apply while retaining useful resolution for quick no-op runs.
+var OperationDurationBucketsSeconds = []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 180}
 
 var (
-	// ApplyTotal — count of `purewrt apply` invocations, labelled by outcome
-	// ("ok" | "rollback" | "error"). Reading: success rate of the apply
-	// pipeline, useful for alerting on a sudden flood of rollbacks.
-	ApplyTotal = NewCounter("purewrt_apply_total", "Apply attempts by outcome", "result")
+	// ResolverProbeSuccess is the latest probe state for each configured
+	// bootstrap resolver. Old endpoint labels are reconciled on every probe.
+	ResolverProbeSuccess = NewGauge("purewrt_resolver_probe_success", "Whether the latest bootstrap resolver probe succeeded (1=yes, 0=no)", "endpoint")
 
-	// ProviderDownloadTotal — count of provider/subscription fetches by
-	// outcome ("ok" | "not_modified" | "error" | "mirror_failover").
-	// Tracks transport health: spike of "error" means the bootstrap path
-	// is degraded.
-	ProviderDownloadTotal = NewCounter("purewrt_provider_download_total", "Provider download outcomes", "result")
+	// GenerateDurationSeconds covers the complete WriteAllToResult call,
+	// including fingerprint/cache work. result is generated|cache_hit|error.
+	GenerateDurationSeconds = NewHistogram("purewrt_generate_duration_seconds", "Complete generator duration in seconds by result", DurationBucketsSeconds, "result")
 
-	// ResolversHealth — 1 if the latest DoH/DoQ/DoT probe to the labelled
-	// endpoint succeeded, 0 otherwise. Set by Manager.ResolversProbe at
-	// each apply (when bootstrap_health_gate=1) and by manual probes.
-	// (Per-endpoint gauge would need labels; we expose it as a counter
-	// of probe outcomes instead — same alerting signal.)
-	ResolversProbeTotal = NewCounter("purewrt_resolvers_probe_total", "DoH resolver probe outcomes", "endpoint", "result")
+	// GenerateStageDurationSeconds measures the complete executed stage,
+	// including computation/streaming and its output write. stage is one of
+	// rule_outputs|mihomo|dnsmasq|nft|nftsets|firewall|mwan3|zapret|easytier.
+	GenerateStageDurationSeconds = NewHistogram("purewrt_generate_stage_duration_seconds", "Generator stage duration in seconds", DurationBucketsSeconds, "stage")
 
-	// GenerateDurationMS — generator latency histogram, labelled by
-	// generation group (mihomo, openwrt_bundle, firewall, mwan3, zapret).
-	// PromQL: histogram_quantile(0.95, rate(purewrt_generate_duration_ms_bucket[1h])).
-	GenerateDurationMS = NewHistogram("purewrt_generate_duration_ms", "Generator duration in ms by group", DurationBucketsMS, "group")
+	// ApplyDurationSeconds — end-to-end `purewrt apply` latency histogram.
+	ApplyDurationSeconds = NewHistogram("purewrt_apply_duration_seconds", "Apply pipeline duration in seconds", OperationDurationBucketsSeconds)
+	ApplyLastAttempt     = NewGauge("purewrt_apply_last_attempt_timestamp_seconds", "Unix timestamp of the last apply attempt")
+	ApplyLastSuccess     = NewGauge("purewrt_apply_last_success_timestamp_seconds", "Unix timestamp of the last successful apply")
+	ApplyLastRunSuccess  = NewGauge("purewrt_apply_last_run_success", "Whether the last apply attempt succeeded (1=yes, 0=no)")
 
-	// ApplyDurationMS — end-to-end `purewrt apply` latency histogram.
-	ApplyDurationMS = NewHistogram("purewrt_apply_duration_ms", "Apply pipeline duration in ms", DurationBucketsMS)
-
-	// SubscriptionSecondsToExpiry — time until each subscription expires.
-	// Single Gauge instance per subscription (we cheat label-wise by
-	// updating one shared gauge; see SubscriptionExpiry helpers below for
-	// the labelled variant).
-	SubscriptionMinSecondsToExpiry = NewGauge("purewrt_subscription_min_seconds_to_expiry", "Minimum seconds-to-expiry across all enabled subscriptions; negative = expired")
-
-	// GeoDataAgeSeconds — age of the most recently refreshed geoip.dat /
-	// geosite.dat file. Cron-driven update; alerting threshold ~7 days.
-	GeoDataAgeSeconds = NewGauge("purewrt_geoip_data_age_seconds", "Age of the newest geo data file on disk")
-
-	// NFTSetCardinality — how many entries each section's nftset holds.
-	// Surfaces "dnsmasq stopped populating set" outages quickly.
-	NFTSetCardinality = NewCounter("purewrt_nftset_cardinality", "Element count per section nftset (counter; reset on regenerate)", "section", "family")
-
-	// ZapretStrategiesActive — count of enabled zapret_strategy sections.
-	// One-shot gauge; set on apply.
-	ZapretStrategiesActive = NewGauge("purewrt_zapret_strategies_active", "Number of enabled zapret strategies in the compiled NFQWS2_OPT")
+	// Latest update-job state spans the short-lived CLI processes that perform
+	// subscription/provider, geodata, mihomo, and mesh maintenance.
+	UpdateLastAttempt     = NewGauge("purewrt_update_last_attempt_timestamp_seconds", "Unix timestamp of the latest update job attempt", "job")
+	UpdateLastSuccess     = NewGauge("purewrt_update_last_success_timestamp_seconds", "Unix timestamp of the latest successful update job run", "job")
+	UpdateLastRunSuccess  = NewGauge("purewrt_update_last_run_success", "Whether the latest update job run succeeded (1=yes, 0=no)", "job")
+	UpdateLastRunDuration = NewGauge("purewrt_update_last_run_duration_seconds", "Duration of the latest update job run in seconds", "job")
 
 	// --- net-check (set by Manager.NetCheck on each interactive/cron run) ---
 
@@ -71,16 +57,17 @@ var (
 
 	// NetCheckLastRun — unix seconds of the last net-check run; lets a scraper
 	// alert on staleness (cron stopped firing).
-	NetCheckLastRun = NewGauge("purewrt_netcheck_last_run_timestamp", "Unix timestamp of the last net-check run")
+	NetCheckLastRun = NewGauge("purewrt_netcheck_last_run_timestamp_seconds", "Unix timestamp of the last net-check run")
 
-	// NetCheckLayerTotal — per-layer pass/fail counts over time
-	// (layer="mihomo|download|upload|dns|routing|zapret|direct",
-	// result="ok|fail|na"). Mirrors ResolversProbeTotal's shape.
-	NetCheckLayerTotal = NewCounter("purewrt_netcheck_layer_total", "Net-check layer outcomes by layer", "layer", "result")
+	// NetCheckLayerStatus exposes exactly one current status sample per layer.
+	// NetCheckNodeStatus does the same for the latest --per-node run.
+	NetCheckLayerStatus = NewGauge("purewrt_netcheck_layer_status", "Latest net-check layer status (the current layer/status pair has value 1)", "layer", "status")
+	NetCheckNodeStatus  = NewGauge("purewrt_netcheck_node_status", "Latest per-node net-check status (the current node/status pair has value 1)", "node", "status")
 
-	// NetCheckNodeTotal — per-node per-run throughput verdict from --per-node
-	// runs (node=slugified node name, result="ok|throttled|fail"). High
-	// cardinality is bounded by the node count; label is slugified (emoji/
-	// spaces stripped) to stay scrape-safe.
-	NetCheckNodeTotal = NewCounter("purewrt_netcheck_node_total", "Per-node net-check throughput verdicts", "node", "result")
+	// --- adaptive proxy guard latest operation state ---
+	// Membership and measurements are rendered directly from proxy-guard.json.
+	ProxyGuardLastAttempt            = NewGauge("purewrt_proxy_guard_last_attempt_timestamp_seconds", "Unix timestamp of the last proxy-guard attempt")
+	ProxyGuardLastSuccess            = NewGauge("purewrt_proxy_guard_last_success_timestamp_seconds", "Unix timestamp of the last successful proxy-guard run")
+	ProxyGuardLastRunSuccess         = NewGauge("purewrt_proxy_guard_last_run_success", "Whether the last proxy-guard attempt succeeded (1=yes, 0=no)")
+	ProxyGuardLastRunDurationSeconds = NewGauge("purewrt_proxy_guard_last_run_duration_seconds", "Duration of the last proxy-guard attempt in seconds")
 )

@@ -34,6 +34,7 @@ type MihomoStatusResult struct {
 	ExternalController string    `json:"external_controller,omitempty"`
 	MihomoBin          string    `json:"mihomo_bin,omitempty"`    // currently-configured binary path (UCI)
 	BinarySource       string    `json:"binary_source,omitempty"` // "package" | "github" — derived from MihomoBin location
+	StaleBinary        bool      `json:"stale_binary,omitempty"`  // process runs a deleted inode — upgraded on disk, restart pending
 	Error              string    `json:"error,omitempty"`         // top-level error message, e.g. when /version is unreachable
 }
 
@@ -57,6 +58,7 @@ func (m Manager) MihomoStatus() MihomoStatusResult {
 			out.StartedAt = t
 			out.UptimeSeconds = int64(time.Since(t).Seconds())
 		}
+		out.StaleBinary = mihomoBinaryStale(pid)
 	}
 	if out.Running {
 		cli := mihomoapi.Client{Base: c.Settings.ExternalController, Secret: c.Settings.Secret}
@@ -117,12 +119,32 @@ func mihomoPID() int {
 			}
 			continue
 		}
-		base := filepath.Base(exe)
-		if base == "mihomo" || strings.HasPrefix(base, "mihomo-") || strings.HasPrefix(base, "mihomo.") {
+		if mihomoExeMatches(exe) {
 			return pid
 		}
 	}
 	return 0
+}
+
+// mihomoExeMatches reports whether a /proc/<pid>/exe symlink target names a
+// mihomo binary. The kernel appends " (deleted)" to the target when the
+// inode has been unlinked — exactly the state of a still-running old
+// process after a package upgrade replaced the binary on disk. Without
+// stripping the suffix the status probe reports "not running" while the
+// old mihomo is still serving every port (found the hard way after an
+// apk upgrade of mihomo-alpha).
+func mihomoExeMatches(exe string) bool {
+	base := filepath.Base(strings.TrimSuffix(exe, " (deleted)"))
+	return base == "mihomo" || strings.HasPrefix(base, "mihomo-") || strings.HasPrefix(base, "mihomo.")
+}
+
+// mihomoBinaryStale reports whether the process is executing a deleted
+// inode — i.e. the binary on disk was replaced (upgrade) after the
+// process started, so a restart is needed to actually run the new
+// version.
+func mihomoBinaryStale(pid int) bool {
+	exe, err := os.Readlink("/proc/" + strconv.Itoa(pid) + "/exe")
+	return err == nil && strings.HasSuffix(exe, " (deleted)")
 }
 
 // procStartTime returns the time the given PID's process started, derived

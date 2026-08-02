@@ -187,10 +187,18 @@ func WriteAllToWithOptions(c config.Config, paths GeneratedPaths, opt WriteOptio
 	return err
 }
 
-func WriteAllToResult(c config.Config, paths GeneratedPaths, opt WriteOptions) (GenerationResult, error) {
+func WriteAllToResult(c config.Config, paths GeneratedPaths, opt WriteOptions) (res GenerationResult, retErr error) {
+	started := time.Now()
+	result := "generated"
+	defer func() {
+		if retErr != nil {
+			result = "error"
+		}
+		metrics.GenerateDurationSeconds.Observe(time.Since(started).Seconds(), result)
+	}()
 	log := logging.New(c.Settings.LogLevel)
 	defer log.DebugTimer("generate: WriteAllTo")()
-	res := GenerationResult{Changed: map[string]bool{}}
+	res = GenerationResult{Changed: map[string]bool{}}
 	for _, dir := range outputDirs(c, paths) {
 		if dir == "" || dir == "." {
 			continue
@@ -208,6 +216,7 @@ func WriteAllToResult(c config.Config, paths GeneratedPaths, opt WriteOptions) (
 		groups, reason := generationDirtyGroups(c, fp, checkPaths, opt.Force)
 		res.DirtyGroups, res.Reason = groups, reason
 		if !groups.Any() {
+			result = "cache_hit"
 			log.Info("generate: cache hit: %s; skipping writes", reason)
 			return res, nil
 		}
@@ -229,97 +238,108 @@ func WriteAllToResult(c config.Config, paths GeneratedPaths, opt WriteOptions) (
 	native := map[string][]string{}
 	if groups.OpenWrtBundle {
 		log.Info("generate: streaming rule outputs")
-		if err := streamRuleOutputs(c, generationSinks{dnsBySection: dnsmasqFragments, nftset: &nftsets, native: native}); err != nil {
+		t := time.Now()
+		err := streamRuleOutputs(c, generationSinks{dnsBySection: dnsmasqFragments, nftset: &nftsets, native: native})
+		metrics.GenerateStageDurationSeconds.Observe(time.Since(t).Seconds(), "rule_outputs")
+		if err != nil {
 			return res, err
 		}
 	}
 	if groups.Mihomo {
 		t := time.Now()
 		mihomoCfg := Mihomo(c)
-		if changed, err := system.WriteIfChanged(paths.MihomoConfig, mihomoCfg, 0644); err != nil {
+		changed, err := system.WriteIfChanged(paths.MihomoConfig, mihomoCfg, 0644)
+		elapsed := time.Since(t)
+		metrics.GenerateStageDurationSeconds.Observe(elapsed.Seconds(), "mihomo")
+		if err != nil {
 			return res, err
-		} else {
-			res.Changed["mihomo"] = changed
-			logWrite(log, "generate: mihomo config", paths.MihomoConfig, changed, len(mihomoCfg), time.Since(t))
-			metrics.GenerateDurationMS.Observe(float64(time.Since(t).Milliseconds()), "mihomo")
 		}
+		res.Changed["mihomo"] = changed
+		logWrite(log, "generate: mihomo config", paths.MihomoConfig, changed, len(mihomoCfg), elapsed)
 	}
 	if groups.OpenWrtBundle {
 		t := time.Now()
-		if changed, err := WriteDNSMasqFragments(c, paths, dnsmasqFragments); err != nil {
+		changed, err := WriteDNSMasqFragments(c, paths, dnsmasqFragments)
+		elapsed := time.Since(t)
+		metrics.GenerateStageDurationSeconds.Observe(elapsed.Seconds(), "dnsmasq")
+		if err != nil {
 			return res, err
-		} else {
-			res.Changed["dnsmasq"] = changed
-			log.Info("generate: dnsmasq fragments dir=%s fragments=%d changed=%v took=%v", dnsmasqFragmentDir(paths), len(dnsmasqFragments), changed, time.Since(t))
-			metrics.GenerateDurationMS.Observe(float64(time.Since(t).Milliseconds()), "dnsmasq")
 		}
+		res.Changed["dnsmasq"] = changed
+		log.Info("generate: dnsmasq fragments dir=%s fragments=%d changed=%v took=%v", dnsmasqFragmentDir(paths), len(dnsmasqFragments), changed, elapsed)
 		t = time.Now()
 		nft := NFTablesWithNative(c, native)
-		if changed, err := system.WriteIfChanged(paths.NFTFile, nft, 0644); err != nil {
+		changed, err = system.WriteIfChanged(paths.NFTFile, nft, 0644)
+		elapsed = time.Since(t)
+		metrics.GenerateStageDurationSeconds.Observe(elapsed.Seconds(), "nft")
+		if err != nil {
 			return res, err
-		} else {
-			res.Changed["nft"] = changed
-			logWrite(log, "generate: nft main", paths.NFTFile, changed, len(nft), time.Since(t))
-			metrics.GenerateDurationMS.Observe(float64(time.Since(t).Milliseconds()), "nft")
 		}
+		res.Changed["nft"] = changed
+		logWrite(log, "generate: nft main", paths.NFTFile, changed, len(nft), elapsed)
 		t = time.Now()
-		if changed, err := system.WriteIfChanged(paths.NFTSetsFile, nftsets.Bytes(), 0644); err != nil {
+		changed, err = system.WriteIfChanged(paths.NFTSetsFile, nftsets.Bytes(), 0644)
+		elapsed = time.Since(t)
+		metrics.GenerateStageDurationSeconds.Observe(elapsed.Seconds(), "nftsets")
+		if err != nil {
 			return res, err
-		} else {
-			res.Changed["nftsets"] = changed
-			logWrite(log, "generate: nft sets", paths.NFTSetsFile, changed, nftsets.Len(), time.Since(t))
-			metrics.GenerateDurationMS.Observe(float64(time.Since(t).Milliseconds()), "nftsets")
 		}
+		res.Changed["nftsets"] = changed
+		logWrite(log, "generate: nft sets", paths.NFTSetsFile, changed, nftsets.Len(), elapsed)
 	}
 	if groups.Firewall {
+		t := time.Now()
 		if data := FirewallRules(c); len(data) > 0 {
-			t := time.Now()
-			if changed, err := system.WriteIfChanged(paths.FirewallFile, data, 0600); err != nil {
+			changed, err := system.WriteIfChanged(paths.FirewallFile, data, 0600)
+			elapsed := time.Since(t)
+			metrics.GenerateStageDurationSeconds.Observe(elapsed.Seconds(), "firewall")
+			if err != nil {
 				return res, err
-			} else {
-				res.Changed["firewall"] = changed
-				logWrite(log, "generate: firewall config", paths.FirewallFile, changed, len(data), time.Since(t))
-				metrics.GenerateDurationMS.Observe(float64(time.Since(t).Milliseconds()), "firewall")
 			}
+			res.Changed["firewall"] = changed
+			logWrite(log, "generate: firewall config", paths.FirewallFile, changed, len(data), elapsed)
 		} else {
 			log.Debug("generate: firewall config skipped dns_hijack=0")
 		}
 	}
 	if groups.Mwan3 {
+		t := time.Now()
 		if data := Mwan3Rules(c); len(data) > 0 {
-			t := time.Now()
-			if changed, err := system.WriteIfChanged(paths.Mwan3File, data, 0600); err != nil {
+			changed, err := system.WriteIfChanged(paths.Mwan3File, data, 0600)
+			elapsed := time.Since(t)
+			metrics.GenerateStageDurationSeconds.Observe(elapsed.Seconds(), "mwan3")
+			if err != nil {
 				return res, err
-			} else {
-				res.Changed["mwan3"] = changed
-				logWrite(log, "generate: mwan3 config", paths.Mwan3File, changed, len(data), time.Since(t))
-				metrics.GenerateDurationMS.Observe(float64(time.Since(t).Milliseconds()), "mwan3")
 			}
+			res.Changed["mwan3"] = changed
+			logWrite(log, "generate: mwan3 config", paths.Mwan3File, changed, len(data), elapsed)
 		} else {
 			log.Debug("generate: mwan3 config skipped mode=%s", c.Mwan3.Mode)
 		}
 	}
 	if groups.Zapret {
-		zapret := ZapretEnv(c)
 		t := time.Now()
-		if changed, err := system.WriteIfChanged(paths.ZapretEnv, zapret, 0644); err != nil {
+		zapret := ZapretEnv(c)
+		changed, err := system.WriteIfChanged(paths.ZapretEnv, zapret, 0644)
+		elapsed := time.Since(t)
+		metrics.GenerateStageDurationSeconds.Observe(elapsed.Seconds(), "zapret")
+		if err != nil {
 			return res, err
-		} else {
-			res.Changed["zapret"] = changed
-			logWrite(log, "generate: zapret env", paths.ZapretEnv, changed, len(zapret), time.Since(t))
-			metrics.GenerateDurationMS.Observe(float64(time.Since(t).Milliseconds()), "zapret")
 		}
+		res.Changed["zapret"] = changed
+		logWrite(log, "generate: zapret env", paths.ZapretEnv, changed, len(zapret), elapsed)
 	}
 	if groups.Mesh {
+		t := time.Now()
 		if data := EasytierConfig(c); len(data) > 0 {
-			t := time.Now()
-			if changed, err := system.WriteIfChanged(paths.EasytierConfig, data, 0600); err != nil {
+			changed, err := system.WriteIfChanged(paths.EasytierConfig, data, 0600)
+			elapsed := time.Since(t)
+			metrics.GenerateStageDurationSeconds.Observe(elapsed.Seconds(), "easytier")
+			if err != nil {
 				return res, err
-			} else {
-				res.Changed["easytier"] = changed
-				logWrite(log, "generate: easytier config", paths.EasytierConfig, changed, len(data), time.Since(t))
-				metrics.GenerateDurationMS.Observe(float64(time.Since(t).Milliseconds()), "easytier")
 			}
+			res.Changed["easytier"] = changed
+			logWrite(log, "generate: easytier config", paths.EasytierConfig, changed, len(data), elapsed)
 		} else {
 			log.Debug("generate: easytier config skipped mesh inactive")
 		}

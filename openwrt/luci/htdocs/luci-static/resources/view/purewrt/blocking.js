@@ -8,13 +8,20 @@
 'require purewrt.styles';
 'require purewrt.format as fmt';
 
-// hostOf extracts just the FQDN from a probe target string. Targets are
-// formatted as "host:port" (with optional path), so we split on the first
-// colon and ignore everything after. Returns the raw string when no colon
-// is present (already a bare host).
+// hostOf extracts just the FQDN from a probe target string. Targets may be
+// "host", "host:port" or full http(s):// URLs (with optional path), so
+// strip the scheme and path first, then everything after the port colon.
+// IPv6 literals arrive bracketed ("[::1]:443") — return the bare address.
 function hostOf(target) {
   if (!target) return '';
   var t = String(target).trim();
+  t = t.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '');
+  var slash = t.indexOf('/');
+  if (slash >= 0) t = t.slice(0, slash);
+  if (t.charAt(0) === '[') {
+    var rb = t.indexOf(']');
+    return rb > 0 ? t.slice(1, rb) : t;
+  }
   var colon = t.indexOf(':');
   return colon >= 0 ? t.slice(0, colon) : t;
 }
@@ -56,29 +63,29 @@ var callBlocking = rpc.declare({ object: 'purewrt', method: 'blocking_heuristics
 // Default lists mirror checker.DefaultWhitelistCanaries / DefaultBlacklistCanaries
 // in internal/checker/blocking.go so behaviour matches the CLI on first load.
 var DEFAULT_WHITELIST = [
-  'www.gosuslugi.ru:443',
-  'ya.ru:443',
-  'www.sberbank.ru:443',
-  'vk.com:443',
-  'www.ozon.ru:443',
-  'www.avito.ru:443',
-  'lenta.ru:443',
-  'rutube.ru:443'
+  'https://www.gosuslugi.ru',
+  'https://ya.ru',
+  'https://www.sberbank.ru',
+  'https://vk.com',
+  'https://www.ozon.ru',
+  'https://www.avito.ru',
+  'https://lenta.ru',
+  'https://rutube.ru'
 ];
 
 var DEFAULT_BLACKLIST = [
-  'www.instagram.com:443',
-  'www.facebook.com:443',
-  'x.com:443',
-  'www.linkedin.com:443',
-  'discord.com:443',
-  'rutracker.org:443',
-  'www.torproject.org:443',
-  'protonvpn.com:443',
-  'www.deepl.com:443',
-  'www.patreon.com:443',
-  'meduza.io:443',
-  'www.dw.com:443'
+  'https://www.instagram.com',
+  'https://www.facebook.com',
+  'https://x.com',
+  'https://www.linkedin.com',
+  'https://discord.com',
+  'https://rutracker.org',
+  'https://www.torproject.org',
+  'https://protonvpn.com',
+  'https://www.deepl.com',
+  'https://www.patreon.com',
+  'https://meduza.io',
+  'https://www.dw.com'
 ];
 
 // verdictPillClass maps a verdict string to one of the .purewrt-pill-<flavour>
@@ -129,6 +136,7 @@ function verdictHint(verdict) {
     case 'tls_timeout':      return _('TLS handshake timeout — DPI stalling. Try zapret or route via proxy.');
     case 'tls_fail':         return _('TLS handshake failed — see Reason. May indicate cert issue or DPI.');
     case 'http_error':       return _('HTTP request dropped mid-flight — try again or route via proxy.');
+    case 'http_redirect':    return _('Plain-HTTP probe was redirected off-host (same-host HTTPS upgrades are followed automatically) — a legit domain move or an ISP block-page bounce; probe the redirect target directly to tell.');
     case 'http_451':         return _('HTTP 451 — operator-mandated block by the host itself; routing alone will not help (change region/identity).');
     case 'http_stub':        return _('ISP served a "blocked by RKN" stub page instead of the real site — route through a proxy or change DNS to bypass.');
     case 'config':           return _('Probe config error (bad target format).');
@@ -312,7 +320,7 @@ return view.extend({
       bannerHolder,
       E('div', { 'class': 'cbi-section' }, [
         E('h3', _('Target lists')),
-        E('p', { 'class': 'purewrt-text-muted' }, _('One <code>host:port</code> per line. Saved to UCI for next visit. Leave empty to fall back to curated defaults.')),
+        E('p', { 'class': 'purewrt-text-muted' }, _('One target per line: <code>host</code>, <code>host:port</code> or a full <code>http(s)://…</code> URL. Bare hosts probe TLS on :443; <code>http://</code> targets probe plain HTTP and auto-upgrade to TLS when the site redirects to HTTPS on the same host. Saved to UCI for next visit. Leave empty to fall back to curated defaults.')),
         E('div', { 'style': 'display:flex;gap:2em;flex-wrap:wrap' }, [
           E('div', {}, [
             E('label', { 'style': 'font-weight:bold' }, _('Whitelist (control)')),

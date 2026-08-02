@@ -66,12 +66,22 @@ func meshStatusPath(c config.Config) string {
 // changes, Apply when anything material moved. Peers that are persisted but
 // currently unreachable are KEPT — mihomo health checks park their proxies;
 // pruning is a future GC concern, not a sync concern.
-func (m Manager) MeshSync() (MeshSyncReport, error) {
-	rep := MeshSyncReport{}
+func (m Manager) MeshSync() (rep MeshSyncReport, retErr error) {
+	started := time.Now()
 	c, err := m.Load()
 	if err != nil {
+		recordUpdateRun("mesh", "error", started)
+		dumpMetrics(c)
 		return rep, err
 	}
+	defer func() {
+		outcome := updateRunResult(retErr)
+		if retErr == nil && len(rep.Errors) > 0 {
+			outcome = "partial"
+		}
+		recordUpdateRun("mesh", outcome, started)
+		dumpMetrics(c)
+	}()
 	if !c.MeshActive() {
 		return rep, fmt.Errorf("mesh not active")
 	}

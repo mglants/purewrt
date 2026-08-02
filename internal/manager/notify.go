@@ -38,16 +38,59 @@ func notifyEventEnabled(c config.Config, event string) bool {
 	return len(c.Settings.NotifyOn) == 0 || slices.Contains(c.Settings.NotifyOn, event)
 }
 
-// dumpMetrics persists the in-process metrics registry to
-// <RuntimeDir>/metrics.prom. Apply/update observations happen in the
-// short-lived CLI process while /metrics is served by the purewrt-api
-// daemon — the dump file is the bridge. Best-effort: metrics must never
-// fail an apply.
+// dumpMetrics merges this short-lived CLI process's latest-state gauges and
+// duration observations into a persistent tmpfs registry, then refreshes the
+// scrape-ready metrics.prom.
+// The lock prevents a net-check and update finishing together from losing
+// each other's deltas. Best-effort: metrics must never fail an operation.
 func dumpMetrics(c config.Config) {
-	path := filepath.Join(c.RuntimeDir(), "metrics.prom")
-	if err := system.AtomicWrite(path, []byte(metrics.Default.Render()), 0644); err != nil {
+	runtimeDir := c.RuntimeDir()
+	lock, err := system.Acquire(filepath.Join(runtimeDir, "metrics.lock"))
+	if err != nil {
+		newLog(c).Warn("metrics: acquire persistence lock failed: %v", err)
+		return
+	}
+	defer func() { _ = lock.Close() }()
+
+	statePath := filepath.Join(runtimeDir, "metrics-state.json")
+	prior, readErr := os.ReadFile(statePath)
+	if readErr != nil && !os.IsNotExist(readErr) {
+		newLog(c).Warn("metrics: read persistent state failed: %v", readErr)
+	}
+	state, rendered, err := metrics.MergePersistent(prior, metrics.Default)
+	if err != nil {
+		// Runtime state is expendable and may come from an older package
+		// version. Recover with current observations instead of leaving the
+		// endpoint permanently stale.
+		newLog(c).Warn("metrics: prior state ignored: %v", err)
+		state, rendered, err = metrics.MergePersistent(nil, metrics.Default)
+	}
+	if err != nil {
+		newLog(c).Warn("metrics: build persistent snapshot failed: %v", err)
+		return
+	}
+	if err := system.AtomicWrite(statePath, state, 0600); err != nil {
+		newLog(c).Warn("metrics: persist state to %s failed: %v", statePath, err)
+		return
+	}
+	// State is committed, so these process-local deltas must not be merged a
+	// second time if another operation in this same CLI process dumps later.
+	metrics.Default.ResetObservations()
+	path := filepath.Join(runtimeDir, "metrics.prom")
+	if err := system.AtomicWrite(path, []byte(rendered), 0644); err != nil {
 		newLog(c).Warn("metrics: dump to %s failed: %v", path, err)
 	}
+}
+
+// FlushMetrics persists observations made by a standalone CLI command whose
+// manager operation does not otherwise own a natural persistence boundary.
+// It is intentionally best-effort, like dumpMetrics itself.
+func (m Manager) FlushMetrics() {
+	c, err := m.Load()
+	if err != nil {
+		return
+	}
+	dumpMetrics(c)
 }
 
 // notifySubscriptionExpiry sweeps SubscriptionExpiry and notifies per

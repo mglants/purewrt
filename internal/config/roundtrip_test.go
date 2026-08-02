@@ -37,6 +37,15 @@ func TestConfigRoundTripPreservesKeyFields(t *testing.T) {
 	c.Settings.NotifyURL = "https://ntfy.example.com/purewrt"
 	c.Settings.NotifyFormat = "ntfy"
 	c.Settings.NotifyOn = []string{"update_failure", "mihomo_revert"}
+	c.Settings.ProxyGuardEnabled = true
+	c.Settings.ProxyGuardCron = "7 */2 * * *"
+	c.Settings.ProxyGuardMinMembers = 7
+	c.Settings.ProxyGuardMinDownKbps = 3456
+	c.Settings.ProxyGuardProbeBytes = 765432
+	c.Settings.ProxyGuardMaxJitterMS = 321
+	c.Settings.ProxyGuardActiveProbeInterval = 2345
+	c.Settings.ProxyGuardFleetProbeInterval = 12345
+	c.Settings.ProxyGuardQuarantineSeconds = 4567
 	c.DNS.DoHPolicy = "direct"
 	c.DNS.FakeIP = true
 	c.ZapretProfiles = []ZapretProfile{{Name: "wan_a", Enabled: true, Network: "wan_a", Interfaces: []string{"wan_a"}, FwMark: "0x40000001", NFQWSBin: "/usr/bin/nfqws", TPWSBin: "/usr/bin/tpws"}}

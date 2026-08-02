@@ -8,32 +8,33 @@
   "refresh": "1m",
   "panels": [
     {
-      "id": 1, "type": "timeseries", "title": "Apply outcomes (per hour)",
+      "id": 1, "type": "stat", "title": "Latest apply success",
       "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
       "targets": [
-        { "expr": "increase(purewrt_apply_total[1h])", "legendFormat": "{{result}}" }
+        { "expr": "purewrt_apply_last_run_success", "legendFormat": "success" }
       ]
     },
     {
-      "id": 2, "type": "timeseries", "title": "Apply duration p95 (ms)",
+      "id": 2, "type": "timeseries", "title": "Apply duration (seconds)",
       "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
       "targets": [
-        { "expr": "histogram_quantile(0.95, rate(purewrt_apply_duration_ms_bucket[6h]))", "legendFormat": "p95" },
-        { "expr": "histogram_quantile(0.50, rate(purewrt_apply_duration_ms_bucket[6h]))", "legendFormat": "p50" }
+        { "expr": "histogram_quantile(0.95, rate(purewrt_apply_duration_seconds_bucket[6h]))", "legendFormat": "p95" },
+        { "expr": "histogram_quantile(0.50, rate(purewrt_apply_duration_seconds_bucket[6h]))", "legendFormat": "p50" }
       ]
     },
     {
-      "id": 3, "type": "timeseries", "title": "Generate duration p95 by group (ms)",
+      "id": 3, "type": "timeseries", "title": "Generate stage duration p95 (seconds)",
       "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
       "targets": [
-        { "expr": "histogram_quantile(0.95, sum by (group, le) (rate(purewrt_generate_duration_ms_bucket[6h])))", "legendFormat": "{{group}}" }
+        { "expr": "histogram_quantile(0.95, sum by (stage, le) (rate(purewrt_generate_stage_duration_seconds_bucket[6h])))", "legendFormat": "{{stage}}" },
+        { "expr": "histogram_quantile(0.95, sum by (le) (rate(purewrt_generate_duration_seconds_bucket{result=\"generated\"}[6h])))", "legendFormat": "complete" }
       ]
     },
     {
-      "id": 4, "type": "timeseries", "title": "Provider download outcomes (per 6h)",
+      "id": 4, "type": "stat", "title": "Provider latest update success",
       "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
       "targets": [
-        { "expr": "increase(purewrt_provider_download_total[6h])", "legendFormat": "{{result}}" }
+        { "expr": "purewrt_provider_update_success", "legendFormat": "{{type}}/{{provider}}" }
       ]
     },
     {
@@ -50,7 +51,7 @@
       "id": 6, "type": "stat", "title": "Geo data age",
       "gridPos": { "x": 6, "y": 16, "w": 6, "h": 6 },
       "targets": [
-        { "expr": "purewrt_geoip_data_age_seconds / 86400" }
+        { "expr": "(time() - purewrt_geodata_modified_timestamp_seconds) / 86400", "legendFormat": "{{dataset}}" }
       ],
       "fieldConfig": { "defaults": { "unit": "d", "thresholds": { "mode": "absolute", "steps": [
         { "color": "green", "value": null }, { "color": "orange", "value": 7 }, { "color": "red", "value": 14 }
@@ -68,6 +69,175 @@
       "gridPos": { "x": 18, "y": 16, "w": 6, "h": 6 },
       "targets": [
         { "expr": "purewrt_zapret_strategies_active" }
+      ]
+    },
+    {
+      "id": 9, "type": "timeseries", "title": "Proxy-guard members by state",
+      "gridPos": { "x": 0, "y": 22, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "sum by (state) (purewrt_proxy_guard_members)", "legendFormat": "{{state}}" }
+      ]
+    },
+    {
+      "id": 10, "type": "timeseries", "title": "Proxy-guard group capacity",
+      "gridPos": { "x": 12, "y": 22, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "purewrt_proxy_guard_group_members{role=~\"candidate|effective|last_resort\"}", "legendFormat": "{{group}} {{role}}" }
+      ]
+    },
+    {
+      "id": 11, "type": "stat", "title": "Proxy-guard latest run success",
+      "gridPos": { "x": 0, "y": 30, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "purewrt_proxy_guard_last_run_success", "legendFormat": "success" }
+      ]
+    },
+    {
+      "id": 12, "type": "stat", "title": "Minutes since proxy-guard success",
+      "gridPos": { "x": 12, "y": 30, "w": 6, "h": 8 },
+      "targets": [
+        { "expr": "(time() - purewrt_proxy_guard_last_success_timestamp_seconds) / 60" }
+      ]
+    },
+    {
+      "id": 13, "type": "stat", "title": "Untested proxy members",
+      "gridPos": { "x": 18, "y": 30, "w": 6, "h": 8 },
+      "targets": [
+        { "expr": "purewrt_proxy_guard_untested_members" }
+      ]
+    },
+    {
+      "id": 14, "type": "stat", "title": "Core service health",
+      "gridPos": { "x": 0, "y": 38, "w": 8, "h": 6 },
+      "targets": [
+        { "expr": "purewrt_service_up", "legendFormat": "{{service}}" },
+        { "expr": "purewrt_mihomo_controller_up", "legendFormat": "mihomo controller" }
+      ]
+    },
+    {
+      "id": 15, "type": "stat", "title": "Apply state / minutes since success",
+      "gridPos": { "x": 8, "y": 38, "w": 8, "h": 6 },
+      "targets": [
+        { "expr": "purewrt_apply_last_run_success", "legendFormat": "last run success" },
+        { "expr": "(time() - purewrt_apply_last_success_timestamp_seconds) / 60", "legendFormat": "minutes since success" }
+      ]
+    },
+    {
+      "id": 16, "type": "stat", "title": "Latest update job success",
+      "gridPos": { "x": 16, "y": 38, "w": 8, "h": 6 },
+      "targets": [
+        { "expr": "purewrt_update_last_run_success", "legendFormat": "{{job}}" }
+      ]
+    },
+    {
+      "id": 17, "type": "stat", "title": "Hours since update success",
+      "gridPos": { "x": 0, "y": 44, "w": 8, "h": 7 },
+      "targets": [
+        { "expr": "(time() - purewrt_update_last_success_timestamp_seconds) / 3600", "legendFormat": "{{job}}" }
+      ]
+    },
+    {
+      "id": 18, "type": "stat", "title": "Provider latest update success",
+      "gridPos": { "x": 8, "y": 44, "w": 8, "h": 7 },
+      "targets": [
+        { "expr": "purewrt_provider_update_success", "legendFormat": "{{type}}/{{provider}}" }
+      ]
+    },
+    {
+      "id": 19, "type": "timeseries", "title": "Provider entries",
+      "gridPos": { "x": 16, "y": 44, "w": 8, "h": 7 },
+      "targets": [
+        { "expr": "purewrt_provider_entries", "legendFormat": "{{type}}/{{provider}}" }
+      ]
+    },
+    {
+      "id": 20, "type": "stat", "title": "Net-check health / minutes since run",
+      "gridPos": { "x": 0, "y": 51, "w": 8, "h": 7 },
+      "targets": [
+        { "expr": "purewrt_netcheck_verdict", "legendFormat": "verdict" },
+        { "expr": "(time() - purewrt_netcheck_last_run_timestamp_seconds) / 60", "legendFormat": "minutes since run" }
+      ]
+    },
+    {
+      "id": 21, "type": "timeseries", "title": "Net-check throughput (kbps)",
+      "gridPos": { "x": 8, "y": 51, "w": 8, "h": 7 },
+      "targets": [
+        { "expr": "purewrt_netcheck_download_kbps", "legendFormat": "proxy download" },
+        { "expr": "purewrt_netcheck_upload_kbps", "legendFormat": "proxy upload" },
+        { "expr": "purewrt_netcheck_direct_domestic_kbps", "legendFormat": "direct domestic" }
+      ]
+    },
+    {
+      "id": 22, "type": "stat", "title": "Latest resolver probe success",
+      "gridPos": { "x": 16, "y": 51, "w": 8, "h": 7 },
+      "targets": [
+        { "expr": "purewrt_resolver_probe_success", "legendFormat": "{{endpoint}}" }
+      ]
+    },
+    {
+      "id": 23, "type": "stat", "title": "Proxy-guard last run / duration",
+      "gridPos": { "x": 0, "y": 58, "w": 8, "h": 7 },
+      "targets": [
+        { "expr": "purewrt_proxy_guard_last_run_success", "legendFormat": "success" },
+        { "expr": "purewrt_proxy_guard_last_run_duration_seconds", "legendFormat": "duration seconds" }
+      ]
+    },
+    {
+      "id": 24, "type": "stat", "title": "Subscription quota used (%)",
+      "gridPos": { "x": 8, "y": 58, "w": 8, "h": 7 },
+      "targets": [
+        { "expr": "100 * purewrt_subscription_used_bytes / purewrt_subscription_total_bytes", "legendFormat": "{{subscription}}" }
+      ]
+    },
+    {
+      "id": 25, "type": "stat", "title": "Provider age (hours)",
+      "gridPos": { "x": 16, "y": 58, "w": 8, "h": 7 },
+      "targets": [
+        { "expr": "(time() - purewrt_provider_last_success_timestamp_seconds) / 3600", "legendFormat": "{{type}}/{{provider}}" }
+      ]
+    },
+    {
+      "id": 26, "type": "stat", "title": "Mesh friends / link state",
+      "gridPos": { "x": 0, "y": 65, "w": 8, "h": 7 },
+      "targets": [
+        { "expr": "purewrt_mesh_friends", "legendFormat": "friends {{state}}" },
+        { "expr": "purewrt_mesh_friend_link_up", "legendFormat": "{{friend}} link" }
+      ]
+    },
+    {
+      "id": 27, "type": "timeseries", "title": "Mesh friend link latency (ms)",
+      "gridPos": { "x": 8, "y": 65, "w": 8, "h": 7 },
+      "targets": [
+        { "expr": "purewrt_mesh_friend_latency_milliseconds", "legendFormat": "{{friend}} {{hwid}}" }
+      ]
+    },
+    {
+      "id": 28, "type": "stat", "title": "Mesh friend exit health",
+      "gridPos": { "x": 16, "y": 65, "w": 8, "h": 7 },
+      "targets": [
+        { "expr": "purewrt_mesh_friend_exit_up", "legendFormat": "{{friend}} up" },
+        { "expr": "purewrt_mesh_friend_exit_delay_milliseconds", "legendFormat": "{{friend}} delay ms" }
+      ]
+    },
+    {
+      "id": 29, "type": "stat", "title": "Package upgrades available",
+      "gridPos": { "x": 0, "y": 72, "w": 8, "h": 7 },
+      "targets": [
+        { "expr": "purewrt_upgrade_available", "legendFormat": "{{package}}" }
+      ]
+    },
+    {
+      "id": 30, "type": "stat", "title": "Latest net-check layer status",
+      "gridPos": { "x": 8, "y": 72, "w": 8, "h": 7 },
+      "targets": [
+        { "expr": "purewrt_netcheck_layer_status", "legendFormat": "{{layer}}: {{status}}" }
+      ]
+    },
+    {
+      "id": 31, "type": "stat", "title": "Latest per-node net-check status",
+      "gridPos": { "x": 16, "y": 72, "w": 8, "h": 7 },
+      "targets": [
+        { "expr": "purewrt_netcheck_node_status", "legendFormat": "{{node}}: {{status}}" }
       ]
     }
   ]

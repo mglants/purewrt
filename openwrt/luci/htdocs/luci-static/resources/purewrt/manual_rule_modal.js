@@ -114,8 +114,21 @@ function writeBody(name, body) {
   return fs.write(pathForName(name), normaliseBody(body));
 }
 
+// valueKey extracts the comparable value from a rule line: everything
+// before the first '#', trimmed and lowercased — so `1.2.3.0/24` and
+// `1.2.3.0/24 # AS24940 HETZNER (DE)` count as the same entry. Full-line
+// comments and blanks return '' (callers skip those for dedup purposes).
+function valueKey(line) {
+  var s = String(line || '');
+  var hash = s.indexOf('#');
+  if (hash >= 0) s = s.slice(0, hash);
+  return s.trim().toLowerCase();
+}
+
 // appendLine is a read-modify-write of a single line with dedup. Used by
 // the "Add to manual provider" CTAs on the blocking + diagnostics pages.
+// Dedup compares by valueKey, so an entry already present under a
+// different (or no) annotation is still recognised as a duplicate.
 // Returns {added: true/false} so the caller can show "added" vs
 // "duplicate" notifications without a separate verify-round-trip.
 function appendLine(name, line) {
@@ -124,10 +137,10 @@ function appendLine(name, line) {
   if (clean.indexOf('\n') >= 0 || clean.indexOf('\r') >= 0)
     return Promise.reject(new Error(_('line must not contain newlines')));
   return readBody(name).then(function(body) {
-    var want = clean.toLowerCase();
+    var want = valueKey(clean) || clean.toLowerCase();
     var existing = body.split('\n');
     for (var i = 0; i < existing.length; i++) {
-      if (existing[i].trim().toLowerCase() === want)
+      if (valueKey(existing[i]) === want)
         return { added: false };
     }
     var next = body && !body.endsWith('\n') ? body + '\n' : body;
@@ -410,20 +423,21 @@ function openManualPickerInner(opts, entry) {
             ui.addNotification(null, E('p', _('AS%d has no prefixes in the local IP database. Did you run `purewrt ipdb-update`?').format(asn)), 'warning');
             return;
           }
-          // Annotate every prefix so the manual file records where each
-          // line came from. We trust the AS lookup's own asOrg/country
-          // (the response struct populates them from the iptoasn entry)
-          // and fall back to the picker-supplied values otherwise.
+          // One begin/end comment block records where the batch came from
+          // instead of annotating every line — hundreds of identical
+          // per-line comments made the file unreadable. We trust the AS
+          // lookup's own asOrg/country (the response struct populates
+          // them from the iptoasn entry) and fall back to the
+          // picker-supplied values otherwise.
           var resOrg = (res && res.as_org) || asOrg;
           var resCC  = (res && res.country) || opts.country || '';
-          var annotated = prefixes.map(function(p) {
-            return annotateLine(p, asn, resOrg, resCC, _('whole-AS'));
-          });
+          var blockLabel = 'AS' + asn + (resOrg ? ' ' + resOrg : '') +
+            (resCC ? ' (' + resCC + ')' : '') + ' whole-AS';
           if (name === '__new__' || !name) {
             ui.hideModal();
             openManualModal({
               onSave: function(saved) {
-                return appendAll(saved, annotated).then(function(summary) {
+                return appendAll(saved, prefixes, { block: blockLabel }).then(function(summary) {
                   return callReload().then(function() {
                     resolve({ name: saved, summary: summary, asn: asn, created: true });
                   });
@@ -432,8 +446,16 @@ function openManualPickerInner(opts, entry) {
             });
             return;
           }
-          appendAll(name, annotated).then(function(summary) {
+          appendAll(name, prefixes, { block: blockLabel }).then(function(summary) {
             ui.hideModal();
+            // Nothing added → file untouched → no reload/apply needed.
+            if (!summary.added) {
+              ui.addNotification(null, E('p',
+                _('All %d AS%d prefixes are already in %s — nothing to do.').format(prefixes.length, asn, name)),
+                'info');
+              resolve({ name: name, summary: summary, asn: asn });
+              return;
+            }
             ui.addNotification(null, E('p',
               _('Added %d of %d AS%d prefixes to %s; applying…').format(summary.added, prefixes.length, asn, name)),
               'info');
@@ -563,6 +585,13 @@ function openManualBatchPickerInner(opts, entries) {
       }
       appendAll(name, entries).then(function(summary) {
         ui.hideModal();
+        // Nothing added → file untouched → no reload/apply needed.
+        if (!summary.added) {
+          ui.addNotification(null, E('p',
+            _('All %d entries are already in %s — nothing to do.').format(entries.length, name)), 'info');
+          resolve({ name: name, created: false, summary: summary });
+          return;
+        }
         var msg = _('Added %d of %d to %s%s; applying…').format(
           summary.added, entries.length, name,
           summary.duplicates ? ' (' + summary.duplicates + ' duplicate)' : '');
@@ -592,22 +621,60 @@ function openManualBatchPickerInner(opts, entries) {
   });
 }
 
-// appendAll calls appendLine for each entry sequentially. Sequential, not
-// parallel, because they all read-modify-write the same body file —
-// concurrent writes would lose entries. Returns a summary so the caller can
-// show "Added N of M (K duplicates)" in one notification.
-function appendAll(name, entries) {
-  var added = 0, duplicates = 0;
-  var p = Promise.resolve();
-  entries.forEach(function(line) {
-    p = p.then(function() {
-      return appendLine(name, line).then(function(res) {
-        if (res.added) added++;
-        else duplicates++;
-      });
+// appendAll reads the provider body ONCE, drops entries already present in
+// the file (or repeated within the batch), and writes the result back in a
+// single fs.write. One read + one write regardless of batch size — the
+// previous implementation chained a full read-modify-write per line, which
+// made whole-AS adds (hundreds of CIDRs) crawl through 2×N ubus roundtrips
+// and shuffle O(N²) bytes. Dedup compares by valueKey, so entries already
+// in the file under a different (or no) annotation still count as
+// duplicates. Validates every entry up front and rejects the whole batch
+// before touching the file, so a bad entry can't leave a half-written
+// batch behind. Returns a summary so the caller can show "Added N of M
+// (K duplicates)" in one notification.
+//
+// opts.block (string) wraps the added lines in begin/end comment lines
+// labelled with it — one block header instead of a per-line annotation.
+// When every entry is a duplicate nothing is written at all: no block,
+// no file touch.
+function appendAll(name, entries, opts) {
+  opts = opts || {};
+  for (var i = 0; i < entries.length; i++) {
+    var e = String(entries[i] || '').trim();
+    if (!e)
+      return Promise.reject(new Error(_('empty line')));
+    if (e.indexOf('\n') >= 0 || e.indexOf('\r') >= 0)
+      return Promise.reject(new Error(_('line must not contain newlines')));
+  }
+  return readBody(name).then(function(body) {
+    var have = Object.create(null);
+    body.split('\n').forEach(function(l) {
+      var k = valueKey(l);
+      if (k) have[k] = 1;
+    });
+    var fresh = [];
+    var duplicates = 0;
+    entries.forEach(function(line) {
+      var clean = String(line).trim();
+      var key = valueKey(clean) || clean.toLowerCase();
+      if (have[key]) { duplicates++; return; }
+      have[key] = 1;
+      fresh.push(clean);
+    });
+    if (!fresh.length)
+      return { added: 0, duplicates: duplicates, total: entries.length };
+    var lines = fresh;
+    if (opts.block) {
+      var stamp = new Date().toISOString().slice(0, 10);
+      lines = ['# --- ' + opts.block + ': begin (' + fresh.length + ' added ' + stamp + ') ---']
+        .concat(fresh, ['# --- ' + opts.block + ': end ---']);
+    }
+    var next = body && !body.endsWith('\n') ? body + '\n' : body;
+    next += lines.join('\n') + '\n';
+    return writeBody(name, next).then(function() {
+      return { added: fresh.length, duplicates: duplicates, total: entries.length };
     });
   });
-  return p.then(function() { return { added: added, duplicates: duplicates, total: entries.length }; });
 }
 
 return baseclass.extend({

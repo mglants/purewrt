@@ -1,10 +1,13 @@
 package manager
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/purewrt/purewrt/internal/config"
+	"github.com/purewrt/purewrt/internal/metrics"
 	"github.com/purewrt/purewrt/internal/notify"
 )
 
@@ -19,6 +22,35 @@ func captureNotify(t *testing.T) *[]notify.Event {
 	}
 	t.Cleanup(func() { notifySend = orig })
 	return &got
+}
+
+func TestDumpMetricsReplacesLatestStateAndPreservesOtherDomainGauges(t *testing.T) {
+	dir := t.TempDir()
+	c := config.Default()
+	c.Settings.RuntimeDir = dir
+	metrics.Default.ResetObservations()
+	defer metrics.Default.ResetObservations()
+
+	metrics.ApplyLastRunSuccess.Set(1)
+	metrics.NetCheckLastRun.Set(1234)
+	dumpMetrics(c)
+	metrics.ApplyLastRunSuccess.Set(0)
+	dumpMetrics(c)
+
+	data, err := os.ReadFile(filepath.Join(dir, "metrics.prom"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(data)
+	if !strings.Contains(out, `purewrt_apply_last_run_success 0`) {
+		t.Fatalf("latest apply state was not replaced across dumps:\n%s", out)
+	}
+	if !strings.Contains(out, "purewrt_netcheck_last_run_timestamp_seconds 1234") {
+		t.Fatalf("unrelated gauge was erased by a later dump:\n%s", out)
+	}
+	if _, err := os.Stat(MetricsStatePath(c)); err != nil {
+		t.Fatalf("persistent state missing: %v", err)
+	}
 }
 
 func notifyTestConfig(t *testing.T) (Manager, config.Config) {

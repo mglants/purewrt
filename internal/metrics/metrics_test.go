@@ -41,6 +41,16 @@ func TestCounterWithLabelsRendersEscapedValues(t *testing.T) {
 	}
 }
 
+func TestLabelValueWithCommaRendersValidPair(t *testing.T) {
+	r := freshRegistry(t)
+	c := r.newCounter("purewrt_probe_total", "Probe", "endpoint", "result")
+	c.WithLabelValues("https://example.test/a,b", "ok")
+	out := r.Render()
+	if !strings.Contains(out, `purewrt_probe_total{endpoint="https://example.test/a,b",result="ok"} 1`) {
+		t.Fatalf("comma-bearing label was corrupted:\n%s", out)
+	}
+}
+
 func TestGaugeSetGet(t *testing.T) {
 	r := freshRegistry(t)
 	g := r.newGauge("purewrt_subscription_seconds_to_expiry", "Time until subscription expiry")
@@ -54,18 +64,37 @@ func TestGaugeSetGet(t *testing.T) {
 	}
 }
 
+func TestUnsetGaugeDoesNotRenderSample(t *testing.T) {
+	r := freshRegistry(t)
+	r.newGauge("purewrt_unknown", "Unknown")
+	out := r.Render()
+	if strings.Contains(out, "purewrt_unknown 0") {
+		t.Fatalf("unset gauge rendered as a real zero:\n%s", out)
+	}
+}
+
+func TestLabelledGaugeSetAndDelete(t *testing.T) {
+	r := freshRegistry(t)
+	g := r.newGauge("purewrt_members", "Members", "state")
+	g.Set(3, "healthy")
+	g.Set(1, "suspect")
+	g.Delete("suspect")
+	out := r.Render()
+	if !strings.Contains(out, `purewrt_members{state="healthy"} 3`) || strings.Contains(out, `state="suspect"`) {
+		t.Fatalf("labelled gauge set/delete failed:\n%s", out)
+	}
+}
+
 func TestHandlerServesContentType(t *testing.T) {
 	// Use Default for the handler smoke-test.
-	defer resetDefault()
+	original := Default
+	Default = NewRegistry()
+	defer func() { Default = original }()
 	NewCounter("purewrt_test_total", "X").Inc()
-	srv := httptest.NewServer(Handler())
-	defer srv.Close()
-	resp, err := srv.Client().Get(srv.URL)
-	if err != nil {
-		t.Fatalf("GET: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	rr := httptest.NewRecorder()
+	Handler().ServeHTTP(rr, req)
+	if ct := rr.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
 		t.Fatalf("Content-Type = %q", ct)
 	}
 }
@@ -88,21 +117,9 @@ func freshRegistry(t *testing.T) *testRegistry {
 }
 
 func (r *testRegistry) newCounter(name, help string, keys ...string) *Counter {
-	c := &Counter{name: name, help: help, labelKey: append([]string(nil), keys...), samples: map[string]*uint64{}}
-	r.mu.Lock()
-	r.counters[name] = c
-	r.mu.Unlock()
-	return c
+	return r.Registry.NewCounter(name, help, keys...)
 }
 
-func (r *testRegistry) newGauge(name, help string) *Gauge {
-	g := &Gauge{name: name, help: help}
-	r.mu.Lock()
-	r.gauges[name] = g
-	r.mu.Unlock()
-	return g
-}
-
-func resetDefault() {
-	Default = NewRegistry()
+func (r *testRegistry) newGauge(name, help string, keys ...string) *Gauge {
+	return r.Registry.NewGauge(name, help, keys...)
 }

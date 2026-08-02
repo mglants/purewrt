@@ -78,6 +78,20 @@ type UpdateResult struct {
 	Changed bool
 }
 
+type applyRollbackError struct {
+	cause   error
+	restore error
+}
+
+func (e *applyRollbackError) Error() string {
+	if e.restore != nil {
+		return fmt.Sprintf("%v; rollback failed: %v", e.cause, e.restore)
+	}
+	return e.cause.Error()
+}
+
+func (e *applyRollbackError) Unwrap() error { return e.cause }
+
 // newLog is a one-liner alias for the common pattern
 // `newLog(c)` —
 // previously repeated in 20+ apply/update functions across this package.
@@ -95,11 +109,16 @@ func (m Manager) Load() (config.Config, error) {
 	return config.Load(m.ConfigPath)
 }
 func (m Manager) Analyze(url string) (provider.Analysis, error) {
+	a, _, err := m.analyzeWithDownload(url)
+	return a, err
+}
+
+func (m Manager) analyzeWithDownload(url string) (provider.Analysis, provider.DownloadResult, error) {
 	d, err := provider.DownloadWithOptions(url, m.downloadOptionsForURL(url))
 	if err != nil {
-		return provider.Analysis{}, err
+		return provider.Analysis{}, d, err
 	}
-	return provider.AnalyzeContent(url, d.Data), nil
+	return provider.AnalyzeContent(url, d.Data), d, nil
 }
 
 func (m Manager) Import(url, name, mode, preset string) (provider.ImportPlan, error) {
@@ -107,12 +126,19 @@ func (m Manager) Import(url, name, mode, preset string) (provider.ImportPlan, er
 	if err != nil {
 		return provider.ImportPlan{}, err
 	}
-	a, err := m.Analyze(url)
+	defer dumpMetrics(c)
+	a, download, err := m.analyzeWithDownload(url)
 	if err != nil {
 		return provider.ImportPlan{}, err
 	}
-	plan := provider.PlanImportWithOptions(c, url, name, mode, preset, a, provider.ImportOptions{LowResource: c.LowResource()})
 	c = config.EnsureDefaults(c)
+	plan := provider.PlanImportWithOptions(c, url, name, mode, preset, a, provider.ImportOptions{LowResource: c.LowResource()})
+	subscriptionPath := filepath.Join(c.Settings.Workdir, "providers", plan.SubscriptionName+".yaml")
+	meta := providerAttemptMetadata(provider.Metadata{}, download, time.Now().UTC(), nil, url)
+	meta.EntryCount = a.ProxyNodes
+	if err := provider.WriteMetadata(subscriptionPath, meta); err != nil {
+		return provider.ImportPlan{}, err
+	}
 	c = config.UpsertSubscription(c, config.Subscription{Name: plan.SubscriptionName, Enabled: true, URL: url, Mode: modeOrDefault(mode), PresetIfNoRules: presetOrDefault(preset), AutoApply: true, Interval: 86400})
 	for _, pp := range plan.ProxyProviders {
 		c = config.UpsertProxyProvider(c, pp)
@@ -293,6 +319,7 @@ func (m Manager) GenerateWithOptions(force bool) error {
 		return err
 	}
 	c = config.EnsureDefaults(c)
+	defer dumpMetrics(c)
 	c = ResolveZapretProfileInterfaces(c)
 	c = ResolveOONIUser(c)
 	log := newLog(c)
@@ -345,11 +372,18 @@ func (m Manager) UpdateWithOptions(force bool) error {
 	return err
 }
 
-func (m Manager) UpdateRuleProvider(name string) (UpdateResult, error) {
+func (m Manager) UpdateRuleProvider(name string) (result UpdateResult, retErr error) {
+	started := time.Now()
 	c, err := m.Load()
 	if err != nil {
+		recordUpdateRun("rule_providers", "error", started)
+		dumpMetrics(c)
 		return UpdateResult{}, err
 	}
+	defer func() {
+		recordUpdateRun("rule_providers", updateRunResult(retErr), started)
+		dumpMetrics(c)
+	}()
 	log := newLog(c)
 	defer log.DebugTimer("update-rule-provider: %s", name)()
 	log.Info("update-rule-provider: %s start", name)
@@ -391,11 +425,18 @@ func (m Manager) UpdateRuleProvider(name string) (UpdateResult, error) {
 	return UpdateResult{Changed: changed}, nil
 }
 
-func (m Manager) UpdateProxyProvider(name string) (UpdateResult, error) {
+func (m Manager) UpdateProxyProvider(name string) (result UpdateResult, retErr error) {
+	started := time.Now()
 	c, err := m.Load()
 	if err != nil {
+		recordUpdateRun("proxy_providers", "error", started)
+		dumpMetrics(c)
 		return UpdateResult{}, err
 	}
+	defer func() {
+		recordUpdateRun("proxy_providers", updateRunResult(retErr), started)
+		dumpMetrics(c)
+	}()
 	log := newLog(c)
 	defer log.DebugTimer("update-proxy-provider: %s", name)()
 	log.Info("update-proxy-provider: %s start", name)
@@ -417,23 +458,23 @@ func (m Manager) UpdateProxyProvider(name string) (UpdateResult, error) {
 		log.InfoFields("proxy-provider download start", "provider", pp.Name, "url", provider.RedactURL(pp.URL))
 		priorMeta, _ := provider.ReadMetadata(pp.Path)
 		d, err := provider.DownloadWithOptions(pp.URL, provider.DownloadOptions{IncludeHWID: true, HWID: pp.HWID, DeviceName: pp.DeviceName, UserAgent: pp.UserAgent, Headers: pp.Headers, ProxyURL: updateProxyURL, Bootstrap: bootstrapFromSettings(c.Settings), PriorETag: priorMeta.ETag, PriorLastModified: priorMeta.LastModified, Mirrors: pp.Mirrors, FallbackProxyURL: fallbackProxyURL(c, updateProxyURL), PinSHA256: pp.PinSHA256, SuppressHWID: c.Settings.SuppressHWID || pp.SuppressHWID})
-		meta := provider.Metadata{URLRedacted: d.URLRedacted, LastUpdate: now, SubExpire: d.SubscriptionInfo.Expire, SubUsedBytes: d.SubscriptionInfo.UploadBytes + d.SubscriptionInfo.DownloadBytes, SubTotalBytes: d.SubscriptionInfo.TotalBytes}
+		meta := providerAttemptMetadata(priorMeta, d, now, err, pp.URL)
 		if err != nil {
-			meta.ErrorMessage = err.Error()
 			_ = provider.WriteMetadata(pp.Path, meta)
 			log.ErrorFields("proxy-provider download failed", "provider", pp.Name, "error", err.Error())
 			return UpdateResult{}, err
 		}
-		meta.LastSuccess = now
-		meta.ETag = pickHeader(d.ETag, priorMeta.ETag)
-		meta.LastModified = pickHeader(d.LastModified, priorMeta.LastModified)
 		if d.NotModified {
-			meta.Checksum = priorMeta.Checksum
+			if meta.EntryCount == 0 {
+				meta.EntryCount = proxyProviderFileEntryCount(pp.Path)
+			}
 			log.Info("proxy-provider: %s not modified (304)", pp.Name)
 		} else {
-			meta.Checksum = d.Checksum
+			meta.EntryCount = provider.AnalyzeContent(pp.URL, d.Data).ProxyNodes
 			if d.Checksum != existingChecksum(pp.Path) {
 				if err := system.AtomicWrite(pp.Path, d.Data, 0600); err != nil {
+					failedMeta := providerAttemptMetadata(priorMeta, d, now, err, pp.URL)
+					_ = provider.WriteMetadata(pp.Path, failedMeta)
 					return UpdateResult{}, err
 				}
 				changed = true
@@ -464,11 +505,18 @@ func (m Manager) UpdateDetailed() (UpdateResult, error) {
 	return m.UpdateDetailedWithOptions(false)
 }
 
-func (m Manager) UpdateDetailedWithOptions(force bool) (UpdateResult, error) {
+func (m Manager) UpdateDetailedWithOptions(force bool) (result UpdateResult, retErr error) {
+	started := time.Now()
 	c, err := m.Load()
 	if err != nil {
+		recordUpdateRun("subscriptions", "error", started)
+		dumpMetrics(c)
 		return UpdateResult{}, err
 	}
+	defer func() {
+		recordUpdateRun("subscriptions", updateRunResult(retErr), started)
+		dumpMetrics(c)
+	}()
 	log := newLog(c)
 	defer log.DebugTimer("update: total")()
 	log.Info("update: start subscriptions=%d proxy_providers=%d rule_providers=%d force=%v", len(c.Subscriptions), len(c.ProxyProviders), len(c.RuleProviders), force)
@@ -486,11 +534,19 @@ func (m Manager) UpdateDetailedWithOptions(force bool) (UpdateResult, error) {
 		}
 		log.Info("subscription: %s analyze start", s.Name)
 		log.Debug("subscription: %s parsing downloaded profile", s.Name)
-		a, err := m.Analyze(s.URL)
+		subscriptionPath := filepath.Join(c.Settings.Workdir, "providers", s.Name+".yaml")
+		priorSubscriptionMeta, _ := provider.ReadMetadata(subscriptionPath)
+		a, download, err := m.analyzeWithDownload(s.URL)
+		subscriptionMeta := providerAttemptMetadata(priorSubscriptionMeta, download, time.Now().UTC(), err, s.URL)
 		if err != nil {
+			_ = provider.WriteMetadata(subscriptionPath, subscriptionMeta)
 			log.Error("subscription: %s analyze failed: %v", s.Name, err)
 			failures = append(failures, fmt.Sprintf("subscription %s: %v", s.Name, err))
 			continue
+		}
+		subscriptionMeta.EntryCount = a.ProxyNodes
+		if err := provider.WriteMetadata(subscriptionPath, subscriptionMeta); err != nil {
+			return UpdateResult{}, err
 		}
 		plan := provider.PlanImportWithOptions(c, s.URL, s.Name, s.Mode, s.PresetIfNoRules, a, provider.ImportOptions{LowResource: c.LowResource(), ImportRulesOnLowResource: s.ImportRulesOnLowResource})
 		log.Debug("subscription: %s parsed type=%s rules=%d proxy_nodes=%d", s.Name, a.Type, a.Rules, a.ProxyNodes)
@@ -546,24 +602,24 @@ func (m Manager) UpdateDetailedWithOptions(force bool) (UpdateResult, error) {
 		log.Info("proxy-provider: %s download start", pp.Name)
 		priorMeta, _ := provider.ReadMetadata(pp.Path)
 		d, err := provider.DownloadWithOptions(pp.URL, provider.DownloadOptions{IncludeHWID: true, HWID: pp.HWID, DeviceName: pp.DeviceName, UserAgent: pp.UserAgent, Headers: pp.Headers, ProxyURL: updateProxyURL, Bootstrap: bootstrapFromSettings(c.Settings), PriorETag: priorMeta.ETag, PriorLastModified: priorMeta.LastModified, Mirrors: pp.Mirrors, FallbackProxyURL: fallbackProxyURL(c, updateProxyURL), PinSHA256: pp.PinSHA256, SuppressHWID: c.Settings.SuppressHWID || pp.SuppressHWID})
-		meta := provider.Metadata{URLRedacted: d.URLRedacted, LastUpdate: now, LastSuccess: now, Checksum: d.Checksum, ETag: pickHeader(d.ETag, priorMeta.ETag), LastModified: pickHeader(d.LastModified, priorMeta.LastModified), SubExpire: d.SubscriptionInfo.Expire, SubUsedBytes: d.SubscriptionInfo.UploadBytes + d.SubscriptionInfo.DownloadBytes, SubTotalBytes: d.SubscriptionInfo.TotalBytes}
-		if d.NotModified {
-			meta.Checksum = priorMeta.Checksum
-		}
+		meta := providerAttemptMetadata(priorMeta, d, now, err, pp.URL)
 		if err != nil {
-			meta.ErrorMessage = err.Error()
 			_ = provider.WriteMetadata(pp.Path, meta)
 			log.Error("proxy-provider: %s download failed: %v", pp.Name, err)
 			failures = append(failures, fmt.Sprintf("proxy-provider %s: %v", pp.Name, err))
 			continue
 		}
 		if d.NotModified {
+			if meta.EntryCount == 0 {
+				meta.EntryCount = proxyProviderFileEntryCount(pp.Path)
+			}
 			if err := provider.WriteMetadata(pp.Path, meta); err != nil {
 				return UpdateResult{}, err
 			}
 			log.Info("proxy-provider: %s not modified (304)", pp.Name)
 			continue
 		}
+		meta.EntryCount = provider.AnalyzeContent(pp.URL, d.Data).ProxyNodes
 		if d.Checksum == existingChecksum(pp.Path) {
 			if err := provider.WriteMetadata(pp.Path, meta); err != nil {
 				return UpdateResult{}, err
@@ -572,6 +628,8 @@ func (m Manager) UpdateDetailedWithOptions(force bool) (UpdateResult, error) {
 			continue
 		}
 		if err := system.AtomicWrite(pp.Path, d.Data, 0600); err != nil {
+			failedMeta := providerAttemptMetadata(priorMeta, d, now, err, pp.URL)
+			_ = provider.WriteMetadata(pp.Path, failedMeta)
 			return UpdateResult{}, err
 		}
 		if err := provider.WriteMetadata(pp.Path, meta); err != nil {
@@ -601,7 +659,6 @@ func (m Manager) UpdateDetailedWithOptions(force bool) (UpdateResult, error) {
 	// Expiry sweep, failure push and metrics dump are all best-effort;
 	// none affects the update result or exit code.
 	m.notifySubscriptionExpiry(c)
-	dumpMetrics(c)
 	if len(failures) > 0 {
 		m.notify(c, "update_failure", fmt.Sprintf("%d provider(s) failed: %s", len(failures), strings.Join(failures, "; ")))
 		// Return Changed=<whatever-succeeded> AND a non-nil error. The
@@ -623,6 +680,55 @@ func (m Manager) UpdateDetailedWithOptions(force bool) (UpdateResult, error) {
 // distinct exit code (3) so the init-script retry loop and operators can
 // tell "retry will heal" apart from "the operation never ran".
 var ErrPartialUpdate = errors.New("partial update failure")
+
+func providerAttemptMetadata(prior provider.Metadata, download provider.DownloadResult, now time.Time, err error, rawURL string) provider.Metadata {
+	meta := prior
+	meta.LastUpdate = now
+	if download.URLRedacted != "" {
+		meta.URLRedacted = download.URLRedacted
+	} else if meta.URLRedacted == "" {
+		meta.URLRedacted = provider.RedactURL(rawURL)
+	}
+	meta.ETag = pickHeader(download.ETag, prior.ETag)
+	meta.LastModified = pickHeader(download.LastModified, prior.LastModified)
+	if !download.SubscriptionInfo.Expire.IsZero() {
+		meta.SubExpire = download.SubscriptionInfo.Expire
+	}
+	if download.SubscriptionInfo.UploadBytes != 0 || download.SubscriptionInfo.DownloadBytes != 0 || download.SubscriptionInfo.TotalBytes != 0 {
+		meta.SubUsedBytes = download.SubscriptionInfo.UploadBytes + download.SubscriptionInfo.DownloadBytes
+		meta.SubTotalBytes = download.SubscriptionInfo.TotalBytes
+	}
+	if err != nil {
+		meta.ErrorMessage = err.Error()
+		return meta
+	}
+	meta.LastSuccess = now
+	meta.ErrorMessage = ""
+	if !download.NotModified {
+		meta.Checksum = download.Checksum
+	}
+	return meta
+}
+
+func updateRunResult(err error) string {
+	if err == nil {
+		return "ok"
+	}
+	if errors.Is(err, ErrPartialUpdate) {
+		return "partial"
+	}
+	return "error"
+}
+
+func recordUpdateRun(job, result string, started time.Time) {
+	now := time.Now()
+	metrics.UpdateLastAttempt.Set(float64(started.Unix()), job)
+	metrics.UpdateLastRunSuccess.Set(boolFloat(result == "ok"), job)
+	metrics.UpdateLastRunDuration.Set(now.Sub(started).Seconds(), job)
+	if result == "ok" {
+		metrics.UpdateLastSuccess.Set(float64(now.Unix()), job)
+	}
+}
 
 type ruleProviderDownloadResult struct {
 	rp      config.RuleProvider
@@ -670,6 +776,8 @@ func (m Manager) updateRuleProvidersAsync(ctx context.Context, ruleProviders []c
 		if provider.IsGeoFormat(rp.Format) {
 			changed, err := m.materializeGeoProvider(c, rp, log)
 			if err != nil {
+				prior, _ := provider.ReadMetadata(rp.Path)
+				_ = provider.WriteMetadata(rp.Path, providerAttemptMetadata(prior, provider.DownloadResult{}, now, err, rp.URL))
 				geoFailures = append(geoFailures, fmt.Sprintf("rule-provider %s: %v", rp.Name, err))
 				continue
 			}
@@ -725,27 +833,22 @@ func (m Manager) updateRuleProvidersAsync(ctx context.Context, ruleProviders []c
 			log.Info("rule-provider: %s download start", rp.Name)
 			priorMeta, _ := provider.ReadMetadata(rp.Path)
 			d, err := provider.DownloadWithOptions(rp.URL, provider.DownloadOptions{UserAgent: rp.UserAgent, Headers: rp.Headers, ProxyURL: updateProxyURL, Bootstrap: bootstrap, PriorETag: priorMeta.ETag, PriorLastModified: priorMeta.LastModified, Mirrors: rp.Mirrors, FallbackProxyURL: fallbackProxy, PinSHA256: rp.PinSHA256})
-			meta := provider.Metadata{URLRedacted: d.URLRedacted, LastUpdate: now, SubExpire: d.SubscriptionInfo.Expire, SubUsedBytes: d.SubscriptionInfo.UploadBytes + d.SubscriptionInfo.DownloadBytes, SubTotalBytes: d.SubscriptionInfo.TotalBytes}
+			meta := providerAttemptMetadata(priorMeta, d, now, err, rp.URL)
 			if err != nil {
-				meta.ErrorMessage = err.Error()
 				log.Error("rule-provider: %s download failed: %v", rp.Name, err)
-				results <- ruleProviderDownloadResult{rp: rp, meta: meta, err: err}
+				results <- ruleProviderDownloadResult{rp: rp, data: d, meta: meta, err: err}
 				return
 			}
-			meta.LastSuccess = now
-			meta.ETag = pickHeader(d.ETag, priorMeta.ETag)
-			meta.LastModified = pickHeader(d.LastModified, priorMeta.LastModified)
 			if d.NotModified {
-				meta.Checksum = priorMeta.Checksum
-				meta.EntryCount = priorMeta.EntryCount
+				if meta.EntryCount == 0 {
+					meta.EntryCount = localEntryCount(rp)
+				}
 				log.Info("rule-provider: %s not modified (304) entries=%d", rp.Name, meta.EntryCount)
 				results <- ruleProviderDownloadResult{rp: rp, data: d, meta: meta, changed: false}
 				return
 			}
 			changed := d.Checksum != existingChecksum(rp.Path)
-			meta.Checksum = d.Checksum
 			if !changed {
-				meta.EntryCount = priorMeta.EntryCount
 				log.Info("rule-provider: %s unchanged checksum=%s entries=%d", rp.Name, shortChecksum(d.Checksum), meta.EntryCount)
 				results <- ruleProviderDownloadResult{rp: rp, data: d, meta: meta, changed: false}
 				return
@@ -766,12 +869,16 @@ func (m Manager) updateRuleProvidersAsync(ctx context.Context, ruleProviders []c
 	var failures []string
 	for res := range results {
 		if res.err != nil {
+			prior, _ := provider.ReadMetadata(res.rp.Path)
+			res.meta = providerAttemptMetadata(prior, res.data, now, res.err, res.rp.URL)
 			_ = provider.WriteMetadata(res.rp.Path, res.meta)
 			failures = append(failures, fmt.Sprintf("rule-provider %s: %v", res.rp.Name, res.err))
 			continue
 		}
 		if res.changed {
 			if err := system.AtomicWrite(res.rp.Path, res.data.Data, 0600); err != nil {
+				prior, _ := provider.ReadMetadata(res.rp.Path)
+				_ = provider.WriteMetadata(res.rp.Path, providerAttemptMetadata(prior, res.data, now, err, res.rp.URL))
 				failures = append(failures, fmt.Sprintf("rule-provider %s: write failed: %v", res.rp.Name, err))
 				continue
 			}
@@ -784,6 +891,8 @@ func (m Manager) updateRuleProvidersAsync(ctx context.Context, ruleProviders []c
 			if m.artifactCacheEnabled() && m.shouldWriteArtifact(res.rp, len(res.data.Data)) && !strings.EqualFold(res.rp.Format, "mrs") {
 				artifactMeta, err := provider.EnsureArtifact(m.artifactWorkdir(), res.rp.Name, res.rp.Format, res.meta.Checksum, res.data.Data)
 				if err != nil {
+					prior, _ := provider.ReadMetadata(res.rp.Path)
+					_ = provider.WriteMetadata(res.rp.Path, providerAttemptMetadata(prior, res.data, now, err, res.rp.URL))
 					failures = append(failures, fmt.Sprintf("rule-provider %s: artifact failed: %v", res.rp.Name, err))
 					continue
 				}
@@ -1047,6 +1156,24 @@ func validateConfigHardening(c config.Config) error {
 	if c.Settings.UpdateConcurrency < 0 || c.Settings.UpdateConcurrency > 8 {
 		return fmt.Errorf("update_concurrency must be between 0 and 8")
 	}
+	if c.Settings.ProxyGuardEnabled {
+		switch {
+		case c.Settings.ProxyGuardMinMembers < 1 || c.Settings.ProxyGuardMinMembers > 1024:
+			return fmt.Errorf("proxy_guard_min_members must be between 1 and 1024")
+		case c.Settings.ProxyGuardMinDownKbps < 1 || c.Settings.ProxyGuardMinDownKbps > 1000000:
+			return fmt.Errorf("proxy_guard_min_down_kbps must be between 1 and 1000000")
+		case c.Settings.ProxyGuardProbeBytes < 64<<10 || c.Settings.ProxyGuardProbeBytes > 16<<20:
+			return fmt.Errorf("proxy_guard_probe_bytes must be between 65536 and 16777216")
+		case c.Settings.ProxyGuardMaxJitterMS < 1 || c.Settings.ProxyGuardMaxJitterMS > 60000:
+			return fmt.Errorf("proxy_guard_max_jitter_ms must be between 1 and 60000")
+		case c.Settings.ProxyGuardActiveProbeInterval < 60:
+			return fmt.Errorf("proxy_guard_active_probe_interval must be at least 60 seconds")
+		case c.Settings.ProxyGuardFleetProbeInterval < 300 || c.Settings.ProxyGuardFleetProbeInterval > 604800:
+			return fmt.Errorf("proxy_guard_fleet_probe_interval must be between 300 and 604800 seconds")
+		case c.Settings.ProxyGuardQuarantineSeconds < 60:
+			return fmt.Errorf("proxy_guard_quarantine_seconds must be at least 60 seconds")
+		}
+	}
 	for _, listen := range []struct{ name, value string }{{"dns_listen", c.Settings.DNSListen}, {"dns.listen", c.DNS.Listen}} {
 		if listen.value != "" {
 			if err := validateHostPort(listen.name, listen.value); err != nil {
@@ -1065,6 +1192,9 @@ func validateConfigHardening(c config.Config) error {
 			return fmt.Errorf("section %q has unsafe name", s.Name)
 		}
 		if s.Enabled && s.Action == "proxy" {
+			if generator.IsProxyGuardCandidate(s.ProxyGroup) {
+				return fmt.Errorf("section %q proxy_group %q uses PureWRT's reserved proxy-guard prefix", s.Name, s.ProxyGroup)
+			}
 			if mihomoReservedGroupNames[s.ProxyGroup] {
 				return fmt.Errorf("section %q proxy_group %q is a reserved mihomo/PureWRT group name; choose another", s.Name, s.ProxyGroup)
 			}
@@ -1341,16 +1471,21 @@ func (m Manager) Apply() error {
 
 func (m Manager) ApplyWithOptions(force bool) error {
 	applyStart := time.Now()
+	metrics.ApplyLastAttempt.Set(float64(applyStart.Unix()))
 	c, backup, staged, gen, cleanup, err := m.applyPrepare(force)
 	if err != nil {
-		metrics.ApplyTotal.WithLabelValues("prepare_error")
+		metrics.ApplyLastRunSuccess.Set(0)
+		metrics.ApplyDurationSeconds.Observe(time.Since(applyStart).Seconds())
+		if c.Settings.RuntimeDir != "" {
+			dumpMetrics(c)
+		}
 		return err
 	}
-	// Observe duration for every completed attempt (outcome lives in
-	// ApplyTotal) and persist the registry for purewrt-api's /metrics —
-	// observations happen in this CLI process, scrapes in the daemon.
+	// Observe duration for every completed attempt and persist the registry
+	// for purewrt-api's /metrics — observations happen in this CLI process,
+	// scrapes in the daemon.
 	defer func() {
-		metrics.ApplyDurationMS.Observe(float64(time.Since(applyStart).Milliseconds()))
+		metrics.ApplyDurationSeconds.Observe(time.Since(applyStart).Seconds())
 		dumpMetrics(c)
 	}()
 	log := newLog(c)
@@ -1360,24 +1495,18 @@ func (m Manager) ApplyWithOptions(force bool) error {
 	r := system.Runner{DryRun: m.DryRun}
 	if err := m.applyWithRunner(c, backup, staged, gen, r); err != nil {
 		log.Error("apply: failed: %v", err)
-		metrics.ApplyTotal.WithLabelValues("error")
+		metrics.ApplyLastRunSuccess.Set(0)
 		return err
 	}
 	log.Info("apply: complete")
-	metrics.ApplyTotal.WithLabelValues("ok")
+	metrics.ApplyLastRunSuccess.Set(1)
+	metrics.ApplyLastSuccess.Set(float64(time.Now().Unix()))
 	// Reconcile provider dirs against config now that the apply committed:
 	// remove rulesets/providers/cache files for providers that no longer
 	// exist (deleted in the UI, dropped by a wizard reset, etc.). Runs only
 	// on a successful apply; config is already persisted so c is authoritative.
 	if removed := m.PruneOrphanProviderFiles(c, false); len(removed) > 0 {
 		log.Info("apply: pruned %d orphan provider file(s)", len(removed))
-	}
-	// Snapshot a couple of static gauges on every successful apply so the
-	// /metrics endpoint reflects the post-apply state without needing a
-	// dedicated background sampler.
-	metrics.ZapretStrategiesActive.Set(float64(countEnabledZapretStrategies(c)))
-	if minSecs, ok := minSubscriptionSecondsToExpiry(c); ok {
-		metrics.SubscriptionMinSecondsToExpiry.Set(minSecs)
 	}
 	return nil
 }
@@ -2173,10 +2302,10 @@ func (m Manager) applyRollback(c config.Config, backup system.BackupSet, r comma
 	log.Warn("rollback: starting cause=%v", cause)
 	if restoreErr := m.restoreAndReload(c, backup, r); restoreErr != nil {
 		log.Error("rollback: failed: %v", restoreErr)
-		return fmt.Errorf("%w; rollback failed: %v", cause, restoreErr)
+		return &applyRollbackError{cause: cause, restore: restoreErr}
 	}
 	log.Info("rollback: complete")
-	return cause
+	return &applyRollbackError{cause: cause}
 }
 
 func isPolicyDelete(parts []string) bool {

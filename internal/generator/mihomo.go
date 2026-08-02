@@ -6,9 +6,37 @@ import (
 	"strings"
 
 	"github.com/purewrt/purewrt/internal/config"
+	"github.com/purewrt/purewrt/internal/proxyguard"
 )
 
 func Mihomo(c config.Config) []byte {
+	var state *proxyguard.State
+	if c.Settings.ProxyGuardEnabled {
+		if loaded, err := proxyguard.Load(c); err == nil {
+			state = &loaded
+		} else {
+			fmt.Fprintf(os.Stderr, "warning: proxy guard state ignored: %v\n", err)
+		}
+	}
+	out, err := MihomoWithProxyGuardState(c, state)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: proxy guard overlay ignored: %v\n", err)
+		return mihomoWithMixin(c)
+	}
+	return out
+}
+
+// MihomoWithProxyGuardState renders an explicit guard state. The manager uses
+// this for transactional preview/validate/reload before committing new state.
+func MihomoWithProxyGuardState(c config.Config, state *proxyguard.State) ([]byte, error) {
+	base := mihomoWithMixin(c)
+	if !c.Settings.ProxyGuardEnabled {
+		return base, nil
+	}
+	return applyProxyGuardOverlay(base, c, state)
+}
+
+func mihomoWithMixin(c config.Config) []byte {
 	base := renderMihomoBase(c)
 	// Optional mixin: deep-merges user overrides from <Workdir>/mihomo-mixin.yaml
 	// into the generated base. No-op when Settings.MihomoMixinEnabled is
@@ -111,6 +139,15 @@ func renderMihomoBase(c config.Config) []byte {
 	b.WriteString("  fallback:\n")
 	for _, u := range c.DNS.UDPUpstreams {
 		b.WriteString("    - " + u + "\n")
+	}
+	// Mihomo defaults dns.fallback-filter.geoip to true. Merely setting
+	// geodata-mode=false does not disable geodata; with any fallback servers
+	// configured it lazily loads (and, when absent, downloads) geoip.metadb.
+	// PureWRT does not use Mihomo GEOIP matching when its geodata option is
+	// disabled, so override that implicit dependency explicitly. Geo-backed
+	// PureWRT rule providers are materialised independently from geo/*.dat.
+	if !mihomoGeodataEnabled(c) {
+		b.WriteString("  fallback-filter:\n    geoip: false\n")
 	}
 	b.WriteString("  nameserver:\n")
 	for _, u := range c.DNS.DoHUpstreams {

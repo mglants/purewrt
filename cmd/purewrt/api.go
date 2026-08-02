@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
+	"strings"
 
 	"github.com/purewrt/purewrt/internal/manager"
 	"github.com/purewrt/purewrt/internal/metrics"
@@ -79,17 +79,31 @@ func newHandler(m manager.Manager) http.Handler {
 			http.Error(w, "metrics disabled (set option metrics_enabled '1' in /etc/config/purewrt)", http.StatusForbidden)
 			return
 		}
-		// Apply/update observations live in the short-lived `purewrt` CLI
-		// process, which dumps its registry to metrics.prom on every
-		// apply/update. Prefer that snapshot — this daemon's own registry
-		// only ever sees the handful of in-process manager calls. (Serving
-		// both would emit duplicate TYPE lines, which Prometheus rejects.)
-		if data, err := os.ReadFile(filepath.Join(c.RuntimeDir(), "metrics.prom")); err == nil && len(data) > 0 {
-			w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
-			_, _ = w.Write(data)
-			return
+		// Latest-state gauges and duration histograms are merged by short-lived
+		// CLI processes into metrics-state.json. Compose that state with observations made by
+		// this long-lived API process (for example /analyze downloads), without
+		// persisting or resetting those in-process deltas on every scrape. An old
+		// package may have left a legacy whole-process metrics.prom that would
+		// duplicate the live families appended below.
+		base := metrics.Default.Render()
+		persistentValid := 1.0
+		if data, err := os.ReadFile(manager.MetricsStatePath(c)); err == nil {
+			if _, rendered, err := metrics.MergePersistent(data, metrics.Default); err == nil {
+				base = rendered
+			} else {
+				persistentValid = 0
+			}
+		} else if !os.IsNotExist(err) {
+			persistentValid = 0
 		}
-		metrics.Handler().ServeHTTP(w, r)
+		scrape := metrics.NewRegistry()
+		scrape.NewGauge("purewrt_metrics_persistent_state_valid", "Whether persistent event metrics state is absent or loaded successfully (1=yes, 0=no)").Set(persistentValid)
+		live := m.LiveMetrics(c)
+		if base != "" && !strings.HasSuffix(base, "\n") {
+			base += "\n"
+		}
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+		_, _ = w.Write([]byte(base + scrape.Render() + live))
 	})
 	// /live — Server-Sent Events bridge over mihomo's /traffic and
 	// /connections WebSockets. Query param ?stream=traffic|connections|both

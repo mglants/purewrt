@@ -5,6 +5,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/purewrt/purewrt/internal/generator"
 )
 
 // ProxyGroupMember is one selectable node inside a group, enriched with
@@ -52,6 +54,9 @@ func (m Manager) ProxyGroups() ([]ProxyGroupInfo, error) {
 	}
 	var out []ProxyGroupInfo
 	for name, p := range proxies {
+		if generator.IsProxyGuardCandidate(name) {
+			continue
+		}
 		if len(p.All) == 0 || !slices.Contains(listableGroupTypes, p.Type) {
 			continue
 		}

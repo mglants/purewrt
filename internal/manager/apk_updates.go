@@ -35,7 +35,7 @@ type PackageUpdate struct {
 // All three are PureWRT-feed-owned (or its bundled dependencies). Any
 // other apk upgrades are out of scope for this banner — LuCI's own
 // Software page is the right place for general package management.
-var packagesToTrack = []string{"purewrt", "mihomo-alpha", "zapret"}
+var packagesToTrack = []string{"purewrt", "mihomo-alpha", "zapret", "easytier", "ooniprobe"}
 
 // apkUpdateCacheFile holds the timestamp of the last successful
 // `apk update`. Used to rate-limit hitting the repo to once per hour

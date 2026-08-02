@@ -10,6 +10,8 @@ OONI_CRON_START="# PureWRT ooni run start"
 OONI_CRON_END="# PureWRT ooni run end"
 NETCHECK_CRON_START="# PureWRT net-check start"
 NETCHECK_CRON_END="# PureWRT net-check end"
+PROXY_GUARD_CRON_START="# PureWRT proxy-guard start"
+PROXY_GUARD_CRON_END="# PureWRT proxy-guard end"
 MESH_CRON_START="# PureWRT mesh sync start"
 MESH_CRON_END="# PureWRT mesh sync end"
 log_level_num() {
@@ -328,6 +330,7 @@ install_cron() {
     remove_mihomo_cron_entry quiet
     remove_ooni_cron_entry quiet
     remove_netcheck_cron_entry quiet
+    remove_proxy_guard_cron_entry quiet
     remove_mesh_cron_entry quiet
     nicev="$(uci -q get purewrt.settings.update_nice)"; [ -n "$nicev" ] || nicev=19
     ioc="$(uci -q get purewrt.settings.update_ionice_class)"; [ -n "$ioc" ] || ioc=3
@@ -421,6 +424,23 @@ install_cron() {
         log_msg info "cron: net-check disabled"
     fi
 
+    # Adaptive proxy guard: cheap latency sweep each tick, with bounded real
+    # transfers only when an active/suspect/recovering node is due.
+    proxy_guard_enabled="$(uci -q get purewrt.settings.proxy_guard_enabled)"
+    if [ "$proxy_guard_enabled" = "1" ]; then
+        proxy_guard_schedule="$(uci -q get purewrt.settings.proxy_guard_cron)"
+        [ -n "$proxy_guard_schedule" ] || proxy_guard_schedule='*/5 * * * *'
+        proxy_guard_cmd="$prefix /usr/bin/purewrt proxy-guard run 2>&1 | logger -t purewrt-cron"
+        log_msg info "cron: installing proxy-guard schedule='$proxy_guard_schedule'"
+        {
+            echo "$PROXY_GUARD_CRON_START"
+            echo "$proxy_guard_schedule $proxy_guard_cmd"
+            echo "$PROXY_GUARD_CRON_END"
+        } >> /etc/crontabs/root
+    else
+        log_msg info "cron: proxy-guard disabled"
+    fi
+
     # Friend-mesh peer discovery — reconciles persisted peers against the
     # live overlay. Gated on mesh membership; schedule from mesh.sync_cron.
     mesh_enabled="$(uci -q get purewrt.mesh.enabled)"
@@ -492,6 +512,17 @@ remove_netcheck_cron_entry() {
     [ "$mode" = "quiet" ] || log_msg info "disable: PureWRT net-check cron entry already absent"
     return 1
 }
+remove_proxy_guard_cron_entry() {
+    mode="$1"
+    [ -f /etc/crontabs/root ] || return 1
+    if grep -qF "$PROXY_GUARD_CRON_START" /etc/crontabs/root 2>/dev/null; then
+        [ "$mode" = "quiet" ] || log_msg warn "disable: removing PureWRT proxy-guard cron entry"
+        sed -i "\|$PROXY_GUARD_CRON_START|,\|$PROXY_GUARD_CRON_END|d" /etc/crontabs/root 2>/dev/null || true
+        return 0
+    fi
+    [ "$mode" = "quiet" ] || log_msg info "disable: PureWRT proxy-guard cron entry already absent"
+    return 1
+}
 remove_mesh_cron_entry() {
     mode="$1"
     [ -f /etc/crontabs/root ] || return 1
@@ -509,6 +540,7 @@ disable() {
     remove_mihomo_cron_entry   && removed=1
     remove_ooni_cron_entry     && removed=1
     remove_netcheck_cron_entry && removed=1
+    remove_proxy_guard_cron_entry && removed=1
     remove_mesh_cron_entry     && removed=1
     [ "$removed" = "1" ] && reload_cron
     name="$(basename "$initscript")"

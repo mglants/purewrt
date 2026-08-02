@@ -7,55 +7,228 @@
 #     static_configs:
 #       - targets: ['192.168.1.1:8787']
 #
-# Note: apply/update metrics are observed by the purewrt CLI and bridged
-# to the daemon via /tmp/purewrt/metrics.prom — they refresh on every
-# apply/update, not continuously.
+# Note: latest-state gauges and duration histograms are merged across
+# short-lived CLI processes in /tmp/purewrt/metrics-state.json. File ages,
+# expiry countdowns, nftset sizes and proxy-guard membership are evaluated at
+# scrape time.
 groups:
   - name: purewrt
     rules:
-      - alert: PurewrtApplyFailing
-        expr: increase(purewrt_apply_total{result=~"error|rollback|prepare_error"}[1h]) > 0
+      - alert: PurewrtApplyLastRunFailed
+        expr: purewrt_apply_last_run_success == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The latest PureWRT apply failed on {{ $labels.instance }}"
+          description: "Check the apply log and rollback result before changing routing configuration again."
+
+      - alert: PurewrtManagedServiceDown
+        expr: purewrt_service_up{service=~"mihomo|dnsmasq"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PureWRT dependency {{ $labels.service }} is down on {{ $labels.instance }}"
+
+      - alert: PurewrtMihomoControllerDown
+        expr: purewrt_service_up{service="mihomo"} == 1 and on(instance) purewrt_mihomo_controller_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "mihomo runs but its controller is unavailable on {{ $labels.instance }}"
+          description: "The process may be stuck or may have rejected its generated configuration/secret."
+
+      - alert: PurewrtOptionalServiceDown
+        expr: purewrt_service_up{service=~"mesh|zapret/.+"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PureWRT service {{ $labels.service }} is down on {{ $labels.instance }}"
+
+      - alert: PurewrtMeshCollectionFailed
+        expr: purewrt_mesh_collection_success == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PureWRT cannot collect mesh {{ $labels.source }} health on {{ $labels.instance }}"
+
+      - alert: PurewrtMeshFriendLinkDown
+        expr: purewrt_mesh_friend_link_up == 0 and on(instance) purewrt_mesh_collection_success{source="overlay"} == 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Mesh link to friend {{ $labels.friend }} is down"
+
+      - alert: PurewrtMeshFriendExitDown
+        expr: purewrt_mesh_friend_exit_up == 0 and on(instance) purewrt_mesh_collection_success{source="mihomo"} == 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Mesh friend exit {{ $labels.friend }} is unhealthy"
+
+      - alert: PurewrtPackageUpgradeAvailable
+        expr: purewrt_upgrade_available == 1
         for: 15m
         labels:
-          severity: critical
+          severity: info
         annotations:
-          summary: "PureWRT apply is failing on {{ $labels.instance }}"
-          description: "{{ $value }} failed/rolled-back applies in the last hour. Routing may be running on stale state."
+          summary: "Package {{ $labels.package }} has an upgrade available on {{ $labels.instance }}"
 
-      - alert: PurewrtProviderDownloadErrors
-        expr: increase(purewrt_provider_download_total{result="error"}[6h]) > 3
+      - alert: PurewrtUpdateJobErrors
+        expr: purewrt_update_last_run_success == 0
         labels:
           severity: warning
         annotations:
-          summary: "Provider downloads erroring on {{ $labels.instance }}"
-          description: "Subscriptions/rule providers failed to refresh repeatedly — check connectivity, the bootstrap DoH pool, or the subscription URL."
+          summary: "The latest PureWRT update job {{ $labels.job }} did not fully succeed"
+
+      - alert: PurewrtSubscriptionUpdateStale
+        expr: time() - purewrt_update_last_success_timestamp_seconds{job="subscriptions"} > 48 * 3600
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No successful subscription/provider update for 48 hours"
+
+      - alert: PurewrtProviderLatestUpdateFailed
+        expr: purewrt_provider_update_success == 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Provider {{ $labels.type }}/{{ $labels.provider }} latest update failed"
+
+      - alert: PurewrtMetricsStateInvalid
+        expr: purewrt_metrics_persistent_state_valid == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PureWRT persistent metrics state is invalid on {{ $labels.instance }}"
+          description: "Latest operation state is temporarily unavailable; the next instrumented operation will rebuild the tmpfs state."
 
       - alert: PurewrtSubscriptionExpiringSoon
-        expr: 0 < purewrt_subscription_min_seconds_to_expiry < 7 * 86400
+        expr: purewrt_subscription_expiry_timestamp_seconds - time() > 0 and purewrt_subscription_expiry_timestamp_seconds - time() < 7 * 86400
         labels:
           severity: warning
         annotations:
-          summary: "A PureWRT subscription expires in under 7 days"
+          summary: "PureWRT subscription {{ $labels.subscription }} expires in under 7 days"
 
       - alert: PurewrtSubscriptionExpired
-        expr: purewrt_subscription_min_seconds_to_expiry <= 0
+        expr: purewrt_subscription_expiry_timestamp_seconds <= time()
         labels:
           severity: critical
         annotations:
-          summary: "A PureWRT subscription has expired"
+          summary: "PureWRT subscription {{ $labels.subscription }} has expired"
 
       - alert: PurewrtGeoDataStale
-        expr: purewrt_geoip_data_age_seconds > 14 * 86400
+        expr: time() - purewrt_geodata_modified_timestamp_seconds > 14 * 86400
         labels:
           severity: warning
         annotations:
-          summary: "Geo data older than 14 days on {{ $labels.instance }}"
-          description: "geosite/geoip refresh (cron `geo-refresh`) appears to have stopped."
+          summary: "Geo dataset {{ $labels.dataset }} is older than 14 days on {{ $labels.instance }}"
+          description: "The geo-refresh job appears to have stopped or this dataset is no longer updating."
+
+      - alert: PurewrtNftsetCollectionFailed
+        expr: purewrt_nftset_collection_success == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PureWRT cannot inspect its live nftsets on {{ $labels.instance }}"
+          description: "The nft table/set may be missing or the metrics collector timed out; cardinality series are suppressed while collection is invalid."
 
       - alert: PurewrtSlowGenerate
-        expr: histogram_quantile(0.95, rate(purewrt_generate_duration_ms_bucket[6h])) > 5000
+        expr: histogram_quantile(0.95, sum by (instance, le) (rate(purewrt_generate_duration_seconds_bucket{result="generated"}[6h]))) > 5
         labels:
           severity: warning
         annotations:
-          summary: "PureWRT generation p95 above 5s"
+          summary: "PureWRT complete generation p95 above 5s"
           description: "Rule-provider growth or a broken artifact cache is slowing generation — check `purewrt generate-cache-status`."
+
+      - alert: PurewrtNetCheckFailed
+        expr: purewrt_netcheck_verdict == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The latest PureWRT net-check failed on {{ $labels.instance }}"
+
+      - alert: PurewrtNetCheckLayerFailed
+        expr: purewrt_netcheck_layer_status{status="fail"} == 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The latest PureWRT net-check layer {{ $labels.layer }} failed"
+
+      - alert: PurewrtNetCheckStale
+        expr: time() - purewrt_netcheck_last_run_timestamp_seconds > 24 * 3600
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PureWRT net-check has not run for 24 hours on {{ $labels.instance }}"
+
+      - alert: PurewrtResolverProbeFailures
+        expr: purewrt_resolver_probe_success == 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "Bootstrap resolver {{ $labels.endpoint }} failed a PureWRT probe"
+
+      - alert: PurewrtProxyGuardStateInvalid
+        expr: purewrt_proxy_guard_enabled == 1 and purewrt_proxy_guard_state_valid == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PureWRT proxy-guard state is unreadable on {{ $labels.instance }}"
+          description: "The guard refuses to trust a corrupt runtime state; inspect `purewrt proxy-guard status`."
+
+      - alert: PurewrtProxyGuardNeverSucceeded
+        expr: purewrt_proxy_guard_enabled == 1 unless on(instance) purewrt_proxy_guard_last_success_timestamp_seconds
+        for: 20m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PureWRT proxy guard has not completed successfully on {{ $labels.instance }}"
+
+      - alert: PurewrtProxyGuardLastRunFailed
+        expr: purewrt_proxy_guard_enabled == 1 and on(instance) purewrt_proxy_guard_last_run_success == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The latest PureWRT proxy-guard run failed on {{ $labels.instance }}"
+
+      - alert: PurewrtProxyGuardStale
+        expr: purewrt_proxy_guard_enabled == 1 and on(instance) (time() - purewrt_proxy_guard_last_success_timestamp_seconds > 20 * 60)
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PureWRT proxy guard is stale on {{ $labels.instance }}"
+          description: "No successful guard run for over 20 minutes; the default cron interval is 5 minutes."
+
+      - alert: PurewrtProxyGuardUsingLastResort
+        expr: purewrt_proxy_guard_group_members{role="last_resort"} > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Proxy group {{ $labels.group }} is retaining quarantined last-resort members"
+          description: "Healthy membership fell below the configured safety floor."
+
+      - alert: PurewrtProxyGuardNoEffectiveMembers
+        expr: purewrt_proxy_guard_group_members{role="effective"} == 0 and on(instance, group) purewrt_proxy_guard_group_members{role="candidate"} > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Proxy group {{ $labels.group }} has no effective members"

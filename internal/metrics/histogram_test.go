@@ -7,11 +7,7 @@ import (
 )
 
 func (r *testRegistry) newHistogram(name, help string, buckets []float64, keys ...string) *Histogram {
-	h := &Histogram{name: name, help: help, labelKey: append([]string(nil), keys...), buckets: append([]float64(nil), buckets...), samples: map[string]*histSample{}}
-	r.mu.Lock()
-	r.histograms[name] = h
-	r.mu.Unlock()
-	return h
+	return r.Registry.NewHistogram(name, help, buckets, keys...)
 }
 
 func TestHistogramRender(t *testing.T) {
@@ -51,9 +47,25 @@ func TestHistogramInfEqualsCount(t *testing.T) {
 	}
 }
 
+func TestHistogramPreservesFractionalSeconds(t *testing.T) {
+	r := freshRegistry(t)
+	h := r.newHistogram("purewrt_test_seconds", "X", DurationBucketsSeconds, "stage")
+	h.Observe(0.0004, "nft")
+	out := r.Render()
+	for _, want := range []string{
+		`purewrt_test_seconds_bucket{stage="nft",le="0.001"} 1`,
+		`purewrt_test_seconds_sum{stage="nft"} 0.0004`,
+		`purewrt_test_seconds_count{stage="nft"} 1`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("fractional observation missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestHistogramConcurrentObserve(t *testing.T) {
 	r := freshRegistry(t)
-	h := r.newHistogram("purewrt_test_ms", "X", DurationBucketsMS, "g")
+	h := r.newHistogram("purewrt_test_seconds", "X", OperationDurationBucketsSeconds, "g")
 	var wg sync.WaitGroup
 	for w := range 8 {
 		wg.Add(1)
@@ -66,7 +78,7 @@ func TestHistogramConcurrentObserve(t *testing.T) {
 	}
 	wg.Wait()
 	out := r.Render()
-	if !strings.Contains(out, `purewrt_test_ms_count{g="x"} 8000`) {
+	if !strings.Contains(out, `purewrt_test_seconds_count{g="x"} 8000`) {
 		t.Fatalf("lost observations:\n%s", out)
 	}
 }

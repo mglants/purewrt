@@ -101,11 +101,25 @@ type MihomoAutoUpdateResult struct {
 // asset-derived version differs from what's installed. The downstream
 // install path already auto-reverts on warmup fail; this method just
 // surfaces that outcome in the report so cron logs are useful.
-func (m Manager) MihomoAutoUpdate() (MihomoAutoUpdateResult, error) {
+func (m Manager) MihomoAutoUpdate() (result MihomoAutoUpdateResult, retErr error) {
+	started := time.Now()
 	c, err := m.Load()
 	if err != nil {
+		recordUpdateRun("mihomo", "error", started)
+		dumpMetrics(c)
 		return MihomoAutoUpdateResult{}, err
 	}
+	defer func() {
+		outcome := updateRunResult(retErr)
+		switch result.Action {
+		case "disabled":
+			outcome = "skipped"
+		case "auto-reverted":
+			outcome = "error"
+		}
+		recordUpdateRun("mihomo", outcome, started)
+		dumpMetrics(c)
+	}()
 	channel := c.Settings.MihomoChannel
 	if channel == "" {
 		channel = "alpha"

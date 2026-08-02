@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/purewrt/purewrt/internal/config"
+	"github.com/purewrt/purewrt/internal/metrics"
+	"github.com/purewrt/purewrt/internal/provider"
 )
 
 func TestUpdateDetailedForceBypassesProviderIntervals(t *testing.T) {
@@ -76,6 +78,24 @@ func TestUpdateDetailedForceBypassesProviderIntervals(t *testing.T) {
 	if string(ruleData) != "example.com\n" {
 		t.Fatalf("rule provider was not force refreshed, got %q", ruleData)
 	}
+	state, err := os.ReadFile(filepath.Join(c.Settings.RuntimeDir, "metrics-state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rendered, err := metrics.RenderPersistent(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`purewrt_update_last_attempt_timestamp_seconds{job="subscriptions"} `,
+		`purewrt_update_last_success_timestamp_seconds{job="subscriptions"} `,
+		`purewrt_update_last_run_success{job="subscriptions"} 1`,
+		`purewrt_update_last_run_duration_seconds{job="subscriptions"} `,
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("missing update metric %q:\n%s", want, rendered)
+		}
+	}
 }
 
 // TestUpdatePartialFailureWrapsErrPartialUpdate guards the soft-continue
@@ -110,6 +130,10 @@ func TestUpdatePartialFailureWrapsErrPartialUpdate(t *testing.T) {
 	c.ProxyProviders = []config.ProxyProvider{{Name: "main", Enabled: true, URL: "file://" + proxySrc, Path: proxyPath, Interval: 86400}}
 	// file:// source that doesn't exist → this provider's download fails.
 	c.RuleProviders = []config.RuleProvider{{Name: "broken", Enabled: true, URL: "file://" + filepath.Join(dir, "missing.list"), Path: rulePath, Interval: 86400, Behavior: "domain", Format: "text", Section: "common", RouteAction: "proxy"}}
+	priorSuccess := time.Now().Add(-24 * time.Hour).UTC().Truncate(time.Second)
+	if err := provider.WriteMetadata(rulePath, provider.Metadata{LastUpdate: priorSuccess, LastSuccess: priorSuccess, EntryCount: 9, Checksum: "old"}); err != nil {
+		t.Fatal(err)
+	}
 	cfgPath := filepath.Join(dir, "purewrt.conf")
 	if err := config.Save(cfgPath, c); err != nil {
 		t.Fatal(err)
@@ -130,6 +154,24 @@ func TestUpdatePartialFailureWrapsErrPartialUpdate(t *testing.T) {
 	}
 	if string(proxyData) != "proxies: []\n" {
 		t.Fatalf("successful provider content must land despite sibling failure, got %q", proxyData)
+	}
+	failedMeta, err := provider.ReadMetadata(rulePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !failedMeta.LastSuccess.Equal(priorSuccess) || failedMeta.EntryCount != 9 || failedMeta.ErrorMessage == "" {
+		t.Fatalf("failed update did not preserve last success/count while recording the error: %+v", failedMeta)
+	}
+	state, err := os.ReadFile(filepath.Join(c.Settings.RuntimeDir, "metrics-state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rendered, err := metrics.RenderPersistent(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rendered, `purewrt_update_last_run_success{job="subscriptions"} 0`) {
+		t.Fatalf("partial update latest-status metric missing:\n%s", rendered)
 	}
 }
 

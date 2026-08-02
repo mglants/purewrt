@@ -16,6 +16,7 @@ func (m Manager) Preview(url string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	defer dumpMetrics(c)
 	a, err := m.Analyze(url)
 	if err != nil {
 		return "", err

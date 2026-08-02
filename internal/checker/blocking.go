@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -19,11 +20,60 @@ import (
 // TLS → HTTP — and stops at the first failure point, so the reported
 // verdict points at the actual block plane (DNS hijack vs IP block vs SNI
 // RST vs HTTP 451 etc).
+//
+// With UseTLS=false the probe speaks plain HTTP after the TCP phase. When
+// the server answers with a redirect to https:// on the same host (or its
+// www. twin) the probe automatically upgrades: it dials the redirect
+// target and continues with the TLS → HTTPS ladder, so `http://host`
+// targets still surface SNI-DPI signatures when the site itself insists
+// on TLS. Off-host redirects are never chased — an ISP 302-to-block-page
+// must not drag the probe to an attacker-chosen destination.
 type CanaryProbe struct {
 	Target   string // "youtube.com:443"
 	UseTLS   bool   // try a TLS handshake (port 443/8443 etc.)
 	HTTPHost string // override Host header on the post-TLS GET; empty derives from Target
+	Path     string // request path for the HTTP phase; empty means "/"
 	Timeout  time.Duration
+}
+
+// ParseTarget converts a user-supplied target string into a CanaryProbe.
+// Accepted forms:
+//
+//	host                        → host:443, TLS
+//	host:port                   → TLS on that port
+//	https://host[:port][/path]  → TLS (default 443), GET path
+//	http://host[:port][/path]   → plain HTTP (default 80); a same-host
+//	                              redirect to https:// auto-upgrades to
+//	                              the TLS ladder (see CanaryProbe)
+//
+// Malformed URLs keep the raw string as Target so runCanary reports the
+// "config" verdict instead of silently probing something else.
+func ParseTarget(raw string) CanaryProbe {
+	s := strings.TrimSpace(raw)
+	p := CanaryProbe{Target: s, UseTLS: true}
+	if !strings.Contains(s, "://") {
+		if _, _, err := net.SplitHostPort(s); err != nil {
+			p.Target = net.JoinHostPort(s, "443")
+		}
+		return p
+	}
+	u, err := url.Parse(s)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
+		return p
+	}
+	port := u.Port()
+	if port == "" {
+		port = "443"
+		if u.Scheme == "http" {
+			port = "80"
+		}
+	}
+	p.Target = net.JoinHostPort(u.Hostname(), port)
+	p.UseTLS = u.Scheme == "https"
+	if u.Path != "" && u.Path != "/" {
+		p.Path = u.Path
+	}
+	return p
 }
 
 // CanaryResult is the per-target outcome.
@@ -44,6 +94,10 @@ type CanaryProbe struct {
 //   - "tls_timeout"   : TLS handshake stalled
 //   - "tls_fail"      : other TLS error
 //   - "http_error"    : connection died during the request
+//   - "http_redirect" : plain-HTTP probe answered with a redirect that is
+//                        NOT a same-host https upgrade (those are followed
+//                        automatically) — a legit domain move or an ISP
+//                        block-page bounce; probe the Location to tell
 //   - "http_451"      : explicit "Unavailable For Legal Reasons"
 //   - "http_stub"     : status 200 with a known ISP stub-page marker in the
 //                        body ("заблокирован Роскомнадзор", etc.) — covers
@@ -77,6 +131,7 @@ const (
 	VerdictTLSTimeout     Verdict = "tls_timeout"
 	VerdictTLSFail        Verdict = "tls_fail"
 	VerdictHTTPError      Verdict = "http_error"
+	VerdictHTTPRedirect   Verdict = "http_redirect"
 	VerdictHTTP451        Verdict = "http_451"
 	VerdictHTTPStub       Verdict = "http_stub"
 	VerdictConfig         Verdict = "config"
@@ -98,12 +153,29 @@ type CanaryResult struct {
 	Confidence  Confidence    `json:"confidence,omitempty"`
 	Reason      string        `json:"reason,omitempty"`
 	Notes       []string      `json:"notes,omitempty"`
-	Latency     time.Duration `json:"latency_ms"`
+	// Latency is kept as a Duration for Go callers; the wire field is
+	// integer milliseconds. A bare `json:"latency_ms"` tag on the Duration
+	// would serialize nanoseconds under a _ms name — LuCI then shows
+	// "3200442570 ms" for a 3.2 s probe.
+	Latency     time.Duration `json:"-"`
+	LatencyMS   int64         `json:"latency_ms"`
 	ResolvedA   []string      `json:"resolved_a,omitempty"` // legacy: == SysIPs (kept for old JS callers)
 	SysIPs      []string      `json:"sys_ips,omitempty"`
 	StatusCode  int           `json:"status_code,omitempty"`
 	StubMarker  string        `json:"stub_marker,omitempty"`
 }
+
+// canaryUserAgent is sent on every canary HTTP request. Chosen empirically —
+// both extremes distort the answer we're trying to measure:
+//   - Go's default "Go-http-client/…" trips informative-UA policies
+//     (Wikimedia serves 403 over HTTPS to anonymous default UAs);
+//   - a fake browser UA trips anti-bot consistency checks, because the
+//     accompanying headers/TLS fingerprint don't match the claimed browser
+//     (Facebook serves 400 to a Chrome UA coming from a Go client).
+//
+// An honest, identifiable product UA passes both. Don't "upgrade" this to
+// a Mozilla/Chrome string — that's the regression, not the fix.
+const canaryUserAgent = "PureWRT-canary/1.0 (OpenWrt; +https://github.com/purewrt/purewrt)"
 
 // StubMarkers are substrings that appear on the polite "you're blocked"
 // pages ISPs sometimes serve back as HTTP 200. Matched against the first
@@ -137,21 +209,20 @@ func DefaultBlockingCanaries() []CanaryProbe {
 // in a blocked zone, most of these will fail with telltale signatures.
 // Aligned with rkn-block-checker's BLACK_URLS.
 func DefaultBlacklistCanaries() []CanaryProbe {
-	t := 5 * time.Second
-	return []CanaryProbe{
-		{Target: "www.instagram.com:443", UseTLS: true, HTTPHost: "www.instagram.com", Timeout: t},
-		{Target: "www.facebook.com:443", UseTLS: true, HTTPHost: "www.facebook.com", Timeout: t},
-		{Target: "x.com:443", UseTLS: true, HTTPHost: "x.com", Timeout: t},
-		{Target: "www.linkedin.com:443", UseTLS: true, HTTPHost: "www.linkedin.com", Timeout: t},
-		{Target: "discord.com:443", UseTLS: true, HTTPHost: "discord.com", Timeout: t},
-		{Target: "rutracker.org:443", UseTLS: true, HTTPHost: "rutracker.org", Timeout: t},
-		{Target: "www.torproject.org:443", UseTLS: true, HTTPHost: "www.torproject.org", Timeout: t},
-		{Target: "protonvpn.com:443", UseTLS: true, HTTPHost: "protonvpn.com", Timeout: t},
-		{Target: "www.deepl.com:443", UseTLS: true, HTTPHost: "www.deepl.com", Timeout: t},
-		{Target: "www.patreon.com:443", UseTLS: true, HTTPHost: "www.patreon.com", Timeout: t},
-		{Target: "meduza.io:443", UseTLS: true, HTTPHost: "meduza.io", Timeout: t},
-		{Target: "www.dw.com:443", UseTLS: true, HTTPHost: "www.dw.com", Timeout: t},
-	}
+	return defaultCanaries([]string{
+		"https://www.instagram.com",
+		"https://www.facebook.com",
+		"https://x.com",
+		"https://www.linkedin.com",
+		"https://discord.com",
+		"https://rutracker.org",
+		"https://www.torproject.org",
+		"https://protonvpn.com",
+		"https://www.deepl.com",
+		"https://www.patreon.com",
+		"https://meduza.io",
+		"https://www.dw.com",
+	})
 }
 
 // DefaultWhitelistCanaries returns the "control should always work" probe
@@ -161,17 +232,31 @@ func DefaultBlacklistCanaries() []CanaryProbe {
 // "inconclusive". Aligned with rkn-block-checker's WHITE_URLS; localized
 // for RU. For other locales the operator should override via UCI.
 func DefaultWhitelistCanaries() []CanaryProbe {
-	t := 5 * time.Second
-	return []CanaryProbe{
-		{Target: "www.gosuslugi.ru:443", UseTLS: true, HTTPHost: "www.gosuslugi.ru", Timeout: t},
-		{Target: "ya.ru:443", UseTLS: true, HTTPHost: "ya.ru", Timeout: t},
-		{Target: "www.sberbank.ru:443", UseTLS: true, HTTPHost: "www.sberbank.ru", Timeout: t},
-		{Target: "vk.com:443", UseTLS: true, HTTPHost: "vk.com", Timeout: t},
-		{Target: "www.ozon.ru:443", UseTLS: true, HTTPHost: "www.ozon.ru", Timeout: t},
-		{Target: "www.avito.ru:443", UseTLS: true, HTTPHost: "www.avito.ru", Timeout: t},
-		{Target: "lenta.ru:443", UseTLS: true, HTTPHost: "lenta.ru", Timeout: t},
-		{Target: "rutube.ru:443", UseTLS: true, HTTPHost: "rutube.ru", Timeout: t},
+	return defaultCanaries([]string{
+		"https://www.gosuslugi.ru",
+		"https://ya.ru",
+		"https://www.sberbank.ru",
+		"https://vk.com",
+		"https://www.ozon.ru",
+		"https://www.avito.ru",
+		"https://lenta.ru",
+		"https://rutube.ru",
+	})
+}
+
+// defaultCanaries expands URL-form default targets through the same
+// ParseTarget path user input takes, so the curated lists and the LuCI
+// DEFAULT_* mirrors (resources/view/purewrt/blocking.js) can share one
+// spelling. https://host parses to host:443 + TLS — identical probes to
+// the historical host:443 literals.
+func defaultCanaries(urls []string) []CanaryProbe {
+	out := make([]CanaryProbe, 0, len(urls))
+	for _, u := range urls {
+		p := ParseTarget(u)
+		p.Timeout = 5 * time.Second
+		out = append(out, p)
 	}
+	return out
 }
 
 // BlockingHeuristics runs every probe and returns one result each. The DoH
@@ -204,10 +289,15 @@ func BlockingHeuristics(ctx context.Context, probes []CanaryProbe) []CanaryResul
 	return out
 }
 
-func runCanary(ctx context.Context, p CanaryProbe) CanaryResult {
-	r := CanaryResult{Target: p.Target}
+func runCanary(ctx context.Context, p CanaryProbe) (r CanaryResult) {
+	// Named return: the deferred Latency stamp must land in the value the
+	// caller sees, not in a local copied away by `return r`.
+	r.Target = p.Target
 	t0 := time.Now()
-	defer func() { r.Latency = time.Since(t0) }()
+	defer func() {
+		r.Latency = time.Since(t0)
+		r.LatencyMS = r.Latency.Milliseconds()
+	}()
 
 	timeout := p.Timeout
 	if timeout <= 0 {
@@ -215,6 +305,15 @@ func runCanary(ctx context.Context, p CanaryProbe) CanaryResult {
 	}
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+
+	// A scheme surviving into Target means ParseTarget rejected the URL
+	// (bad syntax or a non-http scheme). Without this guard SplitHostPort
+	// happily splits "ftp://x" into host "ftp" and misreports a DNS block.
+	if strings.Contains(p.Target, "://") {
+		r.Verdict, r.Confidence = VerdictConfig, ConfidenceLow
+		r.Reason = "unsupported target URL — use host, host:port, or an http(s):// URL"
+		return r
+	}
 
 	host, port, err := net.SplitHostPort(p.Target)
 	if err != nil {
@@ -264,44 +363,40 @@ func runCanary(ctx context.Context, p CanaryProbe) CanaryResult {
 	}
 	defer func() { _ = conn.Close() }()
 
-	if !p.UseTLS {
-		r.Verdict = "ok"
-		r.Confidence = ConfidenceHigh
-		return r
-	}
-
-	// TLS phase. ServerName forced from the host portion so SNI matches what
-	// censors actually inspect; SNI-DPI middleboxes will blow up here and we
-	// see it as a reset/timeout/remote-error.
-	tlsCfg := &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}
-	tconn := tls.Client(conn, tlsCfg)
-	if err := tconn.HandshakeContext(cctx); err != nil {
-		r.Verdict, r.Reason = classifyTLSErr(err), err.Error()
-		r.Confidence = confidenceFor(r.Verdict)
-		if note := tlsNote(r.Verdict); note != "" {
-			r.Notes = append(r.Notes, note)
-		}
-		return r
-	}
-
-	// HTTP phase — single bounded GET / over the existing TLS conn. We read
-	// up to 4 KiB of the body for stub-page marker matching even on 2xx
-	// responses, since polite-style blocks return HTTP 200 with a "blocked
-	// by RKN" body. Body cap keeps memory predictable on the router.
 	httpHost := p.HTTPHost
 	if httpHost == "" {
 		httpHost = host
 	}
-	req, _ := http.NewRequestWithContext(cctx, http.MethodGet, "https://"+httpHost+"/", nil)
-	tr := &http.Transport{
-		DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return tconn, nil
-		},
-		MaxIdleConns:        1,
-		IdleConnTimeout:     time.Second,
-		TLSHandshakeTimeout: timeout,
+	path := p.Path
+	if path == "" {
+		path = "/"
 	}
-	client := &http.Client{Transport: tr, Timeout: timeout}
+
+	if p.UseTLS {
+		probeTLSHTTP(cctx, &r, conn, host, httpHost, path, timeout)
+		return r
+	}
+
+	// Plain-HTTP phase — single bounded GET over the existing conn with
+	// redirect-following disabled so we see the raw first answer. ISP block
+	// pages are most often injected on plain HTTP (a stub 200 or a 302 to
+	// the operator's page), so the stub-marker scan runs here too.
+	req, _ := http.NewRequestWithContext(cctx, http.MethodGet, "http://"+httpHost+path, nil)
+	req.Header.Set("User-Agent", canaryUserAgent)
+	tr := &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return conn, nil
+		},
+		MaxIdleConns:    1,
+		IdleConnTimeout: time.Second,
+	}
+	client := &http.Client{
+		Transport: tr,
+		Timeout:   timeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 	resp, httpErr := client.Do(req)
 	if httpErr != nil {
 		r.Verdict, r.Reason, r.Confidence = "http_error", httpErr.Error(), "low"
@@ -311,6 +406,128 @@ func runCanary(ctx context.Context, p CanaryProbe) CanaryResult {
 	r.StatusCode = resp.StatusCode
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if stubVerdict(&r, body) {
+		return r
+	}
+
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		loc := resp.Header.Get("Location")
+		u, upgrade := httpsUpgrade(loc, host, httpHost)
+		if !upgrade {
+			r.Verdict, r.Confidence = VerdictHTTPRedirect, ConfidenceLow
+			r.Reason = "plain-HTTP redirect to " + loc
+			r.Notes = append(r.Notes, "redirect points off-host — a legit domain move or an ISP block-page bounce; probe the Location target directly to tell")
+			return r
+		}
+
+		// Same-host https upgrade: chain the TLS ladder against the
+		// redirect target on a fresh connection. A www. twin needs its own
+		// DNS resolution; the bare host reuses the address we already have.
+		r.Notes = append(r.Notes, "plain HTTP redirected to "+loc+" — auto-upgraded to the TLS probe")
+		newHost := u.Hostname()
+		newPort := u.Port()
+		if newPort == "" {
+			newPort = "443"
+		}
+		newPath := u.Path
+		if newPath == "" {
+			newPath = "/"
+		}
+		ip := r.SysIPs[0]
+		if !strings.EqualFold(newHost, host) {
+			ips, _ := resolveSystemIPv4(cctx, newHost)
+			if len(ips) == 0 {
+				r.Verdict, r.Confidence = VerdictDNS, ConfidenceLow
+				r.Reason = "https upgrade target " + newHost + " doesn't resolve via system DNS"
+				return r
+			}
+			ip = ips[0]
+		}
+		conn2, dialErr := d.DialContext(cctx, "tcp", net.JoinHostPort(ip, newPort))
+		if dialErr != nil {
+			r.Verdict, r.Reason = classifyDialErr(dialErr), dialErr.Error()
+			r.Confidence = confidenceFor(r.Verdict)
+			if note := tcpNote(r.Verdict); note != "" {
+				r.Notes = append(r.Notes, note)
+			}
+			return r
+		}
+		defer func() { _ = conn2.Close() }()
+		probeTLSHTTP(cctx, &r, conn2, newHost, newHost, newPath, timeout)
+		return r
+	}
+
+	statusVerdict(&r, resp.StatusCode)
+	if r.Verdict == VerdictOK {
+		r.Notes = append(r.Notes, "served over plain HTTP — TLS/SNI plane not probed")
+	}
+	return r
+}
+
+// probeTLSHTTP runs the TLS + HTTPS phases of the ladder over an
+// already-dialed TCP conn, filling r in place. ServerName is forced from
+// sniHost so SNI matches what censors actually inspect; SNI-DPI
+// middleboxes blow up in the handshake and we see it as a
+// reset/timeout/remote-error. The HTTP phase is a single bounded GET with
+// a 4 KiB body cap for stub-page marker matching — polite-style blocks
+// return HTTP 200 with a "blocked by RKN" body.
+func probeTLSHTTP(cctx context.Context, r *CanaryResult, conn net.Conn, sniHost, httpHost, path string, timeout time.Duration) {
+	tlsCfg := &tls.Config{ServerName: sniHost, MinVersion: tls.VersionTLS12}
+	tconn := tls.Client(conn, tlsCfg)
+	if err := tconn.HandshakeContext(cctx); err != nil {
+		r.Verdict, r.Reason = classifyTLSErr(err), err.Error()
+		r.Confidence = confidenceFor(r.Verdict)
+		if note := tlsNote(r.Verdict); note != "" {
+			r.Notes = append(r.Notes, note)
+		}
+		return
+	}
+
+	req, _ := http.NewRequestWithContext(cctx, http.MethodGet, "https://"+httpHost+path, nil)
+	req.Header.Set("User-Agent", canaryUserAgent)
+	tr := &http.Transport{
+		DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return tconn, nil
+		},
+		MaxIdleConns:        1,
+		IdleConnTimeout:     time.Second,
+		TLSHandshakeTimeout: timeout,
+	}
+	// Redirects are NOT followed: the transport is pinned to this one TLS
+	// conn, so chasing a cross-host Location would send the new host's
+	// request over the old host's connection and produce bogus 403s. By
+	// this point the full DNS→TCP→TLS→HTTP ladder has answered over a
+	// cert-verified conn, so a redirect is a genuine origin answer — "ok".
+	client := &http.Client{
+		Transport: tr,
+		Timeout:   timeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, httpErr := client.Do(req)
+	if httpErr != nil {
+		r.Verdict, r.Reason, r.Confidence = "http_error", httpErr.Error(), "low"
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+	r.StatusCode = resp.StatusCode
+
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if stubVerdict(r, body) {
+		return
+	}
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		if loc := resp.Header.Get("Location"); loc != "" {
+			r.Notes = append(r.Notes, "origin redirects to "+loc+" — ladder completed, redirect not followed")
+		}
+	}
+	statusVerdict(r, resp.StatusCode)
+}
+
+// stubVerdict scans a (capped) response body for ISP stub-page markers and
+// sets the http_stub verdict when one matches. Reports whether it did.
+func stubVerdict(r *CanaryResult, body []byte) bool {
 	lowered := strings.ToLower(string(body))
 	for _, marker := range StubMarkers {
 		if strings.Contains(lowered, marker) {
@@ -318,23 +535,47 @@ func runCanary(ctx context.Context, p CanaryProbe) CanaryResult {
 			r.StubMarker = marker
 			r.Reason = "ISP stub-page marker matched: " + marker
 			r.Notes = append(r.Notes, "response body matches a known ISP stub-page marker — operator-mandated block served as HTTP 200")
-			return r
+			return true
 		}
 	}
+	return false
+}
 
+// statusVerdict folds a non-stub HTTP status into the verdict. Redirect
+// handling happens in the caller (plain-HTTP path only) before this runs.
+func statusVerdict(r *CanaryResult, status int) {
 	switch {
-	case resp.StatusCode == 451:
+	case status == 451:
 		r.Verdict, r.Confidence = "http_451", "high"
 		r.Reason = "Unavailable For Legal Reasons — explicit censorship-mandated block"
 		r.Notes = append(r.Notes, "HTTP 451 explicit block")
-	case resp.StatusCode >= 400:
-		r.Verdict = Verdict(fmt.Sprintf("http_%d", resp.StatusCode))
+	case status >= 400:
+		r.Verdict = Verdict(fmt.Sprintf("http_%d", status))
 		r.Confidence = "low"
 	default:
 		r.Verdict = "ok"
 		r.Confidence = ConfidenceHigh
 	}
-	return r
+}
+
+// httpsUpgrade reports whether a plain-HTTP redirect Location is a
+// same-site upgrade to HTTPS the probe should follow automatically. Only
+// https URLs pointing at the probed host (or its www. twin) qualify —
+// anything else is reported as http_redirect rather than chased, so an
+// ISP 302-to-block-page can't drag the probe to an arbitrary host.
+func httpsUpgrade(loc, host, httpHost string) (*url.URL, bool) {
+	u, err := url.Parse(loc)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" {
+		return nil, false
+	}
+	lh := strings.ToLower(u.Hostname())
+	for _, h := range []string{host, httpHost} {
+		h = strings.ToLower(h)
+		if lh == h || lh == "www."+h || "www."+lh == h {
+			return u, true
+		}
+	}
+	return nil, false
 }
 
 // resolveSystemIPv4 resolves host to sorted IPv4 strings via the system
@@ -391,7 +632,7 @@ func confidenceFor(v Verdict) Confidence {
 		return ConfidenceMedium
 	case VerdictTCPTimeout, VerdictTLSTimeout, VerdictTCPNoRoute:
 		return ConfidenceLow
-	case VerdictHTTPError, VerdictTCPFail, VerdictTLSFail, VerdictDNS:
+	case VerdictHTTPError, VerdictHTTPRedirect, VerdictTCPFail, VerdictTLSFail, VerdictDNS:
 		return ConfidenceLow
 	}
 	if strings.HasPrefix(string(v), "http_") {

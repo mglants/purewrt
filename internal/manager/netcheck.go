@@ -14,6 +14,7 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -25,6 +26,7 @@ import (
 	"github.com/purewrt/purewrt/internal/metrics"
 	"github.com/purewrt/purewrt/internal/mihomoapi"
 	"github.com/purewrt/purewrt/internal/provider"
+	"github.com/purewrt/purewrt/internal/proxyguard"
 	"github.com/purewrt/purewrt/internal/system"
 )
 
@@ -72,6 +74,7 @@ type NodeResult struct {
 // CLI also renders it via FormatNetCheck).
 type NetCheckReport struct {
 	Mode           string                   `json:"mode"` // proxy|vpn_only|zapret_only|direct
+	Skipped        bool                     `json:"skipped,omitempty"`
 	Warnings       []string                 `json:"warnings,omitempty"`
 	Services       []ServiceStatus          `json:"services,omitempty"`
 	Layers         []LayerResult            `json:"layers"`
@@ -100,6 +103,20 @@ func (m Manager) NetCheck(ctx context.Context, opts NetCheckOpts) NetCheckReport
 		opts.Domain = "youtube.com"
 	}
 	c, _ := m.Load()
+	lock, err := system.TryAcquire(proxyguard.ProbeLockPath(c))
+	if err != nil {
+		rep := NetCheckReport{Mode: detectMode(c), BrokenLayer: "probe_lock"}
+		if errors.Is(err, system.ErrLockBusy) {
+			rep.Skipped = true
+			rep.Verdict = "skipped"
+			rep.Diagnosis = "another proxy throughput probe is running; net-check sent no traffic"
+		} else {
+			rep.Verdict = "broken"
+			rep.Diagnosis = "cannot acquire the shared proxy throughput probe lock: " + err.Error()
+		}
+		return rep
+	}
+	defer func() { _ = lock.Close() }()
 
 	rep := NetCheckReport{
 		Mode:     detectMode(c),
@@ -132,7 +149,7 @@ func (m Manager) NetCheck(ctx context.Context, opts NetCheckOpts) NetCheckReport
 
 	rep.synthesize()
 	rep.recordMetrics()
-	dumpMetrics(c) // persist <RuntimeDir>/metrics.prom for purewrt-api /metrics; best-effort
+	dumpMetrics(c) // merge this run into the persistent /metrics registry; best-effort
 	return rep
 }
 
@@ -333,11 +350,19 @@ func (rep *NetCheckReport) recordMetrics() {
 		metrics.NetCheckVerdict.Set(0)
 	}
 	metrics.NetCheckLastRun.Set(float64(time.Now().Unix()))
+	retainedLayerLabels := make([][]string, 0, len(rep.Layers))
 	for _, l := range rep.Layers {
-		metrics.NetCheckLayerTotal.WithLabelValues(l.Name, l.Status)
+		metrics.NetCheckLayerStatus.Set(1, l.Name, l.Status)
+		retainedLayerLabels = append(retainedLayerLabels, []string{l.Name, l.Status})
 	}
-	for _, n := range rep.Nodes {
-		metrics.NetCheckNodeTotal.WithLabelValues(slugify(n.Node), n.Verdict)
+	metrics.NetCheckLayerStatus.KeepOnlyLabelValues(retainedLayerLabels...)
+	retainedNodeLabels := make([][]string, 0, len(rep.Nodes))
+	if len(rep.Nodes) > 0 {
+		for _, n := range rep.Nodes {
+			metrics.NetCheckNodeStatus.Set(1, n.Node, n.Verdict)
+			retainedNodeLabels = append(retainedNodeLabels, []string{n.Node, n.Verdict})
+		}
+		metrics.NetCheckNodeStatus.KeepOnlyLabelValues(retainedNodeLabels...)
 	}
 }
 
@@ -500,27 +525,6 @@ func timedProbe(parent context.Context, d time.Duration, client *http.Client, ur
 func mustDirect(timeout time.Duration) *http.Client {
 	cl, _ := provider.NewClient(provider.ClientOptions{Timeout: timeout})
 	return cl
-}
-
-// slugify makes a node name scrape-safe for a prometheus label: lowercase,
-// emoji/space/punct → '_', collapsed. Node names carry flags + spaces.
-func slugify(s string) string {
-	var b strings.Builder
-	prevUnderscore := false
-	for _, r := range s {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '.' {
-			b.WriteRune(r)
-			prevUnderscore = false
-		} else if !prevUnderscore {
-			b.WriteByte('_')
-			prevUnderscore = true
-		}
-	}
-	out := strings.Trim(b.String(), "_")
-	if out == "" {
-		return "node"
-	}
-	return strings.ToLower(out)
 }
 
 // sortNodesByThroughput is used by callers/tests that want a deterministic

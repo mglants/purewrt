@@ -59,6 +59,20 @@ define Package/mihomo-alpha/install
 	ln -sf /usr/libexec/mihomo $(1)/usr/bin/mihomo
 endef
 
+# Restart a RUNNING mihomo after the binary is replaced. Without this the
+# old process keeps serving from a deleted inode: procd sees an unchanged
+# instance definition, so the generic `start` on upgrade is a no-op and
+# the new version silently never loads. `running` (procd state) rather
+# than `enabled` — a stopped or disabled service must stay stopped.
+define Package/mihomo-alpha/postinst
+#!/bin/sh
+[ -n "$$IPKG_INSTROOT" ] && exit 0
+if [ -x /etc/init.d/mihomo ] && /etc/init.d/mihomo running 2>/dev/null; then
+	/etc/init.d/mihomo restart
+fi
+exit 0
+endef
+
 define Build/Prepare
 	$(Build/Prepare/Default)
 	$(RM) -r $(PKG_BUILD_DIR)/rules/logic_test

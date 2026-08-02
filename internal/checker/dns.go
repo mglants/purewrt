@@ -40,11 +40,15 @@ func resolveWithLookup(domain string, lookup lookupIPFunc) DNSResult {
 
 // UpstreamHealth is the outcome of probing a single DoH/DoQ/UDP upstream.
 type UpstreamHealth struct {
-	URL     string        `json:"url"`
-	OK      bool          `json:"ok"`
-	Latency time.Duration `json:"latency_ms"`
-	Error   string        `json:"error,omitempty"`
-	IPs     []string      `json:"ips,omitempty"`
+	URL string `json:"url"`
+	OK  bool   `json:"ok"`
+	// Latency is kept as a Duration for Go callers; the wire field is
+	// integer milliseconds (a Duration under a _ms tag would serialize
+	// nanoseconds and LuCI would render them as ms).
+	Latency   time.Duration `json:"-"`
+	LatencyMS int64         `json:"latency_ms"`
+	Error     string        `json:"error,omitempty"`
+	IPs       []string      `json:"ips,omitempty"`
 }
 
 // ProbeDoHResolvers resolves a canary domain (default "cp.cloudflare.com")
@@ -67,6 +71,7 @@ func ProbeDoHResolvers(ctx context.Context, endpoints []string, canary string) [
 		t0 := time.Now()
 		ips, err := r.LookupHost(ctx, canary)
 		h.Latency = time.Since(t0)
+		h.LatencyMS = h.Latency.Milliseconds()
 		if err != nil {
 			h.Error = err.Error()
 		} else {

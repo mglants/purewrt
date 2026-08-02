@@ -2,6 +2,7 @@
 'require view';
 'require rpc';
 'require ui';
+'require uci';
 'require purewrt.manual_rule_modal as manualModal';
 'require purewrt.styles';
 'require purewrt.format as fmt';
@@ -618,28 +619,86 @@ function renderDestCell(dest, f) {
   return E('div', {}, children);
 }
 
+// setPriorities maps an nftset base name ("proxy_media", "direct",
+// "reject") to the priority of the enabled routing section that owns it —
+// mirroring Section.NFTSet4() naming and the generator's ascending-
+// priority destination pass (internal/generator/nftables.go), where the
+// LOWEST priority number wins an overlap. direct/reject sets are shared
+// by every section of that action, so they take the minimum. Cached — UCI
+// data is static for the lifetime of the page.
+var setPrioCache = null;
+function setPriorities() {
+  if (setPrioCache) return setPrioCache;
+  var secs = [];
+  (uci.sections('purewrt', 'section') || []).forEach(function(s, i) {
+    if (s.enabled === '0') return;
+    var name = s.name || (s['.name'].indexOf('sec_') === 0 ? s['.name'].slice(4) : s['.name']);
+    var action = s.action || 'proxy';
+    var base = action === 'direct' ? 'direct'
+             : action === 'reject' ? 'reject'
+             : 'proxy_' + name;
+    var prio = parseInt(s.priority, 10);
+    if (isNaN(prio)) prio = 100; // uci.go default
+    secs.push({ base: base, prio: prio, idx: i });
+  });
+  // Equal priorities tie-break on declaration order, matching the
+  // generator's stable sort — rank is the actual rule-emission position.
+  secs.sort(function(a, b) { return a.prio !== b.prio ? a.prio - b.prio : a.idx - b.idx; });
+  var map = Object.create(null);
+  secs.forEach(function(s, rank) {
+    if (!(s.base in map)) map[s.base] = { rank: rank, prio: s.prio };
+  });
+  setPrioCache = map;
+  return map;
+}
+
 // renderNftsetBadges shows the section memberships for a destination as
-// small pills. Two flavours are visually distinguishable:
+// small pills. When an IP sits in several nftsets only ONE section
+// actually routes it — the one with the lowest priority number (the
+// generator emits destination rules in ascending-priority order, first
+// match wins). That winner renders green (red for reject — the traffic
+// is dropped, not routed) and sorts first; outranked memberships are
+// muted grey so the eye lands on what actually happens.
+// Two flavours stay visually distinguishable:
 //   - "proxy_X"     — static IP/CIDR match from a rule provider
-//   - "dns_proxy_X" — dnsmasq-resolved domain hit (the "user actually
-//                     typed this hostname" signal; rendered with reduced
-//                     opacity so the static membership pops first)
+//   - "dns_proxy_X" — dnsmasq-resolved domain hit (italic + dimmed; same
+//                     routing priority as its section's static set)
 // Empty means "default route" — useful negative signal.
 function renderNftsetBadges(sets) {
   if (!sets || !sets.length) return E('span', { 'style': 'color:#888' }, '—');
-  return E('span', {}, sets.map(function(s) {
-    var cls = 'purewrt-pill purewrt-pill-muted';
-    var style = 'margin-right:.2em;font-size:.8em';
+  var prios = setPriorities();
+  var items = sets.map(function(s, idx) {
     var isDNS = s.indexOf('dns_') === 0;
     var base = isDNS ? s.slice(4) : s;
-    if (base === 'direct')      cls = 'purewrt-pill purewrt-pill-info';
-    else if (base === 'reject') cls = 'purewrt-pill purewrt-pill-danger';
-    else if (base.indexOf('proxy_') === 0) cls = 'purewrt-pill purewrt-pill-ok';
-    if (isDNS) style += ';opacity:.7;font-style:italic';
-    return E('span', { 'class': cls, 'style': style, 'title': isDNS
+    var p = prios[base];
+    return { set: s, base: base, isDNS: isDNS,
+             rank: p ? p.rank : Infinity, prio: p ? p.prio : Infinity, idx: idx };
+  });
+  var best = Infinity, bestPrio = Infinity;
+  items.forEach(function(it) {
+    if (it.rank < best) { best = it.rank; bestPrio = it.prio; }
+  });
+  items.sort(function(a, b) {
+    if (a.rank !== b.rank) return a.rank - b.rank;
+    if (a.isDNS !== b.isDNS) return a.isDNS ? 1 : -1; // static before dns
+    return a.idx - b.idx;
+  });
+  return E('span', {}, items.map(function(it) {
+    var wins = isFinite(best) && it.rank === best;
+    var cls = 'purewrt-pill purewrt-pill-muted';
+    if (wins) cls = it.base === 'reject' ? 'purewrt-pill purewrt-pill-danger' : 'purewrt-pill purewrt-pill-ok';
+    var style = 'margin-right:.2em;font-size:.8em';
+    if (it.isDNS) style += ';opacity:.7;font-style:italic';
+    else if (!wins) style += ';opacity:.75';
+    var how = it.isDNS
       ? _('Dynamic — dnsmasq resolved a domain to this IP. Expires with the DNS TTL.')
-      : _('Static — this IP matched a CIDR/IP rule in a rule provider.')
-    }, s);
+      : _('Static — this IP matched a CIDR/IP rule in a rule provider.');
+    var rank = !isFinite(it.prio)
+      ? _('No enabled section owns this set (stale or disabled).')
+      : wins
+        ? _('Routes this destination — highest-priority match (priority %d).').format(it.prio)
+        : _('Outranked — a section with priority %d matches first (this one is %d).').format(bestPrio, it.prio);
+    return E('span', { 'class': cls, 'style': style, 'title': rank + ' ' + how }, it.set);
   }));
 }
 
@@ -811,6 +870,12 @@ function applyIpdbBanner(banner, status) {
 }
 
 return view.extend({
+  load: function() {
+    // Section priorities feed the nftset badge ranking; a load failure
+    // just means unranked badges, not a broken page.
+    return uci.load('purewrt').catch(function() { return null; });
+  },
+
   render: function() {
     return Promise.all([
       callLeases(),

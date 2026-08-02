@@ -19,6 +19,7 @@ import (
 	"github.com/purewrt/purewrt/internal/checker"
 	"github.com/purewrt/purewrt/internal/config"
 	"github.com/purewrt/purewrt/internal/generator"
+	"github.com/purewrt/purewrt/internal/metrics"
 	"github.com/purewrt/purewrt/internal/provider"
 	"github.com/purewrt/purewrt/internal/system"
 )
@@ -264,9 +265,9 @@ func (m Manager) SubscriptionExpiry() []SubscriptionExpiryEntry {
 func (m Manager) BlockingHeuristics(targets []string) string {
 	probes := []checker.CanaryProbe{}
 	for _, t := range targets {
-		probes = append(probes, checker.CanaryProbe{
-			Target: ensureHostPort(t), UseTLS: true, Timeout: 5 * time.Second,
-		})
+		p := checker.ParseTarget(t)
+		p.Timeout = 5 * time.Second
+		probes = append(probes, p)
 	}
 	if len(probes) == 0 {
 		probes = checker.DefaultBlockingCanaries()
@@ -274,13 +275,6 @@ func (m Manager) BlockingHeuristics(targets []string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	return checker.FormatBlockingResults(checker.BlockingHeuristics(ctx, probes))
-}
-
-func ensureHostPort(t string) string {
-	if !strings.Contains(t, ":") {
-		return t + ":443"
-	}
-	return t
 }
 
 // ResolversProbeReport wraps a bootstrap DoH probe result with the
@@ -309,11 +303,16 @@ func (m Manager) ResolversProbe(canary string) ResolversProbeReport {
 	defer cancel()
 	results := checker.ProbeDoHResolvers(ctx, endpoints, canary)
 	ok := 0
+	retained := make([][]string, 0, len(results))
 	for _, r := range results {
 		if r.OK {
 			ok++
 		}
+		metrics.ResolverProbeSuccess.Set(boolFloat(r.OK), r.URL)
+		retained = append(retained, []string{r.URL})
 	}
+	metrics.ResolverProbeSuccess.KeepOnlyLabelValues(retained...)
+	dumpMetrics(c)
 	return ResolversProbeReport{
 		OK:       ok*2 >= len(results) && len(results) > 0,
 		Anywhere: ok > 0,

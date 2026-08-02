@@ -15,13 +15,15 @@ import (
 
 type Client struct{ Base, Secret string }
 type Proxy struct {
-	Name    string           `json:"name"`
-	Type    string           `json:"type"`
-	Now     string           `json:"now"`
-	Alive   bool             `json:"alive"`
-	Delay   int              `json:"delay"`
-	History []ProxyDelayItem `json:"history,omitempty"`
-	All     []string         `json:"all,omitempty"`
+	Name         string           `json:"name"`
+	Type         string           `json:"type"`
+	Now          string           `json:"now"`
+	Alive        bool             `json:"alive"`
+	Delay        int              `json:"delay"`
+	Hidden       bool             `json:"hidden,omitempty"`
+	ProviderName string           `json:"provider-name,omitempty"`
+	History      []ProxyDelayItem `json:"history,omitempty"`
+	All          []string         `json:"all,omitempty"`
 }
 
 type ProxyDelayItem struct {
@@ -171,9 +173,25 @@ func (c Client) ReloadConfig(path string) error {
 // falls back to a full restart. A GET /version is the cheapest authenticated
 // probe.
 func (c Client) Reachable() bool {
-	return c.Get("/version", &struct {
-		Version string `json:"version"`
-	}{}) == nil
+	return c.ReachableWithin(readClient.Timeout)
+}
+
+// ReachableWithin is the bounded variant used by scrape-time health checks.
+// It verifies the authenticated /version status without requiring metrics
+// scrapes to inherit the wider timeout used by normal controller reads.
+func (c Client) ReachableWithin(timeout time.Duration) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	req, err := c.newRequest(http.MethodGet, "/version", nil)
+	if err != nil {
+		return false
+	}
+	resp, err := readClient.Do(req.WithContext(ctx))
+	if err != nil {
+		return false
+	}
+	defer func() { _ = resp.Body.Close() }()
+	return resp.StatusCode >= 200 && resp.StatusCode < 300
 }
 
 // DeleteConnection terminates one active proxy connection by id. Used by

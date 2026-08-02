@@ -54,22 +54,17 @@ func printJSON(v any) {
 	}
 }
 
-func containsColon(s string) bool { return strings.Contains(s, ":") }
-
-// parseTargets turns positional canary args into CanaryProbes, defaulting
-// to port :443 + TLS when only a hostname was given. Empty slice returns
-// nil so callers can substitute their default list.
+// parseTargets turns positional canary args into CanaryProbes. Accepts
+// bare hosts (default :443 + TLS), host:port, and http://-/https://-style
+// URLs — see checker.ParseTarget. Empty slice returns nil so callers can
+// substitute their default list.
 func parseTargets(args []string) []checker.CanaryProbe {
 	if len(args) == 0 {
 		return nil
 	}
 	out := make([]checker.CanaryProbe, 0, len(args))
 	for _, t := range args {
-		target := t
-		if !containsColon(t) {
-			target = t + ":443"
-		}
-		out = append(out, checker.CanaryProbe{Target: target, UseTLS: true})
+		out = append(out, checker.ParseTarget(t))
 	}
 	return out
 }
@@ -293,6 +288,7 @@ var commands = []command{
 		run: func(m manager.Manager) {
 			need(3)
 			a, err := m.Analyze(os.Args[2])
+			m.FlushMetrics()
 			fatal(err)
 			b, _ := json.MarshalIndent(a, "", "  ")
 			fmt.Println(string(b))
@@ -741,7 +737,7 @@ var commands = []command{
 			printJSON(res)
 		}},
 	{name: "doctor", group: "Status & diagnostics",
-		args: "[--canaries [--report] [host:port...]] [--json]",
+		args: "[--canaries [--report] [host[:port] | http(s)://host[:port][/path] ...]] [--json]",
 		desc: "Run system health checks",
 		run: func(m manager.Manager) {
 			// `--resolvers` and `--warnings` flag forms previously duplicated
@@ -914,8 +910,51 @@ var commands = []command{
 			} else {
 				fmt.Print(manager.FormatNetCheck(rep))
 			}
-			if rep.Verdict != "ok" {
+			if rep.Verdict != "ok" && !rep.Skipped {
 				os.Exit(1)
+			}
+		}},
+	{name: "proxy-guard", group: "Status & diagnostics",
+		args: "[run|status|reset] [--dry-run] [--json]",
+		desc: "Detect and quarantine throttled mihomo egress members",
+		run: func(m manager.Manager) {
+			args, asJSON := stripJSONFlag(os.Args[2:])
+			action := "run"
+			dryRun := false
+			for _, a := range args {
+				switch a {
+				case "run", "status", "reset":
+					action = a
+				case "--dry-run":
+					dryRun = true
+				}
+			}
+			var rep manager.ProxyGuardReport
+			var err error
+			switch action {
+			case "status":
+				rep = m.ProxyGuardStatus()
+			case "reset":
+				withOperationLock(func() {
+					rep, err = m.ProxyGuardReset()
+				})
+			default:
+				if !withOperationTryLock(func() {
+					ctx, cancel := contextWithTimeout(90)
+					defer cancel()
+					rep, err = m.ProxyGuardRun(ctx, manager.ProxyGuardOptions{DryRun: dryRun})
+				}) {
+					rep = m.ProxyGuardStatus()
+					rep.Skipped = true
+					rep.Message = "another PureWRT operation is running"
+					m.RecordProxyGuardSkipped()
+				}
+			}
+			fatal(err)
+			if asJSON {
+				printJSON(rep)
+			} else {
+				fmt.Print(manager.FormatProxyGuard(rep))
 			}
 		}},
 	{name: "client-traffic", group: "Status & diagnostics",
@@ -1525,6 +1564,19 @@ func withOperationLock(fn func()) {
 	lock := acquireBlocking()
 	defer func() { _ = lock.Close() }()
 	fn()
+}
+
+// withOperationTryLock is for periodic observers such as proxy-guard. A cron
+// tick is disposable: when apply/update owns the global lock, skip instead of
+// queueing another expensive probe behind it.
+func withOperationTryLock(fn func()) bool {
+	lock, err := system.TryAcquire(operationLockPath)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = lock.Close() }()
+	fn()
+	return true
 }
 
 // withOperationLockCoalesce is the wholesale-operation variant: it blocks

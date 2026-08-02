@@ -1,10 +1,16 @@
 package manager
 
 import (
+	"context"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/purewrt/purewrt/internal/checker"
 	"github.com/purewrt/purewrt/internal/config"
+	"github.com/purewrt/purewrt/internal/metrics"
+	"github.com/purewrt/purewrt/internal/proxyguard"
+	"github.com/purewrt/purewrt/internal/system"
 )
 
 func TestDetectMode(t *testing.T) {
@@ -31,6 +37,39 @@ func TestDetectMode(t *testing.T) {
 	for _, tc := range cases {
 		if got := detectMode(tc.c); got != tc.want {
 			t.Errorf("%s: detectMode = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestNetCheckMetricsExposeOnlyLatestLayerAndNodeStatus(t *testing.T) {
+	metrics.Default.ResetObservations()
+	defer metrics.Default.ResetObservations()
+
+	first := NetCheckReport{
+		Verdict: "ok",
+		Layers:  []LayerResult{{Name: "dns", Status: "ok"}, {Name: "routing", Status: "fail"}},
+		Nodes:   []NodeResult{{Node: "removed", Verdict: "ok"}},
+	}
+	first.recordMetrics()
+	latest := NetCheckReport{
+		Verdict: "broken",
+		Layers:  []LayerResult{{Name: "dns", Status: "fail"}},
+		Nodes:   []NodeResult{{Node: "current", Verdict: "throttled"}},
+	}
+	latest.recordMetrics()
+	out := metrics.Default.Render()
+	for _, want := range []string{
+		`purewrt_netcheck_layer_status{layer="dns",status="fail"} 1`,
+		`purewrt_netcheck_node_status{node="current",status="throttled"} 1`,
+		`purewrt_netcheck_verdict 0`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing latest-state metric %q:\n%s", want, out)
+		}
+	}
+	for _, stale := range []string{`status="ok"`, `layer="routing"`, `node="removed"`} {
+		if strings.Contains(out, stale) {
+			t.Fatalf("stale status %q survived reconciliation:\n%s", stale, out)
 		}
 	}
 }
@@ -131,16 +170,32 @@ func TestSynthesizeZapretVerdicts(t *testing.T) {
 	})
 }
 
-func TestSlugify(t *testing.T) {
-	cases := map[string]string{
-		"🇵🇱 ♾️ grpc YTRU vpn5-frind2-pl-itdc": "grpc_ytru_vpn5-frind2-pl-itdc",
-		"plain": "plain",
-		"🇱🇻♾️THROTTL grpc vpn4-lv-veesp": "throttl_grpc_vpn4-lv-veesp",
-		"": "node",
+func TestNetCheckSkipsWhenProxyProbeLockIsBusy(t *testing.T) {
+	dir := t.TempDir()
+	c := config.Default()
+	c.Settings.RuntimeDir = filepath.Join(dir, "run")
+	configPath := filepath.Join(dir, "purewrt")
+	if err := config.Save(configPath, c); err != nil {
+		t.Fatal(err)
 	}
-	for in, want := range cases {
-		if got := slugify(in); got != want {
-			t.Errorf("slugify(%q) = %q, want %q", in, got, want)
-		}
+
+	lock, err := system.TryAcquire(proxyguard.ProbeLockPath(c))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lock.Close() }()
+
+	rep := (Manager{ConfigPath: configPath}).NetCheck(context.Background(), NetCheckOpts{})
+	if !rep.Skipped || rep.Verdict != "skipped" || rep.BrokenLayer != "probe_lock" {
+		t.Fatalf("expected a clean lock-contention skip, got %+v", rep)
+	}
+	if !strings.Contains(rep.Diagnosis, "sent no traffic") {
+		t.Fatalf("skip must state that no probe traffic was sent: %q", rep.Diagnosis)
+	}
+	if len(rep.Layers) != 0 || rep.Download.Bytes != 0 || rep.Upload.Bytes != 0 {
+		t.Fatalf("busy net-check performed work: %+v", rep)
+	}
+	if got := FormatNetCheck(rep); !strings.Contains(got, "verdict=SKIPPED") {
+		t.Fatalf("formatted result does not expose skip: %q", got)
 	}
 }

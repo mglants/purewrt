@@ -258,6 +258,81 @@ mark can never drift; `applyUCIDNSFirewall` reconciles by deleting **all**
 re-importing, so de-selecting a zone removes its rules. Don't hardcode the
 mask — always derive it from `c.Settings.FwMark`/`FwMarkMask`.
 
+## Adaptive proxy guard must not rewrite user filters
+
+The opt-in proxy guard detects throttled/unstable mihomo members with bounded
+real-transfer probes and stores its measurements/quarantines only in
+`<RuntimeDir>/proxy-guard.json`. It must never write a quarantine into UCI or
+replace a section/DNS/mesh `proxy_exclude_filter`.
+
+`applyProxyGuardOverlay` runs after the mihomo mixin. For each managed group it
+keeps the configured `exclude-filter` string intact as the first clause and
+appends a generated exact-node regex using mihomo's backtick separator. Hidden
+`PureWRTGuardCandidate_*` shadow groups retain the unquarantined candidate set
+so removed members can still be measured and recovered; manager/LuCI group
+listing must continue filtering that reserved prefix. Explicit VPN/friend
+members are removed from the runtime group directly because provider filters
+are not a dependable way to remove every explicit member.
+
+Quarantine changes are validated with `mihomo -t`, atomically promoted, and
+hot-reloaded; established connections are intentionally left alone. Never add
+`DIRECT` as a fallback. The guard maintains a floor of
+`min(proxy_guard_min_members, concrete-candidate-count)` members in every
+managed group (default 3): when fewer non-quarantined members remain, it
+retains the best measured quarantined members as that group's last resorts.
+Ranking uses rounded 1 Mbps download tiers first, then lowest valid jitter,
+then lowest latency, then exact download speed. Repeated zero latency samples
+are probe failures, not perfect jitter, and rank last. `proxy-guard reset`
+restores the exact generated/mixin group configuration and removes only
+runtime state.
+
+Throughput probes are capped at three per guard run. When any concrete member
+is never-tested or older than `proxy_guard_fleet_probe_interval`, urgent work
+(recovery, active nodes, suspect confirmation) may consume at most two slots,
+reserving at least one for an oldest-first rolling fleet sweep through
+`NetCheckProbe`. Spare urgent slots also go to the rolling sweep. Do not remove
+that reservation: without it a busy load-balance pool can starve inactive
+members forever, displaying `not tested` until they unexpectedly receive user
+traffic.
+
+Every `net-check` run (ordinary scheduled/interactive and `--per-node`) holds
+the same `<RuntimeDir>/proxy-guard-probe.lock` as the adaptive guard for its
+entire lifetime. Contention returns a successful `skipped` report before any
+probe traffic is sent. Keep the lock outside the `--per-node` branch: even the
+ordinary main-proxy download/upload can consume enough bandwidth to make a
+simultaneous guard probe falsely classify a healthy node as throttled.
+
+## Metrics are cross-process state, not one CLI registry dump
+
+`purewrt` operations are short-lived processes while `purewrt-api` serves
+`/metrics`. `dumpMetrics` therefore merges process-local histogram
+observations and explicitly-set latest-state gauges into
+`<RuntimeDir>/metrics-state.json` under
+`metrics.lock`; it must never go back to overwriting the endpoint with a fresh
+process registry. After a successful state commit it resets local observations
+so a later dump in the same process (for example update followed by apply)
+doesn't double-count them. The API composes that persisted state with its own
+uncommitted process observations at render time; a scrape must not persist or
+reset those deltas, or repeated scrapes/concurrent `/analyze` calls will lose or
+double-count events.
+
+Countdowns and live state do not belong in that persisted registry. Subscription
+expiry, geo-data age, nftset cardinality, and proxy-guard node/group gauges are
+rendered from their authoritative config/files/kernel/runtime JSON on each
+scrape. Otherwise they freeze at the last operation or get confused with an
+uninitialized zero. PureWRT does not export cumulative counter families; use
+latest-state gauges for apply, update, resolver, net-check and proxy-guard
+health. Histogram buckets may reset on reboot because the runtime directory is
+tmpfs; Prometheus handles that as a normal process reset.
+
+Generation timing uses seconds and observes floating-point `Duration.Seconds()`.
+Do not switch it back to integer `Milliseconds()`: fast nft/zapret stages become
+zero-duration samples. `purewrt_generate_duration_seconds` covers the complete
+generator call (including cache/fingerprint work), while
+`purewrt_generate_stage_duration_seconds` covers full executed stages; keep
+`rule_outputs` around `streamRuleOutputs`, since that shared streaming pass is
+often more expensive than the later file writes.
+
 ## Plan files
 
 `~/.claude/plans/*.md` are scratch files for the in-flight task. They get

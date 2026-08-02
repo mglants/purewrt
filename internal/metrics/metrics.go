@@ -4,11 +4,11 @@
 // unwelcome on small OpenWrt targets, and the metric set PureWRT exposes
 // fits inside a few hundred lines of code.
 //
-// Supported metric types: Counter (monotonic, can take labels) and Gauge
-// (read/write). The exposition format follows the prometheus text spec
+// Supported metric types: Counter, Gauge and fixed-bucket Histogram. The
+// exposition format follows the prometheus text spec
 // (https://prometheus.io/docs/instrumenting/exposition_formats/) at the
-// "good enough for prometheus and most scrapers" level — no histograms,
-// no summaries, no native-histogram.
+// "good enough for prometheus and most scrapers" level — no summaries or
+// native histograms.
 //
 // All registry operations are concurrency-safe (RWMutex around the maps;
 // atomic counters on each sample). Designed for read-mostly workloads —
@@ -16,6 +16,7 @@
 package metrics
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
@@ -25,7 +26,7 @@ import (
 	"sync/atomic"
 )
 
-// Registry holds Counters and Gauges keyed by metric name. One global
+// Registry holds Counters, Gauges and Histograms keyed by metric name. One global
 // `Default` registry is used by purewrt-api's /metrics handler; tests can
 // build private registries via NewRegistry.
 type Registry struct {
@@ -48,26 +49,34 @@ func NewRegistry() *Registry {
 
 // Counter is a monotonically-increasing metric, optionally with labels.
 type Counter struct {
-	name     string
-	help     string
-	labelKey []string
-	mu       sync.RWMutex
-	samples  map[string]*uint64 // key = canonical label-value string
+	name      string
+	help      string
+	labelKey  []string
+	mu        sync.RWMutex
+	samples   map[string]*uint64 // key = canonical label-value string
+	reconcile bool
+	retained  map[string]struct{}
 }
 
 // NewCounter creates a Counter and registers it with the Default registry.
 // labelKeys is the ordered list of label names; values are supplied at
 // observation time via Counter.WithLabelValues.
 func NewCounter(name, help string, labelKeys ...string) *Counter {
+	return Default.NewCounter(name, help, labelKeys...)
+}
+
+// NewCounter creates and registers a Counter on this registry.
+func (r *Registry) NewCounter(name, help string, labelKeys ...string) *Counter {
 	c := &Counter{
 		name:     name,
 		help:     help,
 		labelKey: append([]string(nil), labelKeys...),
 		samples:  map[string]*uint64{},
+		retained: map[string]struct{}{},
 	}
-	Default.mu.Lock()
-	Default.counters[name] = c
-	Default.mu.Unlock()
+	r.mu.Lock()
+	r.counters[name] = c
+	r.mu.Unlock()
 	return c
 }
 
@@ -76,8 +85,7 @@ func (c *Counter) Inc() { c.AddLabels(1) }
 
 // AddLabels increments the sample identified by the supplied label values.
 // Must supply one value per label key declared at NewCounter time; any
-// mismatch silently maps to the empty key (matches the prometheus
-// client_golang behaviour for clearer error surfaces in the scrape).
+// missing values become empty strings and extra values are ignored.
 func (c *Counter) AddLabels(delta uint64, labelValues ...string) {
 	key := c.labelKey2sample(labelValues)
 	c.mu.RLock()
@@ -97,44 +105,108 @@ func (c *Counter) AddLabels(delta uint64, labelValues ...string) {
 // WithLabelValues is the conventional helper — same as AddLabels(1, …).
 func (c *Counter) WithLabelValues(values ...string) { c.AddLabels(1, values...) }
 
-func (c *Counter) labelKey2sample(values []string) string {
-	if len(c.labelKey) == 0 {
-		return ""
+// KeepOnlyLabelValues reconciles a bounded labelled counter family during
+// the next persistent merge. Previously persisted samples not present in
+// values are removed while retained samples continue accumulating normally.
+// This is intended for identities such as configured node names that can be
+// deleted or renamed between runs.
+func (c *Counter) KeepOnlyLabelValues(values ...[]string) {
+	retained := make(map[string]struct{}, len(values))
+	for _, sample := range values {
+		retained[c.labelKey2sample(sample)] = struct{}{}
 	}
-	parts := make([]string, len(c.labelKey))
-	for i, k := range c.labelKey {
-		v := ""
-		if i < len(values) {
-			v = values[i]
-		}
-		parts[i] = k + "=" + escape(v)
-	}
-	return strings.Join(parts, ",")
+	c.mu.Lock()
+	c.reconcile = true
+	c.retained = retained
+	c.mu.Unlock()
 }
 
-// Gauge is a read/write metric. No labels in this minimal implementation —
-// adequate for the singletons PureWRT exposes (subscription_seconds_to_expiry,
-// geoip_data_age_seconds, etc.).
+func (c *Counter) labelKey2sample(values []string) string {
+	return labelValueKey(c.labelKey, values)
+}
+
+// Gauge is a read/write metric, optionally with labels. Samples only render
+// after Set; this keeps "not observed" distinct from a legitimate zero.
 type Gauge struct {
-	name string
-	help string
-	bits uint64 // atomic-stored float64 bits
+	name      string
+	help      string
+	labelKey  []string
+	mu        sync.RWMutex
+	samples   map[string]*uint64 // atomic-stored float64 bits
+	deleted   map[string]struct{}
+	reconcile bool
+	retained  map[string]struct{}
 }
 
 // NewGauge creates a Gauge and registers it on Default.
-func NewGauge(name, help string) *Gauge {
-	g := &Gauge{name: name, help: help}
-	Default.mu.Lock()
-	Default.gauges[name] = g
-	Default.mu.Unlock()
+func NewGauge(name, help string, labelKeys ...string) *Gauge {
+	return Default.NewGauge(name, help, labelKeys...)
+
+}
+
+// NewGauge creates and registers a Gauge on this registry.
+func (r *Registry) NewGauge(name, help string, labelKeys ...string) *Gauge {
+	g := &Gauge{name: name, help: help, labelKey: append([]string(nil), labelKeys...), samples: map[string]*uint64{}, deleted: map[string]struct{}{}, retained: map[string]struct{}{}}
+	r.mu.Lock()
+	r.gauges[name] = g
+	r.mu.Unlock()
 	return g
 }
 
 // Set replaces the gauge value.
-func (g *Gauge) Set(v float64) { atomic.StoreUint64(&g.bits, float64bits(v)) }
+func (g *Gauge) Set(v float64, labelValues ...string) {
+	key := labelValueKey(g.labelKey, labelValues)
+	g.mu.Lock()
+	p, ok := g.samples[key]
+	if !ok {
+		p = new(uint64)
+		g.samples[key] = p
+	}
+	delete(g.deleted, key)
+	atomic.StoreUint64(p, float64bits(v))
+	g.mu.Unlock()
+}
+
+// Delete removes one gauge sample from the next persisted/rendered snapshot.
+func (g *Gauge) Delete(labelValues ...string) {
+	key := labelValueKey(g.labelKey, labelValues)
+	g.mu.Lock()
+	delete(g.samples, key)
+	g.deleted[key] = struct{}{}
+	g.mu.Unlock()
+}
+
+// KeepOnlyLabelValues reconciles a bounded labelled gauge family during the
+// next persistent merge. Samples not listed here are removed, which keeps
+// latest-state families free of labels for deleted nodes/endpoints or prior
+// statuses.
+func (g *Gauge) KeepOnlyLabelValues(values ...[]string) {
+	retained := make(map[string]struct{}, len(values))
+	for _, sample := range values {
+		retained[labelValueKey(g.labelKey, sample)] = struct{}{}
+	}
+	g.mu.Lock()
+	for key := range g.samples {
+		if _, keep := retained[key]; !keep {
+			delete(g.samples, key)
+		}
+	}
+	g.reconcile = true
+	g.retained = retained
+	g.mu.Unlock()
+}
 
 // Value reads the current sample.
-func (g *Gauge) Value() float64 { return bits2float(atomic.LoadUint64(&g.bits)) }
+func (g *Gauge) Value(labelValues ...string) float64 {
+	key := labelValueKey(g.labelKey, labelValues)
+	g.mu.RLock()
+	p := g.samples[key]
+	g.mu.RUnlock()
+	if p == nil {
+		return 0
+	}
+	return bits2float(atomic.LoadUint64(p))
+}
 
 // Histogram is a fixed-bucket latency histogram, optionally with labels.
 // Buckets are upper bounds in ascending order; observations land in the
@@ -159,6 +231,11 @@ type histSample struct {
 // NewHistogram creates a Histogram and registers it on Default. buckets
 // must be ascending; the +Inf bucket is implicit.
 func NewHistogram(name, help string, buckets []float64, labelKeys ...string) *Histogram {
+	return Default.NewHistogram(name, help, buckets, labelKeys...)
+}
+
+// NewHistogram creates and registers a Histogram on this registry.
+func (r *Registry) NewHistogram(name, help string, buckets []float64, labelKeys ...string) *Histogram {
 	h := &Histogram{
 		name:     name,
 		help:     help,
@@ -166,9 +243,9 @@ func NewHistogram(name, help string, buckets []float64, labelKeys ...string) *Hi
 		buckets:  append([]float64(nil), buckets...),
 		samples:  map[string]*histSample{},
 	}
-	Default.mu.Lock()
-	Default.histograms[name] = h
-	Default.mu.Unlock()
+	r.mu.Lock()
+	r.histograms[name] = h
+	r.mu.Unlock()
 	return h
 }
 
@@ -205,18 +282,7 @@ func (h *Histogram) Observe(v float64, labelValues ...string) {
 }
 
 func (h *Histogram) labelKey2sample(values []string) string {
-	if len(h.labelKey) == 0 {
-		return ""
-	}
-	parts := make([]string, len(h.labelKey))
-	for i, k := range h.labelKey {
-		v := ""
-		if i < len(values) {
-			v = values[i]
-		}
-		parts[i] = k + "=" + escape(v)
-	}
-	return strings.Join(parts, ",")
+	return labelValueKey(h.labelKey, values)
 }
 
 // Render emits the Default registry contents in prometheus text format.
@@ -252,16 +318,31 @@ func (r *Registry) Render() string {
 		sort.Strings(keys)
 		for _, k := range keys {
 			v := atomic.LoadUint64(c.samples[k])
-			if k == "" {
+			if len(c.labelKey) == 0 {
 				fmt.Fprintf(&b, "%s %d\n", c.name, v)
 			} else {
-				fmt.Fprintf(&b, "%s{%s} %d\n", c.name, formatLabels(k), v)
+				fmt.Fprintf(&b, "%s{%s} %d\n", c.name, formatLabels(c.labelKey, k), v)
 			}
 		}
 		c.mu.RUnlock()
 	}
 	for _, g := range gauges {
-		fmt.Fprintf(&b, "# HELP %s %s\n# TYPE %s gauge\n%s %g\n", g.name, g.help, g.name, g.name, g.Value())
+		fmt.Fprintf(&b, "# HELP %s %s\n# TYPE %s gauge\n", g.name, g.help, g.name)
+		g.mu.RLock()
+		keys := make([]string, 0, len(g.samples))
+		for k := range g.samples {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			v := bits2float(atomic.LoadUint64(g.samples[k]))
+			if len(g.labelKey) == 0 {
+				fmt.Fprintf(&b, "%s %g\n", g.name, v)
+			} else {
+				fmt.Fprintf(&b, "%s{%s} %g\n", g.name, formatLabels(g.labelKey, k), v)
+			}
+		}
+		g.mu.RUnlock()
 	}
 	for _, h := range histograms {
 		fmt.Fprintf(&b, "# HELP %s %s\n# TYPE %s histogram\n", h.name, h.help, h.name)
@@ -274,8 +355,8 @@ func (r *Registry) Render() string {
 		for _, k := range keys {
 			s := h.samples[k]
 			labelPrefix := ""
-			if k != "" {
-				labelPrefix = formatLabels(k) + ","
+			if len(h.labelKey) != 0 {
+				labelPrefix = formatLabels(h.labelKey, k) + ","
 			}
 			cum := uint64(0)
 			for i, ub := range h.buckets {
@@ -284,10 +365,11 @@ func (r *Registry) Render() string {
 			}
 			cum += atomic.LoadUint64(&s.counts[len(h.buckets)])
 			fmt.Fprintf(&b, "%s_bucket{%sle=\"+Inf\"} %d\n", h.name, labelPrefix, cum)
-			if k == "" {
+			if len(h.labelKey) == 0 {
 				fmt.Fprintf(&b, "%s_sum %g\n%s_count %d\n", h.name, bits2float(atomic.LoadUint64(&s.sumBits)), h.name, atomic.LoadUint64(&s.count))
 			} else {
-				fmt.Fprintf(&b, "%s_sum{%s} %g\n%s_count{%s} %d\n", h.name, formatLabels(k), bits2float(atomic.LoadUint64(&s.sumBits)), h.name, formatLabels(k), atomic.LoadUint64(&s.count))
+				labels := formatLabels(h.labelKey, k)
+				fmt.Fprintf(&b, "%s_sum{%s} %g\n%s_count{%s} %d\n", h.name, labels, bits2float(atomic.LoadUint64(&s.sumBits)), h.name, labels, atomic.LoadUint64(&s.count))
 			}
 		}
 		h.mu.RUnlock()
@@ -304,20 +386,57 @@ func Handler() http.Handler {
 	})
 }
 
+// ResetObservations clears the process-local deltas after they have been
+// committed to the persistent runtime registry. Metric definitions remain.
+func (r *Registry) ResetObservations() {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, c := range r.counters {
+		c.mu.Lock()
+		c.samples = map[string]*uint64{}
+		c.reconcile = false
+		c.retained = map[string]struct{}{}
+		c.mu.Unlock()
+	}
+	for _, g := range r.gauges {
+		g.mu.Lock()
+		g.samples = map[string]*uint64{}
+		g.deleted = map[string]struct{}{}
+		g.reconcile = false
+		g.retained = map[string]struct{}{}
+		g.mu.Unlock()
+	}
+	for _, h := range r.histograms {
+		h.mu.Lock()
+		h.samples = map[string]*histSample{}
+		h.mu.Unlock()
+	}
+}
+
 // ---- internals ----
 
-func formatLabels(internalKey string) string {
-	// internalKey is `k=v,k=v` already escaped; we just wrap each value in
-	// quotes for the prometheus text format.
-	parts := strings.Split(internalKey, ",")
-	out := make([]string, len(parts))
-	for i, p := range parts {
-		eq := strings.IndexByte(p, '=')
-		if eq < 0 {
-			out[i] = p
-			continue
+func labelValueKey(labelKeys, values []string) string {
+	normalized := make([]string, len(labelKeys))
+	copy(normalized, values)
+	b, _ := json.Marshal(normalized)
+	return string(b)
+}
+
+func labelValues(internalKey string) []string {
+	var values []string
+	_ = json.Unmarshal([]byte(internalKey), &values)
+	return values
+}
+
+func formatLabels(labelKeys []string, internalKey string) string {
+	values := labelValues(internalKey)
+	out := make([]string, len(labelKeys))
+	for i, key := range labelKeys {
+		value := ""
+		if i < len(values) {
+			value = values[i]
 		}
-		out[i] = p[:eq] + `="` + p[eq+1:] + `"`
+		out[i] = key + `="` + escape(value) + `"`
 	}
 	return strings.Join(out, ",")
 }

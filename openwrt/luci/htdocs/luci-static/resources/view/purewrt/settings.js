@@ -166,6 +166,31 @@ return view.extend({
       description: _('Per-run download/upload size for the scheduled probe. Smaller bounds quota; ~2 MiB default. Each tick moves ~this down + half up.') });
     ncBytes.depends('net_check_enabled', '1');
 
+    var pgEnabled = addRow(netcheck, form.Flag, 'proxy_guard_enabled', _('Adaptive proxy guard'), { default: '0',
+      description: _('Detect throttled or unstable mihomo members and temporarily exclude them from new connections. Off by default because real throughput probes consume quota.') });
+    var pgCron = addRow(netcheck, form.Value, 'proxy_guard_cron', _('Guard schedule (cron)'), { default: '*/5 * * * *',
+      validate: fmt.validateCron });
+    pgCron.depends('proxy_guard_enabled', '1');
+    var pgMembers = addRow(netcheck, form.Value, 'proxy_guard_min_members', _('Minimum retained members'), { datatype: 'range(1,1024)', default: '3',
+      description: _('Keep at least this many candidates in each managed group. Retained quarantined nodes rank by rounded 1 Mbps download tier, then lower valid jitter and latency; failed zero-latency windows rank last. Groups with fewer candidates keep all of them.') });
+    pgMembers.depends('proxy_guard_enabled', '1');
+    var pgMin = addRow(netcheck, form.Value, 'proxy_guard_min_down_kbps', _('Minimum download (kbps)'), { datatype: 'range(1,1000000)', default: '2000',
+      description: _('A node below this rate on two confirmed checks becomes quarantined when another member passes.') });
+    pgMin.depends('proxy_guard_enabled', '1');
+    var pgBytes = addRow(netcheck, form.Value, 'proxy_guard_probe_bytes', _('Guard probe size (bytes)'), { datatype: 'range(65536,16777216)', default: '1048576',
+      description: _('Balanced default is 1 MiB, approximately 48 MiB/day for each continuously active node at a 30-minute interval.') });
+    pgBytes.depends('proxy_guard_enabled', '1');
+    var pgJitter = addRow(netcheck, form.Value, 'proxy_guard_max_jitter_ms', _('Maximum latency swing (ms)'), { datatype: 'range(1,60000)', default: '250' });
+    pgJitter.depends('proxy_guard_enabled', '1');
+    var pgInterval = addRow(netcheck, form.Value, 'proxy_guard_active_probe_interval', _('Active-node probe interval (seconds)'), { datatype: 'range(60,86400)', default: '1800' });
+    pgInterval.depends('proxy_guard_enabled', '1');
+    var pgFleetInterval = addRow(netcheck, form.Value, 'proxy_guard_fleet_probe_interval', _('Fleet recheck interval (seconds)'), { datatype: 'range(300,604800)', default: '21600',
+      description: _('Never-tested and oldest-tested members rotate through spare NetCheckProbe slots. Six hours keeps the background quota bounded while ensuring inactive load-balance members are eventually measured.') });
+    pgFleetInterval.depends('proxy_guard_enabled', '1');
+    var pgCooldown = addRow(netcheck, form.Value, 'proxy_guard_quarantine_seconds', _('Recovery cooldown (seconds)'), { datatype: 'range(60,604800)', default: '1800',
+      description: _('One due quarantined member is retested per tick and needs two clean checks to return.') });
+    pgCooldown.depends('proxy_guard_enabled', '1');
+
     // ---- Mihomo runtime ----
     var mihomo = m.section(form.NamedSection, 'settings', 'main', _('Mihomo runtime'),
       _('Where PureWRT pulls mihomo from + which release channel to track.'));

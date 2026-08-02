@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/purewrt/purewrt/internal/config"
-	"github.com/purewrt/purewrt/internal/metrics"
 	"github.com/purewrt/purewrt/internal/mihomoapi"
 	"github.com/purewrt/purewrt/internal/provider"
 	"github.com/purewrt/purewrt/internal/system"
@@ -47,11 +46,30 @@ type GeoRefreshTarget struct {
 // error only when ALL configured targets failed; partial success is
 // reported via the per-target OK flags so callers can show a per-target
 // pill in LuCI without losing successes to a single failure.
-func (m Manager) GeoRefresh() (GeoRefreshResult, error) {
+func (m Manager) GeoRefresh() (result GeoRefreshResult, retErr error) {
+	started := time.Now()
 	c, err := m.Load()
 	if err != nil {
+		recordUpdateRun("geo", "error", started)
+		dumpMetrics(c)
 		return GeoRefreshResult{}, err
 	}
+	defer func() {
+		outcome := updateRunResult(retErr)
+		if retErr == nil {
+			for _, target := range result.Targets {
+				if !target.Skipped && !target.OK {
+					outcome = "partial"
+					break
+				}
+			}
+			if result.ReloadErr != "" {
+				outcome = "partial"
+			}
+		}
+		recordUpdateRun("geo", outcome, started)
+		dumpMetrics(c)
+	}()
 	dir := c.Settings.GeoRefreshGeoIPDir
 	if dir == "" {
 		dir = "/etc/purewrt/geo"
@@ -106,9 +124,6 @@ func (m Manager) GeoRefresh() (GeoRefreshResult, error) {
 		res.Targets = append(res.Targets, t)
 	}
 
-	// Refresh the on-disk-age gauge regardless of which targets ran.
-	updateGeoAgeGauge(dir)
-
 	if !any {
 		return res, fmt.Errorf("geo-refresh: no targets succeeded")
 	}
@@ -149,32 +164,6 @@ func refreshOne(url, wantSHA, dst string, opt provider.DownloadOptions) (bool, s
 		return false, "swap: " + err.Error()
 	}
 	return true, ""
-}
-
-// updateGeoAgeGauge sets purewrt_geoip_data_age_seconds to the age of the
-// newest file in dir. Run after every refresh attempt (success or not) so
-// the gauge tracks reality even when refresh failed.
-func updateGeoAgeGauge(dir string) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return
-	}
-	var newest time.Time
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-		if info.ModTime().After(newest) {
-			newest = info.ModTime()
-		}
-	}
-	if !newest.IsZero() {
-		metrics.GeoDataAgeSeconds.Set(time.Since(newest).Seconds())
-	}
 }
 
 // DefaultGeoSources is a thin proxy onto config.DefaultGeoSources so

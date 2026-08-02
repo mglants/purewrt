@@ -14,12 +14,14 @@ import (
 )
 
 type DownloadResult struct {
-	Data         []byte
-	Checksum     string
-	URLRedacted  string
-	NotModified  bool
-	ETag         string
-	LastModified string
+	Data              []byte
+	Checksum          string
+	URLRedacted       string
+	NotModified       bool
+	UsedMirror        bool
+	UsedFallbackProxy bool
+	ETag              string
+	LastModified      string
 	// SubscriptionInfo carries the parsed subscription-userinfo header (when
 	// the upstream proxy panel emitted one). Zero values mean header absent.
 	SubscriptionInfo SubscriptionInfo
@@ -58,6 +60,7 @@ func DownloadWithOptions(url string, opt DownloadOptions) (DownloadResult, error
 		fallback.ProxyURL = opt.FallbackProxyURL
 		fallback.FallbackProxyURL = ""
 		if res2, err2 := downloadAttempt(url, fallback); err2 == nil {
+			res2.UsedFallbackProxy = true
 			return res2, nil
 		}
 	}
@@ -111,9 +114,10 @@ func downloadAttempt(url string, opt DownloadOptions) (DownloadResult, error) {
 			anyRetryable    bool
 			sawNonRetryOnly = len(candidates) > 0
 		)
-		for _, candidate := range candidates {
+		for candidateIndex, candidate := range candidates {
 			res, class, err := doOnce(client, candidate, opt)
 			if err == nil {
+				res.UsedMirror = candidateIndex > 0
 				return res, nil
 			}
 			counts[class]++
@@ -307,4 +311,3 @@ func RedactURL(u string) string {
 	}
 	return u
 }
-

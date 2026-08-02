@@ -35,6 +35,9 @@ var callReload              = rpc.declare({ object: 'purewrt', method: 'reload' 
 var callProxyGroups         = rpc.declare({ object: 'purewrt', method: 'proxy_groups', expect: { items: [] } });
 var callProxySelect         = rpc.declare({ object: 'purewrt', method: 'proxy_select', params: [ 'group', 'node' ] });
 var callProxyDelayTest      = rpc.declare({ object: 'purewrt', method: 'proxy_delay_test', params: [ 'group' ] });
+var callProxyGuardStart     = rpc.declare({ object: 'purewrt', method: 'proxy_guard_start', params: [ 'dry_run' ] });
+var callProxyGuardStatus    = rpc.declare({ object: 'purewrt', method: 'proxy_guard_status' });
+var callProxyGuardReset     = rpc.declare({ object: 'purewrt', method: 'proxy_guard_reset' });
 
 // Inject the same dark monospace pre styling we use on the Logs page —
 // the generated-config and mixin-preview blocks share the visual.
@@ -77,6 +80,7 @@ function ensureStyles() {
     '.purewrt-mihomo-node-sel { cursor: pointer; }',
     '.purewrt-mihomo-node-sel:hover { border-color: #00a8e8; }',
     '.purewrt-mihomo-node-dead { color: #f85149; border-style: dashed; }',
+    '.purewrt-mihomo-node-guard { color: #f0b06b; border-color: #f0b06b; background: rgba(240,176,107,.12); }',
     ''
   ].join('\n');
   document.head.appendChild(s);
@@ -117,7 +121,20 @@ function dashboardURL() {
 
 function renderStatusSection(status) {
   var pill;
-  if (status.running) {
+  if (status.running && status.stale_binary) {
+    // Running from a deleted inode: the binary on disk was upgraded but
+    // this process still executes the old version. Without this hint an
+    // upgrade looks like it "didn't start" — the process is fine, it's
+    // just old.
+    pill = E('span', {}, [
+      E('span', { 'class': 'purewrt-pill run' }, _('running')),
+      ' ',
+      E('span', {
+        'class': 'purewrt-pill purewrt-pill-warn',
+        'title': _('The mihomo binary on disk was upgraded after this process started — it is still running the OLD version. Restart the mihomo service to load the new one.')
+      }, _('OLD BINARY — restart to upgrade'))
+    ]);
+  } else if (status.running) {
     pill = E('span', { 'class': 'purewrt-pill run' }, _('running'));
   } else {
     pill = E('span', { 'class': 'purewrt-pill stop' }, _('stopped'));
@@ -585,6 +602,114 @@ function renderProxyGroupsBody(body, groups) {
   });
 }
 
+function unwrapGuardStatus(r) {
+  return r && r.report ? r.report : (r || { enabled: false, state: { nodes: {}, groups: {} } });
+}
+
+function renderProxyGuardSection(initial) {
+  var body = E('div', { 'data-role': 'proxy-guard-body' });
+  var status = unwrapGuardStatus(initial);
+
+  function draw(rep) {
+    rep = unwrapGuardStatus(rep);
+    status = rep;
+    body.innerHTML = '';
+    var state = rep.state || {};
+    var nodes = state.nodes || {};
+    var groups = state.groups || {};
+    var quarantined = Object.keys(nodes).filter(function(name) { return nodes[name] && nodes[name].state === 'quarantined'; });
+    var summary = rep.enabled
+      ? _('Enabled — %d quarantined member(s).').format(quarantined.length)
+      : _('Disabled — enable Adaptive proxy guard in Settings.');
+    body.appendChild(E('p', { 'class': 'cbi-section-note' }, summary));
+    if (state.last_run && state.last_run.indexOf('0001-') !== 0)
+      body.appendChild(E('p', { 'class': 'cbi-section-note' }, _('Last run: %s').format(state.last_run)));
+
+    var userFilters = rep.user_excludes || {};
+    var groupNames = Object.keys(groups).concat(Object.keys(userFilters)).filter(function(name, i, all) {
+      return all.indexOf(name) === i;
+    }).sort();
+    groupNames.forEach(function(group) {
+      var g = groups[group] || {};
+      var lastResorts = (g.last_resorts || []).slice();
+      var chips = (g.members || []).map(function(name) {
+        var n = nodes[name] || {};
+        var quarantinedNode = n.state === 'quarantined';
+        var guardedNode = quarantinedNode || n.state === 'suspect';
+        var label = name;
+        var throughputTested = n.last_probe && n.last_probe.indexOf('0001-') !== 0;
+        if (throughputTested) label += ' (' + Math.round(n.last_down_kbps || 0) + ' kbps)';
+        else label += ' (' + _('not tested') + ')';
+        if (n.last_delay_ms) label += ' · ' + n.last_delay_ms + ' ms';
+        if (n.jitter_ms) label += ' · Δ' + n.jitter_ms + ' ms';
+        if (guardedNode) label += ' — ' + n.state;
+        if (lastResorts.indexOf(name) >= 0) label += ' — ' + _('last resort');
+        return E('span', {
+          'class': 'purewrt-mihomo-node ' + (guardedNode ? 'purewrt-mihomo-node-guard' : 'purewrt-mihomo-node-idle'),
+          'title': n.reason || ''
+        }, label);
+      });
+      var user = userFilters[group] || '';
+      body.appendChild(E('div', { 'style': 'margin:.6em 0' }, [
+        E('strong', {}, group),
+        E('div', { 'class': 'cbi-section-note' }, [
+          _('User exclude filter: '), E('code', {}, user || _('(none)')),
+          ' · ', _('Guard exclusions are runtime-only and never written to this value.')
+        ]),
+        E('div', { 'class': 'purewrt-mihomo-node-grid' }, chips)
+      ]));
+    });
+    if (!groupNames.length) {
+      body.appendChild(E('em', {}, _('No guard candidate groups yet — Apply after enabling the guard.')));
+    }
+  }
+
+  var runBtn = E('button', { 'class': 'btn cbi-button cbi-button-action' }, '▶ ' + _('Run guard now'));
+  runBtn.addEventListener('click', function(ev) {
+    ev.preventDefault();
+    runBtn.disabled = true;
+    callProxyGuardStart('').then(function() {
+      var tries = 0;
+      function poll() {
+        callProxyGuardStatus().then(function(r) {
+          r = r || {};
+          if (r.running && tries++ < 40) {
+            window.setTimeout(poll, 3000);
+            return;
+          }
+          draw(r);
+          runBtn.disabled = false;
+        }).catch(function() { runBtn.disabled = false; });
+      }
+      window.setTimeout(poll, 1000);
+    }).catch(function(err) {
+      runBtn.disabled = false;
+      ui.addNotification(null, E('p', _('Proxy guard failed to start: %s').format(String(err))), 'danger');
+    });
+  });
+  var resetBtn = E('button', { 'class': 'btn' }, _('Clear quarantines'));
+  resetBtn.addEventListener('click', function(ev) {
+    ev.preventDefault();
+    resetBtn.disabled = true;
+    callProxyGuardReset().then(function(r) {
+      draw(r);
+      ui.addNotification(null, E('p', _('Proxy guard quarantines cleared.')), 'info');
+    }).catch(function(err) {
+      ui.addNotification(null, E('p', _('Reset failed: %s').format(String(err))), 'danger');
+    }).finally(function() { resetBtn.disabled = false; });
+  });
+
+  draw(status);
+  return E('div', { 'class': 'cbi-section' }, [
+    E('h3', {}, _('Adaptive proxy guard')),
+    E('p', { 'class': 'cbi-section-note' }, _(
+      'Adds real-transfer and latency-stability checks to mihomo. User filters remain unchanged; temporary guard exclusions affect new connections only.'
+    )),
+    E('div', { 'style': 'display:flex;gap:.5em;margin:.4em 0' }, [ runBtn, resetBtn ]),
+    body
+  ]);
+}
+
 var doms = {};
 function refreshAll() {
   Promise.all([callStatus(), callApkUpdates('0')]).then(function(r) {
@@ -612,7 +737,8 @@ return view.extend({
       callMihomoConfig().catch(function() { return ''; }),
       callMixinGet().catch(function() { return { enabled: false, body: '', exists: false }; }),
       uci.load('purewrt').catch(function() { return null; }),
-      callProxyGroups().catch(function() { return []; })
+      callProxyGroups().catch(function() { return []; }),
+      callProxyGuardStatus().catch(function() { return null; })
     ]);
   },
   render: function(data) {
@@ -622,6 +748,7 @@ return view.extend({
     var generatedYAML  = data[3] || '';
     var mixinInfo      = data[4] || { enabled: false, body: '' };
     var proxyGroups    = data[6] || [];
+    var proxyGuard     = data[7] || null;
 
     var statusSection = renderStatusSection(status);
     var updatesSection = E('div', { 'class': 'cbi-section' }, [
@@ -660,6 +787,7 @@ return view.extend({
       )),
       statusSection,
       renderProxyGroupsSection(proxyGroups),
+      renderProxyGuardSection(proxyGuard),
       updatesSection,
       renderUpgradeSection(initialRelease, currentChannel),
       renderGeneratedConfigSection(generatedYAML),
