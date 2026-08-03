@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=ooniprobe
-PKG_VERSION:=3.29.1
+PKG_VERSION:=3.30.0
 PKG_RELEASE:=1
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
@@ -10,7 +10,7 @@ PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/ooni/probe-cli.git
 PKG_SOURCE_VERSION:=v$(PKG_VERSION)
 # Recompute on version bump with: .github/scripts/pin-mirror-hash.sh ooniprobe
-PKG_MIRROR_HASH:=17954ff52fd6bdbb3dd6ac6c574f8953da9fda2c0e7da4e2d32a759aad06f9d2
+PKG_MIRROR_HASH:=4932b528d196dbd0efc37d3b3602768188b7c9b17712931e88b483df658aee9a
 
 PKG_LICENSE:=GPL-3.0-or-later
 PKG_LICENSE_FILES:=LICENSE.md
