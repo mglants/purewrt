@@ -20,6 +20,7 @@ PKG_BUILD_DEPENDS:=golang/host
 PKG_BUILD_PARALLEL:=1
 
 GO_PKG:=github.com/ooni/probe-cli/v3
+GO_PKG_TAGS:=nouserauth
 # Build only the ooniprobe CLI main; the module also contains miniooni and
 # other commands we don't ship.
 GO_PKG_BUILD_PKG:=$(GO_PKG)/cmd/ooniprobe
