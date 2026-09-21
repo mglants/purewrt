@@ -1,16 +1,16 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=zapret
-PKG_VERSION:=1.0.4
+PKG_VERSION:=1.0.5.2
 PKG_RELEASE:=1
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/bol-van/zapret2.git
-PKG_SOURCE_VERSION:=v1.0.4
+PKG_SOURCE_VERSION:=v1.0.5.2
 # Real tarball hash (the SDK's strict check rejects `skip`). Pinned to the
 # v1.0.1 git tag, so this is stable; if the SDK ever recomputes a different
 # value it prints "PKG_MIRROR_HASH ... set to <hash>" — copy it here.
-PKG_MIRROR_HASH:=11fcb6d4f8cfe4463cd91afe5d2cfb60ea387639ff9faebff8dc4d23dd0649af
+PKG_MIRROR_HASH:=e9c068e4d240c069cdf538b66f6fc22fe4a3dea06c2d1cc765c11d51738fea78
 
 PKG_LICENSE:=MIT
 PKG_MAINTAINER:=PureWRT Developers
