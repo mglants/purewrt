@@ -4,6 +4,12 @@ All notable changes to PureWRT are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are the `purewrt`
 package version.
 
+## [0.6.1] - 2026-09-23
+
+### Fixed
+- LuCI table sections remain in their compact row layout after Save & Apply
+  ([#15](https://github.com/mglants/purewrt/issues/15)).
+
 ## [0.6.0] - 2026-08-03
 
 ### Added

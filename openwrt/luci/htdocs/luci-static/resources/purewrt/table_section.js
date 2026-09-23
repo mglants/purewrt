@@ -247,6 +247,26 @@ function updateDropIndicator(root, row, ev) {
 }
 
 function render(root, opt) {
+  // LuCI's standard map.save() refreshes the map contents after persisting
+  // UCI changes. That rebuild drops the table_section DOM transformation,
+  // leaving every editor wrapper visible as a long inline form. Re-apply the
+  // table layout after each save so the page returns to its compact rows.
+  var map = dom.findClassInstance(root);
+  if (map && !map.purewrtTableSectionSaveBound) {
+    var save = map.save;
+    map.save = function() {
+      var result = save.apply(this, arguments);
+
+      return Promise.resolve(result).then(function(value) {
+        if (root.isConnected)
+          render(root, opt);
+
+        return value;
+      });
+    };
+    map.purewrtTableSectionSaveBound = true;
+  }
+
   var previousRows = Array.prototype.slice.call(root.querySelectorAll('.purewrt-section-row'));
 
   Array.prototype.forEach.call(root.querySelectorAll('.purewrt-section-row-head'), function(header) {
