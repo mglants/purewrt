@@ -188,9 +188,7 @@ func renderMihomoBase(c config.Config) []byte {
 	if vpns := referencedVPNs(c); len(vpns) > 0 || len(friends) > 0 {
 		b.WriteString("\nproxies:\n")
 		for _, v := range vpns {
-			// tfo: TCP Fast Open — saves a round trip where the destination
-			// supports it; mihomo falls back to plain TCP otherwise.
-			b.WriteString("  - name: " + vpnProxyName(v.Name) + "\n    type: direct\n    interface-name: " + v.Interface + "\n    tfo: true\n")
+			b.WriteString("  - name: " + vpnProxyName(v.Name) + "\n    type: direct\n    interface-name: " + v.Interface + "\n")
 		}
 		// Friend exits: ss outbounds over the easytier overlay.
 		for _, f := range friends {
