@@ -4,6 +4,17 @@ All notable changes to PureWRT are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are the `purewrt`
 package version.
 
+## [0.6.2] - 2026-10-22
+
+### Fixed
+- Replies to inbound and port-forwarded connections now bypass transparent
+  proxy dispatch before device and destination matching. This prevents local
+  TCP resets when the external client's address matches a proxy range, such
+  as a Cloudflare WARP exit. The exemption applies to IPv4 and IPv6 and keeps
+  original-direction proxy routing intact.
+- Generated interface-bound VPN outbounds no longer explicitly enable TCP
+  Fast Open.
+
 ## [0.6.1] - 2026-09-23
 
 ### Fixed

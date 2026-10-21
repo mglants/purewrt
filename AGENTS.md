@@ -213,7 +213,8 @@ reimplementation notes are in `docs/multi-wan-proxy-egress.md`.
 `NFTablesWithNative` (`internal/generator/nftables.go`) emits the prerouting
 chain in this fixed order, and the order is load-bearing:
 
-1. loop-breakers (`iifname lo`, already-marked `return`)
+1. reply-direction exemption (`ct direction reply return`), then loop-breakers
+   (`iifname lo`, already-marked `return`)
 2. LAN/RFC1918 destinations → `return` (never tunnel/proxy local traffic)
 3. bypass / dns-bypass / **proxy-server-bypass** / source-bypass → `return`
    (proxy-server-bypass MUST stay above any TPROXY rule or a proxy-assigned
@@ -226,6 +227,13 @@ chain in this fixed order, and the order is load-bearing:
 6. **destination pass** — per-section nftset rules, in ascending-`Priority`
    order, so a section with a lower priority number wins a destination listed
    in more than one (e.g. a `vpn` section at 10 beats a `proxy` section at 40).
+
+The reply exemption must precede every dispatch rule. Without it, replies from
+a port-forwarded service to a client in a proxy destination range (for example,
+a WARP exit in `104.16.0.0/12`) are intercepted by TPROXY and reset locally.
+Use `ct direction reply`, not a blanket established-state bypass: subsequent
+original-direction packets still need proxy dispatch. Guarded by
+`TestPreroutingReplyBypassPrecedesDispatch`.
 
 `sectionsByPriority` produces the sorted, enabled-only slice used by passes 4
 and 6. Before this, prerouting was emitted in config order with device/source

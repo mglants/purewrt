@@ -119,6 +119,9 @@ func NFTablesWithNative(c config.Config, native map[string][]string) []byte {
 		b.WriteString(nftCounterDecl(set))
 		b.WriteString(nftCounterDecl(dnsSetName(set)))
 	}
+	// Replies to inbound/forwarded connections must keep normal NAT and routing.
+	// Otherwise a client in a proxy set (e.g. a WARP exit) has its SYN-ACK
+	// intercepted by TPROXY, which resets the connection before TLS starts.
 	// Loop-breakers tightened to allow OUTPUT-marked re-injected packets through.
 	// Re-injected packets arrive with iifname=lo and our mark already set; they
 	// must fall through to the per-section TPROXY dispatch below. The plain
@@ -126,7 +129,7 @@ func NFTablesWithNative(c config.Config, native map[string][]string) []byte {
 	// restrict the bypass to genuine router-to-self loopback (`fib daddr type
 	// local`), and the mark-already-set bypass to externally-marked traffic
 	// not coming from lo.
-	b.WriteString("  chain prerouting {\n    type filter hook prerouting priority mangle; policy accept;\n    iifname \"lo\" fib daddr type local return\n    iifname != \"lo\" meta mark & " + c.Settings.FwMarkMask + " == " + c.Settings.FwMark + " return\n    ip daddr { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/4, 240.0.0.0/4 } return\n")
+	b.WriteString("  chain prerouting {\n    type filter hook prerouting priority mangle; policy accept;\n    ct direction reply return\n    iifname \"lo\" fib daddr type local return\n    iifname != \"lo\" meta mark & " + c.Settings.FwMarkMask + " == " + c.Settings.FwMark + " return\n    ip daddr { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/4, 240.0.0.0/4 } return\n")
 	if includeIPv6 {
 		b.WriteString("    ip6 daddr { ::1, fc00::/7, fe80::/10, ff00::/8 } return\n")
 	}
