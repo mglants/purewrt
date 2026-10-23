@@ -446,6 +446,16 @@ func writeDNS(b *bytes.Buffer, d DNS) {
 	listv(b, "doh_upstream", d.DoHUpstreams)
 	listv(b, "udp_upstream", d.UDPUpstreams)
 	listv(b, "doq_upstream", d.DoQUpstreams)
+	for _, item := range []struct {
+		key    string
+		values []string
+	}{{"fallback_upstream", d.FallbackUpstreams}, {"fallback_domain", d.FallbackDomains}} {
+		if len(item.values) == 0 {
+			opt(b, item.key, "")
+		} else {
+			listv(b, item.key, item.values)
+		}
+	}
 	fmt.Fprintln(b)
 }
 func writeMwan3(b *bytes.Buffer, m Mwan3) {

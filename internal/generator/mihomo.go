@@ -3,6 +3,7 @@ package generator
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/purewrt/purewrt/internal/config"
@@ -137,16 +138,38 @@ func renderMihomoBase(c config.Config) []byte {
 		b.WriteString("    - " + u + "\n")
 	}
 	b.WriteString("  fallback:\n")
-	for _, u := range c.DNS.UDPUpstreams {
-		b.WriteString("    - " + u + "\n")
+	if len(c.DNS.FallbackUpstreams) > 0 {
+		for _, u := range c.DNS.FallbackUpstreams {
+			b.WriteString("    - " + strconv.Quote(u) + "\n")
+		}
+	} else {
+		for _, u := range c.DNS.UDPUpstreams {
+			b.WriteString("    - " + u + "\n")
+		}
 	}
+	// Lazy fallback shares the main query deadline: a silent timeout can
+	// leave no time for fallback (reproduced on Mihomo v1.19.33). Query both
+	// pools concurrently; this also sends queries to fallback in normal use.
+	b.WriteString("  fallback-lazy-query: false\n")
 	// Mihomo defaults dns.fallback-filter.geoip to true. Merely setting
 	// geodata-mode=false does not disable geodata; with any fallback servers
 	// configured it lazily loads (and, when absent, downloads) geoip.metadb.
 	// PureWRT does not use Mihomo GEOIP matching when its geodata option is
 	// disabled, so override that implicit dependency explicitly. Geo-backed
 	// PureWRT rule providers are materialised independently from geo/*.dat.
-	if !mihomoGeodataEnabled(c) {
+	if len(c.DNS.FallbackUpstreams) > 0 || len(c.DNS.FallbackDomains) > 0 {
+		// An explicit fallback pool/domain policy must not inherit Mihomo's
+		// China-specific GeoIP filtering, even when other rules use geodata.
+		b.WriteString("  fallback-filter:\n    geoip: false\n    geosite: []\n    ipcidr: []\n")
+		if len(c.DNS.FallbackDomains) == 0 {
+			b.WriteString("    domain: []\n")
+		} else {
+			b.WriteString("    domain:\n")
+			for _, domain := range c.DNS.FallbackDomains {
+				b.WriteString("      - " + strconv.Quote(domain) + "\n")
+			}
+		}
+	} else if !mihomoGeodataEnabled(c) {
 		b.WriteString("  fallback-filter:\n    geoip: false\n")
 	}
 	b.WriteString("  nameserver:\n")

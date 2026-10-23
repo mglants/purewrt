@@ -48,6 +48,8 @@ func TestConfigRoundTripPreservesKeyFields(t *testing.T) {
 	c.Settings.ProxyGuardQuarantineSeconds = 4567
 	c.DNS.DoHPolicy = "direct"
 	c.DNS.FakeIP = true
+	c.DNS.FallbackUpstreams = []string{"https://common.dot.dns.yandex.net/dns-query#DIRECT"}
+	c.DNS.FallbackDomains = []string{"+.ru", "+.su", "+.xn--p1ai"}
 	c.ZapretProfiles = []ZapretProfile{{Name: "wan_a", Enabled: true, Network: "wan_a", Interfaces: []string{"wan_a"}, FwMark: "0x40000001", NFQWSBin: "/usr/bin/nfqws", TPWSBin: "/usr/bin/tpws"}}
 	c.ZapretStrategies = []ZapretStrategy{{Name: "zap_a", Enabled: true, Profile: "wan_a", QueueNum: 201, Protocols: []string{"tcp", "udp"}, TCPPorts: "443", UDPPorts: "443", TCPPktOut: 15, TCPPktIn: 6, UDPPktOut: 9, UDPPktIn: 3, Preset: "custom", Params: "--strategy-a"}}
 	c.Subscriptions = []Subscription{{Name: "sub", Enabled: true, URL: "https://example.com/sub.yaml", Mode: "auto", PresetIfNoRules: "minimal", ImportRulesOnLowResource: true, AutoApply: true, Interval: 123, HWID: "sub-hwid", DeviceName: "router", UserAgent: "sub-agent", Headers: []string{"X-Sub: yes"}}}

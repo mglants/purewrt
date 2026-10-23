@@ -81,12 +81,26 @@ return view.extend({
       });
       return E('div', { 'style': 'display:flex;align-items:center;flex-wrap:wrap;gap:.25em' }, [ widget, manageBtn ]);
     };
-    var udp = s.option(form.DynamicList, 'udp_upstream', _('UDP DNS fallback upstreams'));
-    udp.description = _('Plain DNS servers used before DoH so a fresh router can resolve/bootstrap even when DoH endpoints are blocked.');
+    var udp = s.option(form.DynamicList, 'udp_upstream', _('Bootstrap and proxy hostname DNS'));
+    udp.description = _('Resolve DNS server and proxy hostnames. Append #DIRECT to reach a server without a proxy. Also used as fallback when no separate fallback upstreams are configured.');
     var doh = s.option(form.DynamicList, 'doh_upstream', _('DoH upstreams'));
     doh.description = _('DNS-over-HTTPS upstreams mihomo resolves through once bootstrapped — the primary resolver path.');
     var doq = s.option(form.DynamicList, 'doq_upstream', _('DoQ upstreams'));
     doq.description = _('DNS-over-QUIC upstreams used by mihomo (e.g. quic://dns.adguard-dns.com or quic://94.140.14.14). Tried alongside DoH; useful when DoH is selectively filtered.');
+    var fallback = s.option(form.DynamicList, 'fallback_upstream', _('DNS fallback upstreams'));
+    fallback.default = ['https://common.dot.dns.yandex.net/dns-query#DIRECT'];
+    fallback.description = _('Optional separate fallback resolvers, including DoH URLs. Append #DIRECT for direct access. Queried concurrently even when primary DNS works, including for blocked domains. Address queries may still wait for the primary timeout; TXT and HTTPS records do not use this fallback. Empty uses bootstrap servers.');
+    var fallbackDomains = s.option(form.DynamicList, 'fallback_domain', _('Domains resolved directly by fallback'));
+    fallbackDomains.default = ['+.ru', '+.su', '+.xn--p1ai'];
+    fallbackDomains.description = _('Matching address queries skip primary DNS and use fallback immediately. Examples: +.ru, +.su, +.xn--p1ai (.рф). This selects the resolver, not the traffic route.');
+    [fallback, fallbackDomains].forEach(function(option) {
+      option.write = function(section_id, value) {
+        uci.set('purewrt', section_id, this.option, value && value.length ? value : '');
+      };
+      option.remove = function(section_id) {
+        uci.set('purewrt', section_id, this.option, '');
+      };
+    });
     // These default to ON in the backend (config.Default: HijackLANDNS,
     // BlockDoT = true). Mirror that with .default='1' so an unset UCI key shows
     // the toggle ON (matching the rules that actually get generated) AND so
@@ -111,7 +125,9 @@ return view.extend({
     doh3v6.description = _('IPv6 addresses or CIDRs to refuse on UDP/443.');
     s.option(form.Flag, 'fake_ip', _('Fake-IP compatibility'));
     var mode = s.option(form.ListValue, 'enhanced_mode', _('Enhanced mode'));
+    mode.value('redir-host');
     mode.value('normal');
+    mode.default = 'redir-host';
     mode.value('fake-ip');
 
     var groupType = s.option(form.ListValue, 'proxy_group_type', _('DNSProxy group type'));

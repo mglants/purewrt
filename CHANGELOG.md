@@ -4,6 +4,33 @@ All notable changes to PureWRT are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are the `purewrt`
 package version.
 
+## [0.6.3] - 2026-10-23
+
+### Added
+- Native DNS fallback resolver and domain lists in UCI and LuCI's DNS page.
+  Configure `fallback_upstream` and `fallback_domain` without a Mihomo mixin;
+  explicit empty lists survive save/load and disable the corresponding defaults.
+- DNS resilience documentation with router-tested outage behavior and limits.
+
+### Changed
+- DNS defaults target Russian WAN connections: overseas DoH uses `DNSProxy`,
+  Yandex DoH supplies direct fallback, and direct Yandex DNS bootstraps resolver
+  and proxy hostnames. Address queries for `.ru`, `.su`, and `.рф` use domestic
+  fallback immediately. New configurations use `redir-host` with real IPs.
+- Generated Mihomo DNS sets `fallback-lazy-query: false`, allowing domestic
+  fallback queries to run concurrently with primary queries. An explicit
+  fallback pool or domain list disables implicit GeoIP fallback filtering.
+
+### Upgrade notes
+- Existing explicit DNS values are preserved. Missing `fallback_upstream` and
+  `fallback_domain` options inherit the new defaults, including on upgrades.
+  Set either option to an empty string to clear that list; an empty fallback
+  resolver list uses the existing `udp_upstream` pool instead.
+- Domestic fallback receives concurrent address queries even while proxies
+  work. In router tests, address resolution recovered after roughly five
+  seconds when a proxy silently stalled. TXT and HTTPS-record queries still
+  failed during that outage; this is not complete failover for every DNS type.
+
 ## [0.6.2] - 2026-10-22
 
 ### Fixed

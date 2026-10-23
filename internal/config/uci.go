@@ -132,6 +132,22 @@ func list(m map[string][]string, k string, d []string) []string {
 	}
 	return d
 }
+
+// A blank option explicitly clears a default DNS list. Missing options inherit
+// defaults, so removing all custom entries must not resurrect the default pool.
+func dnsList(m map[string][]string, k string, d []string) []string {
+	v, ok := m[k]
+	if !ok {
+		return d
+	}
+	var out []string
+	for _, item := range v {
+		if strings.TrimSpace(item) != "" {
+			out = append(out, item)
+		}
+	}
+	return out
+}
 func b(m map[string][]string, k string, d bool) bool {
 	v := one(m, k, "")
 	if v == "" {
@@ -296,6 +312,8 @@ func applySection(c *Config, x struct {
 		c.DNS.DoHUpstreams = list(x.opts, "doh_upstream", c.DNS.DoHUpstreams)
 		c.DNS.UDPUpstreams = list(x.opts, "udp_upstream", c.DNS.UDPUpstreams)
 		c.DNS.DoQUpstreams = list(x.opts, "doq_upstream", c.DNS.DoQUpstreams)
+		c.DNS.FallbackUpstreams = dnsList(x.opts, "fallback_upstream", c.DNS.FallbackUpstreams)
+		c.DNS.FallbackDomains = dnsList(x.opts, "fallback_domain", c.DNS.FallbackDomains)
 	case "mwan3":
 		c.Mwan3.Mode = one(x.opts, "mode", c.Mwan3.Mode)
 		c.Mwan3.Detect = b(x.opts, "detect", c.Mwan3.Detect)

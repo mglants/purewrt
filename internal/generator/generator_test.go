@@ -746,9 +746,9 @@ func TestMihomoDashboardEnabled(t *testing.T) {
 func TestMihomoDNSIncludesUDPBootstrapFallbacks(t *testing.T) {
 	out := string(Mihomo(config.Default()))
 	for _, want := range []string{
-		"proxy-server-nameserver:\n    - 1.1.1.1\n    - 8.8.8.8\n    - 9.9.9.9",
-		"default-nameserver:\n    - 1.1.1.1\n    - 8.8.8.8\n    - 9.9.9.9",
-		"fallback:\n    - 1.1.1.1\n    - 8.8.8.8\n    - 9.9.9.9",
+		"proxy-server-nameserver:\n    - 77.88.8.8#DIRECT\n    - 77.88.8.1#DIRECT",
+		"default-nameserver:\n    - 77.88.8.8#DIRECT\n    - 77.88.8.1#DIRECT",
+		"fallback:\n    - \"https://common.dot.dns.yandex.net/dns-query#DIRECT\"",
 		"nameserver:\n    - https://dns.google/dns-query",
 	} {
 		if !strings.Contains(out, want) {
@@ -861,6 +861,8 @@ func TestMihomoGeodataDisabledByDefault(t *testing.T) {
 
 func TestMihomoGeodataCanBeEnabled(t *testing.T) {
 	c := config.Default()
+	c.DNS.FallbackUpstreams = nil
+	c.DNS.FallbackDomains = nil
 	c.Settings.MihomoGeodataEnabled = true
 	mihomo := string(Mihomo(c))
 	if !strings.Contains(mihomo, "geodata-mode: true") {
