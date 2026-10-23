@@ -72,7 +72,6 @@ return view.extend({
     var hci = s.option(form.Value, 'health_check_interval', _('Health check interval'));
     hci.datatype = 'uinteger';
 
-    s.option(form.Value, 'mwan3_policy', _('mwan3 policy'));
     s.option(form.Value, 'user_agent', _('User-Agent override'));
     s.option(form.DynamicList, 'header', _('Extra HTTP header'));
     var mirror = s.option(form.DynamicList, 'mirror', _('Mirror URLs'));

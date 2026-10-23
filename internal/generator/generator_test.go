@@ -391,7 +391,6 @@ func TestWriteAllDoesNotInjectDemoFallbackRules(t *testing.T) {
 		NFTFile:            filepath.Join(dir, "purewrt.nft"),
 		NFTSetsFile:        filepath.Join(dir, "purewrt-sets.nft"),
 		FirewallFile:       filepath.Join(dir, "firewall.generated"),
-		Mwan3File:          filepath.Join(dir, "mwan3.generated"),
 		ZapretEnv:          filepath.Join(dir, "zapret.env"),
 	}
 	if err := WriteAllTo(c, paths); err != nil {
@@ -426,7 +425,6 @@ func TestWriteAllWritesRuntimeDNSMasqSnippetDirectly(t *testing.T) {
 		NFTFile:            filepath.Join(dir, "purewrt.nft"),
 		NFTSetsFile:        filepath.Join(dir, "purewrt-sets.nft"),
 		FirewallFile:       filepath.Join(dir, "firewall.generated"),
-		Mwan3File:          filepath.Join(dir, "mwan3.generated"),
 		ZapretEnv:          filepath.Join(dir, "zapret.env"),
 	}
 	if err := WriteAllTo(c, paths); err != nil {
@@ -499,7 +497,6 @@ func TestStagedGeneratedPathsPromoteToLive(t *testing.T) {
 		NFTFile:            filepath.Join(dir, "live", "purewrt.nft"),
 		NFTSetsFile:        filepath.Join(dir, "live", "purewrt-sets.nft"),
 		FirewallFile:       filepath.Join(dir, "live", "firewall.generated"),
-		Mwan3File:          filepath.Join(dir, "live", "mwan3.generated"),
 		ZapretEnv:          filepath.Join(dir, "live", "zapret.env"),
 	}
 	c.Settings.MihomoConfig = live.MihomoConfig
@@ -572,7 +569,6 @@ func TestGeneratedFingerprintSkipRequiresRuntimeFiles(t *testing.T) {
 	c.Settings.DNSMasqIncludeDir = filepath.Join(dir, "dnsmasq.d")
 	c.DNS.HijackLANDNS = false
 	c.Settings.LANSourceZones = nil // no PureWRT firewall write to /etc/config in this test
-	c.Mwan3.IntegratedRules = false
 
 	if err := WriteAll(c); err != nil {
 		t.Fatal(err)
@@ -604,7 +600,6 @@ func TestGenerationCacheStatusAndForce(t *testing.T) {
 	c.Settings.DNSMasqIncludeDir = filepath.Join(dir, "dnsmasq.d")
 	c.DNS.HijackLANDNS = false
 	c.Settings.LANSourceZones = nil // no PureWRT firewall write to /etc/config in this test
-	c.Mwan3.IntegratedRules = false
 
 	if status := CacheStatus(c); !strings.Contains(status, "generation cache: miss") || !strings.Contains(status, "fingerprint missing") {
 		t.Fatalf("expected initial cache miss, got:\n%s", status)
@@ -652,7 +647,6 @@ func TestWriteAllResultDetectsMihomoOnlyChange(t *testing.T) {
 	c.Settings.DNSMasqIncludeDir = filepath.Join(dir, "dnsmasq.d")
 	c.DNS.HijackLANDNS = false
 	c.Settings.LANSourceZones = nil // no PureWRT firewall write to /etc/config in this test
-	c.Mwan3.IntegratedRules = false
 	paths := DefaultGeneratedPaths(c)
 	if err := WriteAllToWithOptions(c, paths, WriteOptions{Force: true}); err != nil {
 		t.Fatal(err)
@@ -662,7 +656,7 @@ func TestWriteAllResultDetectsMihomoOnlyChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !res.DirtyGroups.Mihomo || res.DirtyGroups.OpenWrtBundle || res.DirtyGroups.Firewall || res.DirtyGroups.Mwan3 || res.DirtyGroups.Zapret || res.DirtyGroups.Policy {
+	if !res.DirtyGroups.Mihomo || res.DirtyGroups.OpenWrtBundle || res.DirtyGroups.Firewall || res.DirtyGroups.Zapret || res.DirtyGroups.Policy {
 		t.Fatalf("expected mihomo-only dirty group, got %+v reason=%s", res.DirtyGroups, res.Reason)
 	}
 }
@@ -676,7 +670,6 @@ func TestWriteAllResultForceMarksAllGroups(t *testing.T) {
 	c.Settings.DNSMasqIncludeDir = filepath.Join(dir, "dnsmasq.d")
 	c.DNS.HijackLANDNS = false
 	c.Settings.LANSourceZones = nil // no PureWRT firewall write to /etc/config in this test
-	c.Mwan3.IntegratedRules = false
 	res, err := WriteAllToResult(c, DefaultGeneratedPaths(c), WriteOptions{Force: true})
 	if err != nil {
 		t.Fatal(err)
@@ -699,7 +692,6 @@ func TestGenerationMetricsCoverCompleteCallAndFractionalStages(t *testing.T) {
 	c.Settings.DNSMasqIncludeDir = filepath.Join(dir, "dnsmasq.d")
 	c.DNS.HijackLANDNS = false
 	c.Settings.LANSourceZones = nil
-	c.Mwan3.IntegratedRules = false
 	paths := DefaultGeneratedPaths(c)
 
 	if _, err := WriteAllToResult(c, paths, WriteOptions{Force: true}); err != nil {

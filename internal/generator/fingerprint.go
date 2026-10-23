@@ -27,7 +27,6 @@ type GenerationGroups struct {
 	Mihomo        bool
 	OpenWrtBundle bool
 	Firewall      bool
-	Mwan3         bool
 	Zapret        bool
 	Policy        bool
 	Mesh          bool
@@ -40,10 +39,10 @@ type GenerationGroups struct {
 }
 
 func (g GenerationGroups) Any() bool {
-	return g.Mihomo || g.OpenWrtBundle || g.Firewall || g.Mwan3 || g.Zapret || g.Policy || g.Mesh || g.Easytier
+	return g.Mihomo || g.OpenWrtBundle || g.Firewall || g.Zapret || g.Policy || g.Mesh || g.Easytier
 }
 func (GenerationGroups) All() GenerationGroups {
-	return GenerationGroups{Mihomo: true, OpenWrtBundle: true, Firewall: true, Mwan3: true, Zapret: true, Policy: true, Mesh: true, Easytier: true}
+	return GenerationGroups{Mihomo: true, OpenWrtBundle: true, Firewall: true, Zapret: true, Policy: true, Mesh: true, Easytier: true}
 }
 
 type generationGroupCacheStatus struct {
@@ -154,7 +153,6 @@ type openWrtSectionFPEntry struct {
 	IPv6Enabled bool
 	UDPMode     string
 	Priority    int
-	Mwan3Policy string
 	VPNs        []string
 	SourceCIDR4 []string
 	SourceCIDR6 []string
@@ -216,14 +214,13 @@ func currentGenerationFingerprint(c config.Config) (generationFingerprint, error
 func generationGroupHashes(c config.Config, in generationFingerprintInput) (map[string]string, error) {
 	openWrtSections := make([]openWrtSectionFPEntry, 0, len(c.Sections))
 	for _, s := range c.Sections {
-		openWrtSections = append(openWrtSections, openWrtSectionFPEntry{Name: s.Name, Enabled: s.Enabled, Action: s.Action, TPROXYPort: s.TPROXYPort, IPv4Enabled: s.IPv4Enabled, IPv6Enabled: s.IPv6Enabled, UDPMode: s.UDPMode, Priority: s.Priority, Mwan3Policy: s.Mwan3Policy, VPNs: s.VPNs, SourceCIDR4: s.SourceCIDR4, SourceCIDR6: s.SourceCIDR6})
+		openWrtSections = append(openWrtSections, openWrtSectionFPEntry{Name: s.Name, Enabled: s.Enabled, Action: s.Action, TPROXYPort: s.TPROXYPort, IPv4Enabled: s.IPv4Enabled, IPv6Enabled: s.IPv6Enabled, UDPMode: s.UDPMode, Priority: s.Priority, VPNs: s.VPNs, SourceCIDR4: s.SourceCIDR4, SourceCIDR6: s.SourceCIDR6})
 	}
 	proxyProviders := c.ProxyProviders
 	groups := map[string]any{
-		"mihomo":         map[string]any{"settings": in.Settings, "dns": in.DNS, "sections": in.Sections, "proxy_providers": proxyProviders, "rule_providers": in.RuleProvider, "vpns": in.VPNs, "mesh": in.Mesh, "mesh_peers": in.MeshPeers},
+		"mihomo":         map[string]any{"proxy_wan_enabled": c.Mwan3.ProxyWANEnabled, "proxy_wans": c.Mwan3.ProxyWANs, "resolved_proxy_wans": c.Mwan3.ResolvedProxyWANs, "settings": in.Settings, "dns": in.DNS, "sections": in.Sections, "proxy_providers": proxyProviders, "rule_providers": in.RuleProvider, "vpns": in.VPNs, "mesh": in.Mesh, "mesh_peers": in.MeshPeers},
 		"openwrt_bundle": map[string]any{"settings": in.Settings, "dns": in.DNS, "sections": openWrtSections, "rule_providers": in.RuleProvider, "bypass": in.Bypass, "vpns": in.VPNs, "devices": in.Devices, "zapret": in.Zapret, "ooni": in.OONI, "mesh_nft": meshNFTFP(in.Mesh)},
 		"firewall":       map[string]any{"dns_hijack": c.DNS.HijackLANDNS, "lan_source_zones": c.Settings.LANSourceZones, "fwmark": c.Settings.FwMark, "fwmark_mask": c.Settings.FwMarkMask, "mesh": in.Mesh},
-		"mwan3":          map[string]any{"mwan3": in.Mwan3, "proxy_providers": proxyProviders},
 		"zapret":         map[string]any{"zapret": in.Zapret, "sections": openWrtSections},
 		"policy":         map[string]any{"settings": in.Settings, "vpns": in.VPNs, "devices": in.Devices, "sections": openWrtSections},
 		"mesh":           map[string]any{"mesh": in.Mesh, "mesh_peers": in.MeshPeers},
@@ -268,9 +265,6 @@ func generationDirtyGroups(c config.Config, fp generationFingerprint, checkPaths
 	}
 	if old.Groups["firewall"] != fp.Groups["firewall"] || (len(FirewallRules(c)) > 0 && !pathComplete(checkPaths.FirewallFile)) {
 		g.Firewall = true
-	}
-	if old.Groups["mwan3"] != fp.Groups["mwan3"] || (len(Mwan3Rules(c)) > 0 && !pathComplete(checkPaths.Mwan3File)) {
-		g.Mwan3 = true
 	}
 	if old.Groups["zapret"] != fp.Groups["zapret"] || !pathComplete(checkPaths.ZapretEnv) {
 		g.Zapret = true
@@ -337,7 +331,7 @@ func allGenerationGroupCacheStatuses(status, reason string) []generationGroupCac
 }
 
 func generationGroupNames() []string {
-	return []string{"mihomo", "openwrt_bundle", "firewall", "mwan3", "zapret", "policy", "mesh", "easytier"}
+	return []string{"mihomo", "openwrt_bundle", "firewall", "zapret", "policy", "mesh", "easytier"}
 }
 
 func generationGroupOutputMissingReason(c config.Config, paths GeneratedPaths, name string) string {
@@ -359,10 +353,6 @@ func generationGroupOutputMissingReason(c config.Config, paths GeneratedPaths, n
 	case "firewall":
 		if len(FirewallRules(c)) > 0 {
 			return missingPathReason(paths.FirewallFile, "firewall output missing")
-		}
-	case "mwan3":
-		if len(Mwan3Rules(c)) > 0 {
-			return missingPathReason(paths.Mwan3File, "mwan3 output missing")
 		}
 	case "zapret":
 		return missingPathReason(paths.ZapretEnv, "zapret env missing")

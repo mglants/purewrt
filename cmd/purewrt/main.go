@@ -165,6 +165,10 @@ func multiCallEntry(argv0 string) string {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "ooni-exec" {
+		fatal(manager.OONIExec(os.Args[2:]))
+		return
+	}
 	switch multiCallEntry(filepath.Base(os.Args[0])) {
 	case "check":
 		tuneGC() // short-lived like the CLI — same GC trade applies
@@ -1159,6 +1163,14 @@ var commands = []command{
 		desc: "OONI measurement status (JSON)",
 		run: func(m manager.Manager) {
 			printJSON(m.OONIStatus())
+		}},
+	{name: "ooni-run", group: "OONI",
+		args: "[--no-collector] [--input URL]",
+		desc: "Run OONI sequentially over selected WANs",
+		run: func(m manager.Manager) {
+			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+			defer stop()
+			fatal(m.OONIRun(ctx, os.Args[2:]))
 		}},
 	{name: "ooni-prepare", group: "OONI",
 		args: "",

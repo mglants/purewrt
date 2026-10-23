@@ -42,7 +42,7 @@ resolution for PureWRT's dnsmasq nftsets.
 
 ## Trade-offs and router validation
 
-Tested on 2026-10-23, on the router at 10.1.1.2, using isolated Mihomo instances:
+Tested on 2026-10-23, on the router at 192.0.2.1, using isolated Mihomo instances:
 installed `alpha-dc4d4fcb` and official `v1.19.33`. Production traffic was not
 blocked. An unavailable SOCKS endpoint simulated immediate refusal and a TCP
 endpoint accepting connections without responding simulated a silent outage.

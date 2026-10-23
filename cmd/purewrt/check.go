@@ -72,8 +72,8 @@ func checkMain() {
 	b.WriteString("\n")
 	fmt.Fprintf(&b, "IPv6:\n  mode: %s\n  global address: %v\n  default route: %v\n  warnings: %v\n\n",
 		v6.Mode, v6.GlobalAddress, v6.DefaultRoute, v6.Warnings)
-	fmt.Fprintf(&b, "Mwan3:\n  installed: %v\n  mode: %s\n  direct traffic: %s\n  proxy outbound: %s\n\n",
-		mw.Installed, mw.Mode, mw.DirectTraffic, mw.ProxyOutbound)
+	fmt.Fprintf(&b, "Mwan3:\n  installed: %v\n  direct traffic: %s\n  proxy outbound: %s\n\n",
+		mw.Installed, mw.DirectTraffic, mw.ProxyOutbound)
 
 	// Mihomo + full route only make sense for a proxy section. Direct/reject/no
 	// match never enters mihomo.

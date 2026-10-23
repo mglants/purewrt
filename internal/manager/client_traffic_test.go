@@ -13,7 +13,7 @@ import (
 )
 
 func TestParseConntrack_TCPEstablishedAssured(t *testing.T) {
-	line := "ipv4     2 tcp      6 7434 ESTABLISHED src=192.168.1.105 dst=162.248.160.241 sport=53406 dport=443 packets=1349 bytes=91997 src=162.248.160.241 dst=192.168.214.101 sport=443 dport=53406 packets=681 bytes=59409 [ASSURED] mark=0 zone=0 use=2"
+	line := "ipv4     2 tcp      6 7434 ESTABLISHED src=192.168.1.105 dst=162.248.160.241 sport=53406 dport=443 packets=1349 bytes=91997 src=162.248.160.241 dst=192.0.2.101 sport=443 dport=53406 packets=681 bytes=59409 [ASSURED] mark=0 zone=0 use=2"
 	ent := parseConntrackLine(line)
 	if ent == nil {
 		t.Fatal("expected non-nil entry")
@@ -42,7 +42,7 @@ func TestParseConntrack_TCPEstablishedAssured(t *testing.T) {
 }
 
 func TestParseConntrack_TCPSynSentUnreplied(t *testing.T) {
-	line := "ipv4     2 tcp      6 110 SYN_SENT src=192.168.1.105 dst=10.0.0.50 sport=44402 dport=8443 packets=3 bytes=180 [UNREPLIED] src=10.0.0.50 dst=192.168.214.101 sport=8443 dport=44402 packets=0 bytes=0 mark=0 zone=0 use=2"
+	line := "ipv4     2 tcp      6 110 SYN_SENT src=192.168.1.105 dst=10.0.0.50 sport=44402 dport=8443 packets=3 bytes=180 [UNREPLIED] src=10.0.0.50 dst=192.0.2.101 sport=8443 dport=44402 packets=0 bytes=0 mark=0 zone=0 use=2"
 	ent := parseConntrackLine(line)
 	if ent == nil {
 		t.Fatal("expected non-nil entry")
@@ -58,7 +58,7 @@ func TestParseConntrack_TCPSynSentUnreplied(t *testing.T) {
 func TestParseConntrack_UDPHealthyNoFlag(t *testing.T) {
 	// UDP with replies but below the kernel's stream-tracking threshold —
 	// real-router observation. No [ASSURED] flag but reply_packets > 0.
-	line := "ipv4     2 udp      17 55 src=192.168.1.113 dst=216.239.38.223 sport=55708 dport=443 packets=9 bytes=4361 src=216.239.38.223 dst=192.168.214.101 sport=443 dport=55708 packets=12 bytes=4629 mark=0 zone=0 use=2"
+	line := "ipv4     2 udp      17 55 src=192.168.1.113 dst=216.239.38.223 sport=55708 dport=443 packets=9 bytes=4361 src=216.239.38.223 dst=192.0.2.101 sport=443 dport=55708 packets=12 bytes=4629 mark=0 zone=0 use=2"
 	ent := parseConntrackLine(line)
 	if ent == nil {
 		t.Fatal("expected non-nil entry")
@@ -90,7 +90,7 @@ func TestParseConntrack_UDPUnreplied(t *testing.T) {
 }
 
 func TestParseConntrack_OffloadFlag(t *testing.T) {
-	line := "ipv4     2 tcp      6 432000 ESTABLISHED src=192.168.1.105 dst=1.2.3.4 sport=12345 dport=443 packets=100 bytes=10000 src=1.2.3.4 dst=192.168.214.101 sport=443 dport=12345 packets=80 bytes=80000 [OFFLOAD] mark=0 zone=0 use=2"
+	line := "ipv4     2 tcp      6 432000 ESTABLISHED src=192.168.1.105 dst=1.2.3.4 sport=12345 dport=443 packets=100 bytes=10000 src=1.2.3.4 dst=192.0.2.101 sport=443 dport=12345 packets=80 bytes=80000 [OFFLOAD] mark=0 zone=0 use=2"
 	ent := parseConntrackLine(line)
 	if ent == nil {
 		t.Fatal("expected non-nil entry")
@@ -290,7 +290,7 @@ func TestIsBogonIPv4(t *testing.T) {
 		"169.254.1.1", // link-local
 		"172.16.0.1", "172.31.255.255",
 		"192.0.0.5", "192.0.2.99",
-		"192.168.1.50", "192.168.214.212",
+		"192.168.1.50", "192.0.2.212",
 		"198.18.0.1", "198.51.100.1", "203.0.113.1",
 		"224.0.0.251", "239.255.255.250", // multicast incl. mDNS + SSDP
 		"240.0.0.1", "255.255.255.255", // reserved + broadcast

@@ -140,10 +140,6 @@ func UpsertSubscription(c Config, s Subscription) Config {
 func UpsertProxyProvider(c Config, p ProxyProvider) Config {
 	for i := range c.ProxyProviders {
 		if c.ProxyProviders[i].Name == p.Name || (p.URL != "" && c.ProxyProviders[i].URL == p.URL) {
-			old := c.ProxyProviders[i]
-			if old.Mwan3Policy != "" {
-				p.Mwan3Policy = old.Mwan3Policy
-			}
 			c.ProxyProviders[i] = p
 			return c
 		}
@@ -460,14 +456,8 @@ func writeDNS(b *bytes.Buffer, d DNS) {
 }
 func writeMwan3(b *bytes.Buffer, m Mwan3) {
 	fmt.Fprintln(b, "config mwan3 'mwan3'")
-	opt(b, "mode", m.Mode)
-	optb(b, "detect", m.Detect)
-	optb(b, "mmx_mask_auto", m.MMXMaskAuto)
-	opt(b, "mwan3_mask", m.Mwan3Mask)
-	opt(b, "purewrt_mark", m.PureWRTMark)
-	opt(b, "purewrt_mask", m.PureWRTMask)
-	opt(b, "rule_priority", m.RulePriority)
-	optb(b, "integrated_rules", m.IntegratedRules)
+	optb(b, "proxy_wan_enabled", m.ProxyWANEnabled)
+	listv(b, "proxy_wan", m.ProxyWANs)
 	fmt.Fprintln(b)
 }
 
@@ -557,7 +547,6 @@ func writeSection(b *bytes.Buffer, s Section, seen map[string]bool) {
 	optb(b, "ipv6_enabled", s.IPv6Enabled)
 	opt(b, "udp_mode", s.UDPMode)
 	opti(b, "priority", s.Priority)
-	opt(b, "mwan3_policy", s.Mwan3Policy)
 	listv(b, "vpns", s.VPNs)
 	listv(b, "zapret_strategy", s.ZapretStrategies)
 	listv(b, "source_cidr4", s.SourceCIDR4)
@@ -596,7 +585,6 @@ func writeProxyProvider(b *bytes.Buffer, p ProxyProvider, seen map[string]bool) 
 	optb(b, "health_check", p.HealthCheck)
 	opt(b, "health_check_url", p.HealthCheckURL)
 	opti(b, "health_check_interval", p.HealthCheckInterval)
-	opt(b, "mwan3_policy", p.Mwan3Policy)
 	opt(b, "hwid", p.HWID)
 	opt(b, "device_name", p.DeviceName)
 	opt(b, "user_agent", p.UserAgent)
@@ -753,5 +741,6 @@ func writeOONI(b *bytes.Buffer, o OONI) {
 	opt(b, "proxy", o.Proxy)
 	opt(b, "home", o.Home)
 	opt(b, "user", o.User)
+	listv(b, "wan", o.WANs)
 	fmt.Fprintln(b)
 }

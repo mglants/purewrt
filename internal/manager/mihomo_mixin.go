@@ -86,7 +86,14 @@ func (m Manager) MihomoMixinWrite(body string) error {
 // body falls back to the current on-disk mixin (so previewing without
 // edits shows the current effective config).
 func (m Manager) MihomoMixinPreview(body string) (string, error) {
-	c, _ := m.Load()
+	c, err := m.Load()
+	if err != nil {
+		return "", err
+	}
+	c, err = ResolveProxyWANs(c)
+	if err != nil {
+		return "", err
+	}
 	if body == "" {
 		if existing, err := os.ReadFile(generator.MihomoMixinPath(c)); err == nil {
 			body = string(existing)

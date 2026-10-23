@@ -11,10 +11,10 @@ func MarkConflict(c config.Config, mwanMask string) (bool, string) {
 	if mwanMask == "" {
 		return false, "mwan3 mask not detected"
 	}
-	pm, _ := strconv.ParseInt(strings.TrimPrefix(c.Mwan3.PureWRTMask, "0x"), 16, 64)
+	pm, _ := strconv.ParseInt(strings.TrimPrefix(c.Settings.FwMarkMask, "0x"), 16, 64)
 	mm, _ := strconv.ParseInt(strings.TrimPrefix(mwanMask, "0x"), 16, 64)
 	if pm&mm != 0 {
-		return true, fmt.Sprintf("PureWRT mask %s overlaps mwan3 mmx_mask %s", c.Mwan3.PureWRTMask, mwanMask)
+		return true, fmt.Sprintf("PureWRT mask %s overlaps mwan3 mmx_mask %s", c.Settings.FwMarkMask, mwanMask)
 	}
 	return false, "no mark-mask overlap"
 }

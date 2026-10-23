@@ -37,7 +37,6 @@ const (
 	initFirewall   = "/etc/init.d/firewall"
 	initDnsmasq    = "/etc/init.d/dnsmasq"
 	initMihomo     = "/etc/init.d/mihomo"
-	initMwan3      = "/etc/init.d/mwan3"
 	initEasytier   = "/etc/init.d/purewrt-easytier"
 	initPurewrtAPI = "/etc/init.d/purewrt-api"
 	libexecPeerDNS = "/usr/libexec/purewrt-peerdns"
@@ -320,6 +319,10 @@ func (m Manager) GenerateWithOptions(force bool) error {
 	}
 	c = config.EnsureDefaults(c)
 	defer dumpMetrics(c)
+	c, err = ResolveProxyWANs(c)
+	if err != nil {
+		return err
+	}
 	c = ResolveZapretProfileInterfaces(c)
 	c = ResolveOONIUser(c)
 	log := newLog(c)
@@ -345,6 +348,10 @@ func (m Manager) GenerateCacheStatus() (string, error) {
 	// and applyPrepare do — otherwise this read-only status hashes the raw
 	// config while generate/apply hash the resolved one, and the zapret +
 	// openwrt_bundle groups report a permanent (phantom) cache miss.
+	c, err = ResolveProxyWANs(c)
+	if err != nil {
+		return "", err
+	}
 	c = ResolveZapretProfileInterfaces(c)
 	c = ResolveOONIUser(c)
 	return generator.CacheStatus(c), nil
@@ -1245,7 +1252,7 @@ func validateConfigHardening(c config.Config) error {
 		// mihomo hard-rejects a proxy-provider named "default" (its internal
 		// provider holding all static proxies) — fail here with a clear
 		// message instead of the post-apply rollback loop.
-		if pp.Name == "default" {
+		if pp.Name == "default" || strings.HasPrefix(pp.Name, "PureWRTWAN_") {
 			return fmt.Errorf("proxy provider name %q is reserved by mihomo; rename the provider (e.g. \"main\")", pp.Name)
 		}
 		if providerSeen[pp.Name] {
@@ -1550,6 +1557,10 @@ func minSubscriptionSecondsToExpiry(c config.Config) (float64, bool) {
 
 func (m Manager) applyPrepare(force bool) (config.Config, system.BackupSet, generator.GeneratedPaths, generator.GenerationResult, func(), error) {
 	c, err := m.Load()
+	if err != nil {
+		return c, nil, generator.GeneratedPaths{}, generator.GenerationResult{}, func() {}, err
+	}
+	c, err = ResolveProxyWANs(c)
 	if err != nil {
 		return c, nil, generator.GeneratedPaths{}, generator.GenerationResult{}, func() {}, err
 	}
@@ -2239,16 +2250,6 @@ func (m Manager) applyServiceRestarts(c config.Config, groups generator.Generati
 	} else {
 		log.Debug("apply: mihomo reload skipped mihomo group unchanged")
 	}
-	if groups.Mwan3 && c.Mwan3.Mode == "integrated" && c.Mwan3.IntegratedRules {
-		if err := m.runServiceRestart(c, r, initMwan3, "reload"); err != nil {
-			return err
-		}
-		log.Info("apply: mwan3 reload complete")
-	} else if groups.Mwan3 {
-		log.Debug("apply: mwan3 reload skipped mode=%s integrated_rules=%v", c.Mwan3.Mode, c.Mwan3.IntegratedRules)
-	} else {
-		log.Debug("apply: mwan3 reload skipped mwan3 group unchanged")
-	}
 	// Friend-mesh overlay daemon. Best-effort like the companion package it
 	// belongs to: a missing init script (easytier not installed) or a failed
 	// restart must not roll back the whole apply — mihomo/firewall state is
@@ -2450,9 +2451,6 @@ func (m Manager) restoreAndReload(c config.Config, backup system.BackupSet, r co
 	if err := m.reloadOrRestartMihomo(c, r); err != nil {
 		errs = append(errs, err.Error())
 	}
-	if c.Mwan3.Mode == "integrated" && c.Mwan3.IntegratedRules {
-		runService(initMwan3, "reload")
-	}
 	if len(errs) > 0 {
 		return errors.New(strings.Join(errs, "; "))
 	}
@@ -2507,8 +2505,8 @@ func (m Manager) Disable() error {
 func (m Manager) Status() string {
 	c, _ := m.Load()
 	var b strings.Builder
-	fmt.Fprintf(&b, "PureWRT enabled: %v\nmihomo config: %s\nsections: %d\nproxy providers: %d\nrule providers: %d\nmwan3 mode: %s\n",
-		c.Settings.Enabled, c.Settings.MihomoConfig, len(c.Sections), len(c.ProxyProviders), len(c.RuleProviders), c.Mwan3.Mode)
+	fmt.Fprintf(&b, "PureWRT enabled: %v\nmihomo config: %s\nsections: %d\nproxy providers: %d\nrule providers: %d\nmulti-WAN proxies: %v\n",
+		c.Settings.Enabled, c.Settings.MihomoConfig, len(c.Sections), len(c.ProxyProviders), len(c.RuleProviders), c.Mwan3.ProxyWANEnabled)
 	if lines := subscriptionExpiryLines(c); len(lines) > 0 {
 		b.WriteString("subscriptions:\n")
 		for _, l := range lines {

@@ -60,7 +60,7 @@
           "default_lists_catalog"
         ]
       },
-      "uci": ["purewrt", "dhcp"],
+      "uci": ["purewrt", "dhcp", "mwan3"],
       "file": {
         "/etc/purewrt/rulesets/*": [ "read" ]
       }

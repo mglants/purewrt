@@ -11,6 +11,10 @@ import (
 )
 
 func Mihomo(c config.Config) []byte {
+	if err := validateProxyWANGeneration(c); err != nil {
+		fmt.Fprintf(os.Stderr, "cannot generate mihomo: %v\n", err)
+		return nil
+	}
 	var state *proxyguard.State
 	if c.Settings.ProxyGuardEnabled {
 		if loaded, err := proxyguard.Load(c); err == nil {
@@ -30,6 +34,9 @@ func Mihomo(c config.Config) []byte {
 // MihomoWithProxyGuardState renders an explicit guard state. The manager uses
 // this for transactional preview/validate/reload before committing new state.
 func MihomoWithProxyGuardState(c config.Config, state *proxyguard.State) ([]byte, error) {
+	if err := validateProxyWANGeneration(c); err != nil {
+		return nil, err
+	}
 	base := mihomoWithMixin(c)
 	if !c.Settings.ProxyGuardEnabled {
 		return base, nil
@@ -65,6 +72,22 @@ func renderMihomoBase(c config.Config) []byte {
 		if p.Enabled {
 			enabledProviders = append(enabledProviders, p)
 		}
+	}
+	wanByProvider := map[string]config.ProxyWAN{}
+	suffixByProvider := map[string]string{}
+	if c.Mwan3.ProxyWANEnabled {
+		var expanded []config.ProxyProvider
+		for _, p := range enabledProviders {
+			for _, wan := range c.Mwan3.ResolvedProxyWANs {
+				variant := p
+				variant.Name = "PureWRTWAN_" + strconv.Itoa(len(p.Name)) + "_" + p.Name + "_" + wan.Name
+				variant.Type = "file" // PureWRT downloads once; independent providers read the same file.
+				expanded = append(expanded, variant)
+				wanByProvider[variant.Name] = wan
+				suffixByProvider[variant.Name] = " · " + wan.Name + " [" + p.Name + "]"
+			}
+		}
+		enabledProviders = expanded
 	}
 	// allow-lan false (default) binds the mixed-port HTTP/SOCKS proxy to
 	// 127.0.0.1 only — a LAN scan can't detect/use the router as an open
@@ -234,6 +257,11 @@ func renderMihomoBase(c config.Config) []byte {
 			b.WriteString("    path: " + p.Path + "\n")
 			if providerType != "file" && p.Interval > 0 {
 				b.WriteString("    interval: " + itoa(p.Interval) + "\n")
+			}
+			if wan, ok := wanByProvider[p.Name]; ok {
+				b.WriteString("    override:\n      routing-mark: " + strconv.FormatUint(uint64(wan.Mark), 10) + "\n")
+				b.WriteString("      interface-name: " + strconv.Quote(wan.Device) + "\n      ip-version: ipv4\n      dialer-proxy: \"\"\n")
+				b.WriteString("      additional-suffix: " + strconv.Quote(suffixByProvider[p.Name]) + "\n")
 			}
 			b.WriteString("    health-check:\n      enable: ")
 			if p.HealthCheck {

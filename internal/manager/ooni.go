@@ -25,11 +25,15 @@ func (m Manager) OONIPrepare() error {
 	}
 	c = config.EnsureDefaults(c)
 	c = ResolveOONIUser(c)
+	return prepareOONIHome(c, m.OONIInstalled())
+}
+
+func prepareOONIHome(c config.Config, installed bool) error {
 	o := c.OONISettings()
 	if !c.OONI.Enabled {
 		return fmt.Errorf("ooni: not enabled")
 	}
-	if !m.OONIInstalled() {
+	if !installed {
 		return fmt.Errorf("ooni: ooniprobe binary not installed")
 	}
 	if err := os.MkdirAll(o.Home, 0o755); err != nil {
@@ -61,6 +65,7 @@ func (m Manager) OONIStatus() map[string]any {
 		"installed": m.OONIInstalled(),
 		"enabled":   c.OONI.Enabled,
 		"upload":    o.Upload,
+		"wans":      o.WANs,
 		"schedule":  o.Schedule,
 		"proxy":     o.Proxy,
 		"home":      o.Home,

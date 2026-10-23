@@ -334,15 +334,19 @@ type DNS struct {
 	FallbackDomains    []string // Address queries matching these domains use fallback immediately.
 }
 
+// ProxyWAN is resolved from netifd and mwan3 at generation time, never saved to UCI.
+type ProxyWAN struct {
+	Name   string
+	Device string
+	Mark   uint32
+	Mask   uint32
+	Table  string
+}
+
 type Mwan3 struct {
-	Mode            string
-	Detect          bool
-	MMXMaskAuto     bool
-	Mwan3Mask       string
-	PureWRTMark     string
-	PureWRTMask     string
-	RulePriority    string
-	IntegratedRules bool
+	ProxyWANEnabled   bool
+	ProxyWANs         []string
+	ResolvedProxyWANs []ProxyWAN
 }
 
 type ZapretProfile struct {
@@ -434,7 +438,6 @@ type Section struct {
 	IPv6Enabled              bool
 	UDPMode                  string
 	Priority                 int
-	Mwan3Policy              string
 	VPNs                     []string // VPN names whose interfaces join this section's proxy pool
 	ZapretStrategies         []string
 	SourceCIDR4              []string
@@ -473,7 +476,6 @@ type ProxyProvider struct {
 	HealthCheck         bool
 	HealthCheckURL      string
 	HealthCheckInterval int
-	Mwan3Policy         string
 	HWID                string
 	DeviceName          string
 	UserAgent           string
@@ -534,6 +536,7 @@ type Bypass struct {
 // being transparently TPROXY'd). ooniprobe is an optional 25.12 companion
 // package; LuCI degrades gracefully when the binary is absent.
 type OONI struct {
+	WANs     []string // optional mwan3 interfaces, measured sequentially (IPv4)
 	Enabled  bool
 	Upload   bool   // submit measurements to OONI's public archive
 	Schedule string // cron expression for the run
@@ -676,7 +679,7 @@ func Default() Config {
 	return Config{
 		Settings:         Settings{ConfigVersion: 1, Enabled: true, Workdir: DefaultWorkdir, RuntimeDir: DefaultRuntimeDir, DNSMasqIncludeDir: "", MihomoBin: "/usr/bin/mihomo", MihomoConfig: DefaultMihomoConfig, MihomoAllowLAN: false, ExternalController: "127.0.0.1:9090", Secret: "auto-generated-secret", DNSBackend: "dnsmasq", FirewallBackend: "nftables", FwMark: "0x1", FwMarkMask: "0xff", RouteTable: "100", IPRulePriority: "100", IPv6: true, DNSListen: "127.0.0.1:7874", AutoReload: true, SafeApply: true, RollbackOnFail: true, BackupRetention: 3, ApplyBackupMaxBytes: 0, MihomoChannel: "alpha", MihomoReleaseAPI: "https://api.github.com/repos/MetaCubeX/mihomo/releases/tags/Prerelease-Alpha", MihomoStableReleaseAPI: "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest", MihomoMixinEnabled: false, MihomoAutoUpdateEnabled: false, MihomoAutoUpdateCron: "23 4 * * *", NetCheckEnabled: false, NetCheckCron: "", NetCheckBytes: 2 << 20, ProxyGuardEnabled: false, ProxyGuardCron: "*/5 * * * *", ProxyGuardMinMembers: 3, ProxyGuardMinDownKbps: 2000, ProxyGuardProbeBytes: 1 << 20, ProxyGuardMaxJitterMS: 250, ProxyGuardActiveProbeInterval: 1800, ProxyGuardFleetProbeInterval: 21600, ProxyGuardQuarantineSeconds: 1800, MihomoGeodataEnabled: false, UpdateViaProxy: false, UpdateProxyURL: "http://127.0.0.1:7890", UpdateConcurrency: 2, AutoUpdateEnabled: true, AutoUpdateCron: "17 */6 * * *", ReloadAfterUpdate: true, BackgroundUpdates: true, BootUpdateDelay: 0, UpdateNice: 19, UpdateIONiceClass: 3, UpdateIONiceLevel: 7, DashboardEnabled: true, DashboardListen: "0.0.0.0:9090", DashboardPath: "/etc/purewrt/dashboard", DashboardURL: "https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip", DashboardName: "metacubexd", DefaultListsBaseURL: "https://github.com/mglants/purewrt-lists/releases/latest/download/", ResourceProfile: "standard", CacheMode: "auto", CacheDir: "", ArtifactCacheMode: "auto", ArtifactCacheMaxBytes: 16777216, ArtifactCacheMaxEntries: 50000, RuleDedupMode: "auto", LogLevel: "warn", BootstrapDoHEnabled: true, BootstrapDoHResolvers: DefaultBootstrapDoHResolvers(), BootstrapDoHTimeoutMs: 8000, BootstrapProxyFallback: true, BootstrapTLSFingerprint: "browser", IPv6Mode: "auto", IPv6RejectWhenOff: false, RouterOutputProxy: true, CgroupV2Path: "services/mihomo", LANSourceZones: []string{"lan"}},
 		DNS:              DNS{Enabled: true, Backend: "dnsmasq", UpstreamMode: "mihomo", HijackLANDNS: true, BlockDoT: true, BlockDoH3: true, BlockDoQ: true, DoH3BlockIPs4: DefaultDoH3BlockIPs4(), DoH3BlockIPs6: DefaultDoH3BlockIPs6(), DoHPolicy: "proxy", Listen: "127.0.0.1:7874", EnhancedMode: "redir-host", ProxyGroupType: "url-test", ProxyStrategy: "sticky-sessions", DoHUpstreams: []string{"https://dns.google/dns-query#DNSProxy", "https://cloudflare-dns.com/dns-query#DNSProxy", "https://dns.quad9.net/dns-query#DNSProxy"}, UDPUpstreams: []string{"77.88.8.8#DIRECT", "77.88.8.1#DIRECT"}, FallbackUpstreams: []string{"https://common.dot.dns.yandex.net/dns-query#DIRECT"}, FallbackDomains: []string{"+.ru", "+.su", "+.xn--p1ai"}},
-		Mwan3:            Mwan3{Mode: "coexist", Detect: true, MMXMaskAuto: true, PureWRTMark: "0x1", PureWRTMask: "0xff", RulePriority: "100"},
+		Mwan3:            Mwan3{},
 		ZapretProfiles:   []ZapretProfile{{Name: "wan", Enabled: false, Network: "auto", Interfaces: []string{"wan"}, InterfaceMode: "mwan3_members", FwMark: "0x40000000", NFQWSBin: "/usr/libexec/zapret/nfqws2", TPWSBin: "/usr/libexec/zapret/tpws", LuaBundleDir: "/usr/libexec/zapret/lua"}},
 		ZapretStrategies: []ZapretStrategy{{Name: "youtube_tcp", Enabled: false, Profile: "wan", Protocols: []string{"tcp"}, TCPPorts: "443", TCPPktOut: 15, TCPPktIn: 6, Preset: "youtube_tcp", Params: "--filter-tcp=443 --payload=tls_client_hello --lua-desync=fake:blob=fake_default_tls:tcp_md5:ip_autottl=-2,3-20:ip6_autottl=-2,3-20 --lua-desync=multisplit:pos=midsld"}, {Name: "youtube_quic", Enabled: false, Profile: "wan", Protocols: []string{"udp"}, UDPPorts: "443", UDPPktOut: 9, UDPPktIn: 0, Preset: "youtube_quic", Params: "--filter-udp=443 --payload=quic_initial --lua-desync=fake:blob=fake_default_quic:repeats=6:ip_autottl=-2,3-20:ip6_autottl=-2,3-20"}},
 		// VPNs starts empty — the LuCI Sections page + VPN modal handle
@@ -731,7 +734,7 @@ func (c Config) NormalizeZapretProfile(p ZapretProfile) ZapretProfile {
 	case "":
 		if p.Device != "" {
 			p.InterfaceMode = "single"
-		} else if (p.Network == "" || p.Network == "auto") && c.Mwan3.Detect {
+		} else if p.Network == "" || p.Network == "auto" {
 			p.InterfaceMode = "mwan3_members"
 		} else {
 			p.InterfaceMode = "network"

@@ -2,6 +2,7 @@ package mihomoapi
 
 import (
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -102,4 +103,25 @@ func mihomoTestServer(t *testing.T, h http.Handler) *httptest.Server {
 func listenerHost(t *testing.T, srv *httptest.Server) string {
 	t.Helper()
 	return srv.Listener.Addr().String()
+}
+
+func TestClientProxiesIncludesProviderWANMembers(t *testing.T) {
+	srv := mihomoTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/proxies":
+			io.WriteString(w, `{"proxies":{"Group":{"name":"Group","type":"LoadBalance","all":["Node WAN1","Node WAN2"]}}}`)
+		case "/providers/proxies":
+			io.WriteString(w, `{"providers":{"wan1":{"proxies":[{"name":"Node WAN1","type":"Vless","alive":true,"history":[{"delay":45}]}]},"wan2":{"proxies":[{"name":"Node WAN2","type":"Vless","alive":false}]}}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	got, e := (Client{Base: listenerHost(t, srv)}).Proxies()
+	if e != nil {
+		t.Fatal(e)
+	}
+	if len(got) != 3 || got["Node WAN1"].ProviderName != "wan1" || !got["Node WAN1"].Alive || got["Node WAN2"].Alive || got["Node WAN1"].History[0].Delay != 45 {
+		t.Fatalf("missing independent WAN metadata: %+v", got)
+	}
 }

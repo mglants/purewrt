@@ -204,9 +204,14 @@ enabled+interface. The `mihomo` fingerprint group now includes `vpns` so an inte
 `TestVPNAsMihomoProxies` (generator_test.go). Don't reintroduce kernel VPN marking.
 
 Rationale + an executable recipe to add an **opt-in kernel fast-path** later (if a measured gigabit+ need
-appears) live in `docs/vpn-routing.md`. A **multi-WAN proxy egress** attempt (mihomo `dialer-proxy` through
-per-WAN outbounds) was tried and **dropped** — it doesn't route reliably on an mwan3 box; the post-mortem +
-reimplementation notes are in `docs/multi-wan-proxy-egress.md`.
+appears) live in `docs/vpn-routing.md`. A **multi-WAN proxy egress** attempt was dropped in June,
+but the October router retest confirmed marked outbounds and `dialer-proxy` work on both WANs.
+Shared gRPC connections remain pinned to one WAN; independent WAN-specific proxy instances
+successfully balance them. Opt-in provider generation now discovers WAN marks/devices and
+adds independent file-provider instances with unique node suffixes. It defaults off;
+never generate overrides without resolved WANs or modify mwan3's own policies. The legacy
+integrated-rule writer and its settings have been removed. See
+`docs/multi-wan-proxy-egress.md` for isolated provider failure/recovery tests and limits.
 
 ## Prerouting precedence: client-identity first, then sections by priority
 
@@ -348,3 +353,16 @@ overwritten between unrelated tasks (the plan-mode workflow does that
 automatically). Don't treat them as durable documentation — if something is
 worth keeping past the next plan cycle, it goes here (or in the relevant
 code comment).
+
+
+## OONI multi-WAN routing needs OUTPUT marks as well as UID rules
+
+The optional OONI WAN runner uses per-UID routes for initial source selection,
+then enforces the selected mwan3 mark in a temporary nftables route OUTPUT
+chain after mwan3's mangle hook. UID rules alone are insufficient: mwan3 can
+restore a different connection mark and reroute packets onto the default WAN.
+A later output guard rejects wrong-device egress and IPv6 for the probe user.
+Keep the private resolver mount namespace: using router DNS would mix WAN
+measurements with the router's DNS/proxy path. Cron and LuCI must both call
+`purewrt ooni-run` so locking, cleanup and per-WAN homes stay consistent.
+See `docs/ooni-multi-wan.md`; empty WAN selection requires no mwan3 support.

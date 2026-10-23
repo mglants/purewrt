@@ -30,7 +30,8 @@ return view.extend({
   load: function() {
     return Promise.all([
       callOONIInstalled().catch(function() { return false; }),
-      uci.load('purewrt')
+      uci.load('purewrt'),
+      uci.load('mwan3').catch(function() {})
     ]);
   },
 
@@ -70,6 +71,14 @@ return view.extend({
       _('Proxy ooniprobe uses to reach the OONI backend (passed as --proxy). Defaults to mihomo\'s mixed-port. This does NOT proxy measurements.'));
     o.placeholder = 'socks5://127.0.0.1:7890';
     o.depends('enabled', '1');
+
+    var wans = uci.sections('mwan3', 'interface').filter(function(w) { return w.enabled !== '0'; });
+    if (wans.length || uci.get('purewrt', 'ooni', 'wan')) {
+      o = s.option(form.MultiValue, 'wan', _('Test WANs'),
+        _('Test each selected WAN separately, in order, using its advertised DNS servers. IPv4 only; IPv6 is blocked during pinned runs. Leave empty to use normal router routing. Each WAN has its own results directory.'));
+      wans.forEach(function(w) { o.value(w['.name']); });
+      o.depends('enabled', '1');
+    }
 
     o = s.option(form.Value, 'home', _('Home directory (OONI_HOME)'),
       _('Where config.json + the measurement DB live. Defaults to tmpfs (cleared on reboot, regenerated each run).'));

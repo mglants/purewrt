@@ -105,7 +105,8 @@ func subscriptionExpiryLines(c config.Config) []string {
 func (m Manager) Doctor() string {
 	c, _ := m.Load()
 	c = ResolveZapretProfileInterfaces(c)
-	conflict, msg := generator.MarkConflict(c, c.Mwan3.Mwan3Mask)
+	mwanMask, _ := (system.Runner{}).Run("uci", "-q", "get", "mwan3.globals.mmx_mask")
+	conflict, msg := generator.MarkConflict(c, strings.TrimSpace(mwanMask))
 	deps := system.CheckDependencies("dnsmasq", "nft", "ip", "mihomo")
 	var depLines []string
 	for _, d := range deps {
@@ -122,7 +123,7 @@ func (m Manager) Doctor() string {
 	if warnings == "" {
 		warnings = "none"
 	}
-	return fmt.Sprintf("Dependencies:\n  %s\nMwan3 mode: %s\nMark conflict: %v (%s)\nZapret profiles:\n  %s\nPolicy commands:\n  %s\nBypass warnings:\n  %s\n", strings.Join(depLines, "\n  "), c.Mwan3.Mode, conflict, msg, strings.Join(zapretLines, "\n  "), strings.Join(generator.PolicyCommands(c), "\n  "), warnings)
+	return fmt.Sprintf("Dependencies:\n  %s\nMulti-WAN proxies: %v\nMark conflict: %v (%s)\nZapret profiles:\n  %s\nPolicy commands:\n  %s\nBypass warnings:\n  %s\n", strings.Join(depLines, "\n  "), c.Mwan3.ProxyWANEnabled, conflict, msg, strings.Join(zapretLines, "\n  "), strings.Join(generator.PolicyCommands(c), "\n  "), warnings)
 }
 
 // doctorBypassWarnings returns censorship-bypass-relevant warnings that the

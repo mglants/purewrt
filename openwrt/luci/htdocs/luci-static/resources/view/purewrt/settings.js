@@ -116,7 +116,7 @@ function firewallZoneValues() {
 return view.extend({
   load: function() {
     // Needed to enumerate fw4 zones for the LAN-sources picker.
-    return uci.load('firewall').catch(function() { return null; });
+    return Promise.all([uci.load('purewrt'), uci.load('firewall').catch(function() { return null; }), uci.load('mwan3').catch(function() { return null; })]);
   },
   render: function() {
     var zoneValues = firewallZoneValues();
@@ -286,37 +286,25 @@ return view.extend({
     addRow(doh, form.Flag, 'bootstrap_health_gate', _('Health gate before apply'), { default: '0',
       description: _('Probe every bootstrap resolver before applying; abort if none answer. Heavy but catches silent DNS-blocking before it bricks the apply.') });
 
-    // ---- Mwan3 integration ----
-    // Lives here (rather than its own tab) because the four settings under
-    // it only matter when the router also runs OpenWrt's mwan3 package —
-    // an integration concern, not a routing-policy concern. Bound to UCI
-    // section `mwan3` of type `mwan3` (not `settings`/`main`), which is
-    // fine: form.Map allows multiple NamedSections on different UCI
-    // sections within one Map.
-    var mwan3 = m.section(form.NamedSection, 'mwan3', 'mwan3', _('Mwan3 integration'),
-      _('Settings used only when OpenWrt\'s mwan3 package is installed and PureWRT\'s routing must coexist with mwan3\'s policies.'));
-    mwan3.anonymous = true;
-    addRow(mwan3, form.ListValue, 'mode', _('Mode'), {
-      values: [
-        [ 'coexist',    _('coexist (default — keep PureWRT + mwan3 marks disjoint)') ],
-        [ 'integrated', _('integrated (emit mwan3 policy rules via PureWRT)') ],
-        [ 'standalone', _('standalone (ignore mwan3 entirely)') ]
-      ],
-      default: 'coexist',
-      description: _('coexist mode is safe with any mwan3 setup; integrated mode lets PureWRT install its own mwan3 policies (requires integrated_rules below).') });
-    addRow(mwan3, form.Flag, 'detect', _('Auto-detect mwan3 members'), { default: '1',
-      description: _('Resolve mwan3 WAN members at apply time so failover doesn\'t require regenerating PureWRT rules.') });
-    addRow(mwan3, form.Flag, 'mmx_mask_auto', _('Auto-detect mmx mask'), { default: '1',
-      description: _('Read mwan3\'s mmx_mask from its UCI config rather than hard-coding it here. Disable to override below.') });
-    addRow(mwan3, form.Value, 'mwan3_mask', _('mwan3 mmx_mask (manual)'), { placeholder: '0xff00',
-      description: _('Only used when auto-detect is off.') });
-    addRow(mwan3, form.Value, 'purewrt_mark', _('PureWRT fwmark'), { placeholder: '0x1',
-      description: _('Must NOT overlap mwan3\'s mmx_mask range or generation will refuse to write rules.') });
-    addRow(mwan3, form.Value, 'purewrt_mask', _('PureWRT fwmark mask'), { placeholder: '0xff' });
-    addRow(mwan3, form.Value, 'rule_priority', _('ip rule priority'),
-      { datatype: 'uinteger', placeholder: '100' });
-    addRow(mwan3, form.Flag, 'integrated_rules', _('Emit integrated rules'), { default: '0',
-      description: _('Only honored when Mode = integrated. Lets PureWRT install mwan3 policy rules into mwan3\'s UCI on apply.') });
+    // Optional proxy WAN selection; mwan3 owns its policies.
+    var wanChoices = [];
+    uci.sections('mwan3', 'interface', function(w) {
+      if (w.enabled !== '0') wanChoices.push(w['.name']);
+    });
+    if (wanChoices.length || uci.get('purewrt', 'mwan3', 'proxy_wan_enabled') === '1') {
+      var mwan3 = m.section(form.NamedSection, 'mwan3', 'mwan3', _('Proxy WANs'),
+        _('Use selected mwan3 WANs for independent subscription proxy connections.'));
+      mwan3.anonymous = true;
+
+      addRow(mwan3, form.Flag, 'proxy_wan_enabled', _('Use multiple WANs for subscription proxies'), {
+        default: '0', description: _('Create independent provider instances on the selected mwan3 WANs. Existing proxy groups and DNSProxy choose between them. IPv4 proxy egress only; VPN outbounds are unchanged.') });
+      var proxyWANs = addRow(mwan3, form.MultiValue, 'proxy_wan', _('Proxy WANs'), {
+        values: wanChoices, description: _('WAN devices and routing marks are discovered automatically when applying. Subscriptions are downloaded once. Unresolved selections stop apply and retain the running configuration.') });
+      proxyWANs.depends('proxy_wan_enabled', '1');
+      proxyWANs.validate = function(section_id, value) {
+        return value && value.length ? true : _('Select at least one WAN');
+      };
+    }
 
     // ---- Geo data ----
     var geo = m.section(form.NamedSection, 'settings', 'main', _('Geo data'),

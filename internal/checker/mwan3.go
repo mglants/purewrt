@@ -9,7 +9,6 @@ import (
 type Mwan3Status struct {
 	Installed     bool
 	Enabled       bool
-	Mode          string
 	MMXMask       string
 	DirectTraffic string
 	ProxyOutbound string
@@ -26,10 +25,13 @@ func Mwan3(c config.Config) Mwan3Status {
 			break
 		}
 	}
+	outbound := "existing mwan3/default routing"
+	if c.Mwan3.ProxyWANEnabled {
+		outbound = "WAN-specific subscription providers"
+	}
 	return Mwan3Status{
 		Installed:     installed,
-		Mode:          c.Mwan3.Mode,
 		DirectTraffic: "handled by mwan3/default routing",
-		ProxyOutbound: "mwan3 default policy in coexist mode",
+		ProxyOutbound: outbound,
 	}
 }

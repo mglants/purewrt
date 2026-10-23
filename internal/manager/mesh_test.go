@@ -23,7 +23,6 @@ func meshTestManager(t *testing.T, hwid ...string) Manager {
 	c.Settings.RuntimeDir = filepath.Join(dir, "runtime")
 	c.Settings.MihomoConfig = filepath.Join(dir, "generated", "mihomo.yaml")
 	c.DNS.HijackLANDNS = false
-	c.Mwan3.IntegratedRules = false
 	cfgPath := filepath.Join(dir, "purewrt.conf")
 	if err := config.Save(cfgPath, c); err != nil {
 		t.Fatal(err)

@@ -747,6 +747,10 @@ func (s *guardProbeSession) restore() {
 }
 
 func (m Manager) applyProxyGuardConfig(c config.Config, state proxyguard.State) error {
+	c, err := ResolveProxyWANs(c)
+	if err != nil {
+		return err
+	}
 	data, err := generator.MihomoWithProxyGuardState(c, &state)
 	if err != nil {
 		return err

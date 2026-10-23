@@ -508,7 +508,6 @@ func applyTestLivePaths(dir string) generator.GeneratedPaths {
 		NFTFile:            filepath.Join(dir, "live", "purewrt.nft"),
 		NFTSetsFile:        filepath.Join(dir, "live", "purewrt-sets.nft"),
 		FirewallFile:       filepath.Join(dir, "live", "firewall.generated"),
-		Mwan3File:          filepath.Join(dir, "live", "mwan3.generated"),
 		ZapretEnv:          filepath.Join(dir, "live", "zapret.env"),
 	}
 }

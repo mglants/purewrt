@@ -406,7 +406,7 @@ func detectLANInterface(clientIP string) string {
 }
 
 // routeDev extracts the "dev X" token from `ip route get` output, e.g.
-// "192.168.214.212 dev br-lan.2 src 192.168.214.1 uid 0" → "br-lan.2".
+// "192.0.2.212 dev br-lan.2 src 192.0.2.1 uid 0" → "br-lan.2".
 func routeDev(s string) string {
 	fields := strings.Fields(s)
 	for i, f := range fields {

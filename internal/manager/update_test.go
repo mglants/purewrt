@@ -50,7 +50,6 @@ func TestUpdateDetailedForceBypassesProviderIntervals(t *testing.T) {
 	c.Settings.ArtifactCacheMode = "off"
 	c.Settings.CacheDir = filepath.Join(dir, "cache")
 	c.DNS.HijackLANDNS = false
-	c.Mwan3.IntegratedRules = false
 	c.ProxyProviders = []config.ProxyProvider{{Name: "main", Enabled: true, URL: "file://" + proxySrc, Path: proxyPath, Interval: 86400}}
 	c.RuleProviders = []config.RuleProvider{{Name: "main", Enabled: true, URL: "file://" + ruleSrc, Path: rulePath, Interval: 86400, Behavior: "domain", Format: "text", Section: "common", RouteAction: "proxy"}}
 	cfgPath := filepath.Join(dir, "purewrt.conf")
@@ -126,7 +125,6 @@ func TestUpdatePartialFailureWrapsErrPartialUpdate(t *testing.T) {
 	c.Settings.ArtifactCacheMode = "off"
 	c.Settings.CacheDir = filepath.Join(dir, "cache")
 	c.DNS.HijackLANDNS = false
-	c.Mwan3.IntegratedRules = false
 	c.ProxyProviders = []config.ProxyProvider{{Name: "main", Enabled: true, URL: "file://" + proxySrc, Path: proxyPath, Interval: 86400}}
 	// file:// source that doesn't exist → this provider's download fails.
 	c.RuleProviders = []config.RuleProvider{{Name: "broken", Enabled: true, URL: "file://" + filepath.Join(dir, "missing.list"), Path: rulePath, Interval: 86400, Behavior: "domain", Format: "text", Section: "common", RouteAction: "proxy"}}

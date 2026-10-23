@@ -100,6 +100,40 @@ func (c Client) Proxies() (map[string]Proxy, error) {
 	if err := c.Get("/proxies", &res); err != nil {
 		return nil, err
 	}
+	// Some Mihomo builds list provider nodes only under /providers/proxies.
+	// Resolve missing group members so guard/net-check see their health and identity.
+	missing := false
+	for _, p := range res.Proxies {
+		for _, member := range p.All {
+			if _, ok := res.Proxies[member]; !ok {
+				missing = true
+			}
+		}
+	}
+	if missing {
+		var providers struct {
+			Providers map[string]struct {
+				Proxies []Proxy `json:"proxies"`
+			} `json:"providers"`
+		}
+		if err := c.Get("/providers/proxies", &providers); err != nil {
+			return nil, err
+		}
+		for name, provider := range providers.Providers {
+			for _, p := range provider.Proxies {
+				if p.Name == "" {
+					continue
+				}
+				if _, exists := res.Proxies[p.Name]; exists {
+					continue
+				}
+				if p.ProviderName == "" {
+					p.ProviderName = name
+				}
+				res.Proxies[p.Name] = p
+			}
+		}
+	}
 	return res.Proxies, nil
 }
 

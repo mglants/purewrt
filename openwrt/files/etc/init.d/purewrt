@@ -377,21 +377,12 @@ install_cron() {
         log_msg info "cron: mihomo binary auto updates disabled"
     fi
 
-    # OONI Probe run entry — runs as the unprivileged `ooniprobe` user so the
-    # nft `skuid` exemption keeps measurements direct. `ooni-prepare` (root)
-    # writes the home + config.json first, then we drop to the ooni user with
-    # OONI_HOME set and --proxy pointing at mihomo's mixed-port (backend only).
+    # Shared runner serializes cron/LuCI and pins selected WANs per run.
     ooni_enabled="$(uci -q get purewrt.ooni.enabled)"
     if [ "$ooni_enabled" = "1" ] && [ -x /usr/bin/ooniprobe ] && grep -q '^ooniprobe:' /etc/passwd 2>/dev/null; then
         ooni_schedule="$(uci -q get purewrt.ooni.schedule)"
         [ -n "$ooni_schedule" ] || ooni_schedule='0 */6 * * *'
-        ooni_home="$(uci -q get purewrt.ooni.home)"; [ -n "$ooni_home" ] || ooni_home='/tmp/ooni'
-        ooni_proxy="$(uci -q get purewrt.ooni.proxy)"; [ -n "$ooni_proxy" ] || ooni_proxy='socks5://127.0.0.1:7890'
-        # Drop to the ooniprobe user with start-stop-daemon (-c): busybox here
-        # may lack `su`/`runuser`, and s-s-d`s chuid works everywhere + its
-        # exe-match dedup skips a new run if the previous one is still going.
-        # OONI_HOME is inherited from the env; --proxy points at the mixed-port.
-        ooni_cmd="/usr/bin/purewrt ooni-prepare && OONI_HOME=$ooni_home start-stop-daemon -S -c ooniprobe -x /usr/bin/ooniprobe -- --log-handler=syslog --proxy $ooni_proxy run unattended 2>&1 | logger -t ooniprobe"
+        ooni_cmd="/usr/bin/purewrt ooni-run 2>&1 | logger -t ooniprobe"
         log_msg info "cron: installing ooni schedule='$ooni_schedule'"
         log_msg debug "cron: ooni command=$ooni_cmd"
         {

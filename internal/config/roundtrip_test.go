@@ -53,7 +53,7 @@ func TestConfigRoundTripPreservesKeyFields(t *testing.T) {
 	c.ZapretProfiles = []ZapretProfile{{Name: "wan_a", Enabled: true, Network: "wan_a", Interfaces: []string{"wan_a"}, FwMark: "0x40000001", NFQWSBin: "/usr/bin/nfqws", TPWSBin: "/usr/bin/tpws"}}
 	c.ZapretStrategies = []ZapretStrategy{{Name: "zap_a", Enabled: true, Profile: "wan_a", QueueNum: 201, Protocols: []string{"tcp", "udp"}, TCPPorts: "443", UDPPorts: "443", TCPPktOut: 15, TCPPktIn: 6, UDPPktOut: 9, UDPPktIn: 3, Preset: "custom", Params: "--strategy-a"}}
 	c.Subscriptions = []Subscription{{Name: "sub", Enabled: true, URL: "https://example.com/sub.yaml", Mode: "auto", PresetIfNoRules: "minimal", ImportRulesOnLowResource: true, AutoApply: true, Interval: 123, HWID: "sub-hwid", DeviceName: "router", UserAgent: "sub-agent", Headers: []string{"X-Sub: yes"}}}
-	c.ProxyProviders = []ProxyProvider{{Name: "pp", Enabled: true, Type: "http", URL: "https://example.com/pp.yaml", Interval: 456, Path: "/tmp/pp.yaml", HealthCheck: true, HealthCheckURL: "https://example.com/204", HealthCheckInterval: 30, Mwan3Policy: "wan", HWID: "pp-hwid", DeviceName: "pp-device", UserAgent: "pp-agent", Headers: []string{"X-PP: yes"}}}
+	c.ProxyProviders = []ProxyProvider{{Name: "pp", Enabled: true, Type: "http", URL: "https://example.com/pp.yaml", Interval: 456, Path: "/tmp/pp.yaml", HealthCheck: true, HealthCheckURL: "https://example.com/204", HealthCheckInterval: 30, HWID: "pp-hwid", DeviceName: "pp-device", UserAgent: "pp-agent", Headers: []string{"X-PP: yes"}}}
 	c.RuleProviders = []RuleProvider{{Name: "rp", Enabled: true, Behavior: "domain", Format: "text", ParseMode: "native_import", URL: "https://example.com/rp.txt", Interval: 789, Path: "/tmp/rp.txt", Section: "common", UserAgent: "rp-agent", Headers: []string{"X-RP: yes"}}}
 	c.Devices = []Device{{Name: "pixel-7", MAC: "aa:bb:cc:dd:ee:ff", Section: "media", Enabled: true}, {Name: "tv", MAC: "11:22:33:44:55:66", Section: "", Enabled: false}, {Name: "printer", MAC: "de:ad:be:ef:00:01", Exclude: true, Enabled: true}}
 	c.Sections[0].SourceCIDR4 = []string{"10.13.14.0/24"}
@@ -67,7 +67,7 @@ func TestConfigRoundTripPreservesKeyFields(t *testing.T) {
 	c.Sections[0].UserOverriddenProxyGroup = true
 	c.Sections[0].ZapretStrategies = []string{"zap_a"}
 	c.Bypass = Bypass{Name: "bypass", SourceCIDR4: []string{"172.16.10.11"}, SourceCIDR6: []string{"fd00::2/128"}}
-	c.OONI = OONI{Enabled: true, Upload: false, Schedule: "30 */4 * * *", Proxy: "socks5://127.0.0.1:7890", Home: "/srv/ooni", User: "ooni"}
+	c.OONI = OONI{Enabled: true, Upload: false, Schedule: "30 */4 * * *", Proxy: "socks5://127.0.0.1:7890", Home: "/srv/ooni", User: "ooni", WANs: []string{"wan_a", "wan_b"}}
 
 	path := filepath.Join(t.TempDir(), "purewrt")
 	if err := Save(path, c); err != nil {

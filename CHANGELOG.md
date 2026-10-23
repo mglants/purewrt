@@ -4,6 +4,46 @@ All notable changes to PureWRT are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are the `purewrt`
 package version.
 
+## [0.7.0] - 2026-10-23
+
+### Added
+- Optional multi-WAN proxy egress through selected mwan3 interfaces. PureWRT
+  discovers device bindings and routing marks automatically and generates a
+  separate provider variant for each WAN, sharing the downloaded source file.
+  Existing group strategies, health checks and adaptive proxy guard apply to
+  the resulting WAN-specific members.
+- Per-WAN OONI measurements from LuCI and cron through a shared `ooni-run`
+  runner. Selected WANs run sequentially with separate result directories,
+  ISP DNS in a private mount namespace, and temporary routing rules and WAN
+  marks. An egress guard prevents measurements from leaving on another WAN.
+- Local-only OONI website checks with `ooni-run --no-collector --input URL`.
+  These use separate result directories and disable measurement uploads.
+
+### Fixed
+- Mihomo API discovery now includes provider members omitted from `/proxies`
+  by merging `/providers/proxies`. This keeps node health, per-node checks
+  and adaptive guard tracking available for generated WAN variants.
+
+### Changed
+- Removed the legacy integrated mwan3 rule writer, manual mark/mask controls,
+  and per-section/per-provider mwan3 policy settings. PureWRT uses existing
+  mwan3 interfaces and routing tables rather than managing mwan3 policies.
+- Anonymized deployment examples and network identifiers in documentation
+  and diagnostic fixtures.
+
+### Upgrade notes
+- Proxy WAN selection defaults off. OONI uses normal router routing and DNS
+  when its WAN selection is empty; neither default requires mwan3.
+- Explicit WAN selection requires configured, resolvable mwan3 interfaces.
+  Invalid selections fail instead of silently reverting to normal routing.
+- Pinned OONI runs currently support IPv4 only and require full `ip` with UID
+  routing-rule support plus kernel mount namespaces. IPv6 measurement traffic
+  is rejected during these runs. Backend/control requests and uploads retain
+  the configured backend proxy, and the existing upload preference is kept.
+- Anchored proxy filters may need updating to match the generated WAN/provider
+  suffixes. Removed legacy mwan3 UCI options are no longer used.
+- Existing LuCI sessions may need a fresh login for the mwan3 read permission.
+
 ## [0.6.3] - 2026-10-23
 
 ### Added

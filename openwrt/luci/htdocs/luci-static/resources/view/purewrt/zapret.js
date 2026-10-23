@@ -227,7 +227,7 @@ function wanDeviceOf(net) {
 }
 
 // buildWanSelect builds the interface picker as OpenWrt logical networks:
-// the OPTION LABEL is the friendly network name ("wStarlink"), the VALUE is the
+// the OPTION LABEL is the friendly network name ("wan_b"), the VALUE is the
 // resolved Linux device ("br-lan.3000") that reaches blockcheck2.sh. Defaults
 // to the active-WAN network (default route) so the probe egresses the real
 // internet path instead of the first bridge — the bug that made every probe

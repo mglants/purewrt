@@ -23,7 +23,6 @@ type GeneratedPaths struct {
 	NFTFile            string
 	NFTSetsFile        string
 	FirewallFile       string
-	Mwan3File          string
 	ZapretEnv          string
 	EasytierConfig     string
 }
@@ -59,7 +58,7 @@ func DefaultGeneratedPaths(c config.Config) GeneratedPaths {
 	// EasytierConfig lives in the persistent generated dir (not tmpfs): the
 	// easytier init script's procd file-watch needs it present at boot
 	// before the first apply runs.
-	return GeneratedPaths{MihomoConfig: mihomoConfig, DNSMasqFile: dnsmasqFile, DNSMasqFragmentDir: c.Settings.DNSMasqIncludeDir, NFTFile: nftFile, NFTSetsFile: nftSetsFile, FirewallFile: filepath.Join(uciConfigDir(), "purewrt-firewall.generated"), Mwan3File: filepath.Join(uciConfigDir(), "purewrt-mwan3.generated"), ZapretEnv: filepath.Join(persistentGeneratedDir, "zapret.env"), EasytierConfig: filepath.Join(persistentGeneratedDir, "easytier.toml")}
+	return GeneratedPaths{MihomoConfig: mihomoConfig, DNSMasqFile: dnsmasqFile, DNSMasqFragmentDir: c.Settings.DNSMasqIncludeDir, NFTFile: nftFile, NFTSetsFile: nftSetsFile, FirewallFile: filepath.Join(uciConfigDir(), "purewrt-firewall.generated"), ZapretEnv: filepath.Join(persistentGeneratedDir, "zapret.env"), EasytierConfig: filepath.Join(persistentGeneratedDir, "easytier.toml")}
 }
 
 func StagedGeneratedPaths(c config.Config, stageDir string) GeneratedPaths {
@@ -71,7 +70,6 @@ func StagedGeneratedPaths(c config.Config, stageDir string) GeneratedPaths {
 		NFTFile:            filepath.Join(stageDir, filepath.Base(live.NFTFile)),
 		NFTSetsFile:        filepath.Join(stageDir, filepath.Base(live.NFTSetsFile)),
 		FirewallFile:       filepath.Join(stageDir, filepath.Base(live.FirewallFile)),
-		Mwan3File:          filepath.Join(stageDir, filepath.Base(live.Mwan3File)),
 		ZapretEnv:          filepath.Join(stageDir, filepath.Base(live.ZapretEnv)),
 		EasytierConfig:     filepath.Join(stageDir, filepath.Base(live.EasytierConfig)),
 	}
@@ -92,7 +90,6 @@ func PromoteGeneratedPathsForGroups(staged, live GeneratedPaths, groups Generati
 		{staged.NFTFile, live.NFTFile, 0644, groups.OpenWrtBundle},
 		{staged.NFTSetsFile, live.NFTSetsFile, 0644, groups.OpenWrtBundle},
 		{staged.FirewallFile, live.FirewallFile, 0600, groups.Firewall},
-		{staged.Mwan3File, live.Mwan3File, 0600, groups.Mwan3},
 		{staged.ZapretEnv, live.ZapretEnv, 0644, groups.Zapret},
 		{staged.EasytierConfig, live.EasytierConfig, 0600, groups.Mesh},
 	} {
@@ -106,7 +103,7 @@ func PromoteGeneratedPathsForGroups(staged, live GeneratedPaths, groups Generati
 		}
 		data, err := os.ReadFile(f.from)
 		if err != nil {
-			if os.IsNotExist(err) && (f.from == staged.FirewallFile || f.from == staged.Mwan3File || f.from == staged.EasytierConfig) {
+			if os.IsNotExist(err) && (f.from == staged.FirewallFile || f.from == staged.EasytierConfig) {
 				continue
 			}
 			return err
@@ -188,6 +185,9 @@ func WriteAllToWithOptions(c config.Config, paths GeneratedPaths, opt WriteOptio
 }
 
 func WriteAllToResult(c config.Config, paths GeneratedPaths, opt WriteOptions) (res GenerationResult, retErr error) {
+	if err := validateProxyWANGeneration(c); err != nil {
+		return res, err
+	}
 	started := time.Now()
 	result := "generated"
 	defer func() {
@@ -300,21 +300,6 @@ func WriteAllToResult(c config.Config, paths GeneratedPaths, opt WriteOptions) (
 			logWrite(log, "generate: firewall config", paths.FirewallFile, changed, len(data), elapsed)
 		} else {
 			log.Debug("generate: firewall config skipped dns_hijack=0")
-		}
-	}
-	if groups.Mwan3 {
-		t := time.Now()
-		if data := Mwan3Rules(c); len(data) > 0 {
-			changed, err := system.WriteIfChanged(paths.Mwan3File, data, 0600)
-			elapsed := time.Since(t)
-			metrics.GenerateStageDurationSeconds.Observe(elapsed.Seconds(), "mwan3")
-			if err != nil {
-				return res, err
-			}
-			res.Changed["mwan3"] = changed
-			logWrite(log, "generate: mwan3 config", paths.Mwan3File, changed, len(data), elapsed)
-		} else {
-			log.Debug("generate: mwan3 config skipped mode=%s", c.Mwan3.Mode)
 		}
 	}
 	if groups.Zapret {
@@ -516,9 +501,6 @@ func outputDirs(c config.Config, paths GeneratedPaths) []string {
 	if len(FirewallRules(c)) > 0 {
 		base = append(base, paths.FirewallFile)
 	}
-	if len(Mwan3Rules(c)) > 0 {
-		base = append(base, paths.Mwan3File)
-	}
 	for _, path := range base {
 		if path != "" {
 			dirs = append(dirs, filepath.Dir(path))
@@ -559,11 +541,6 @@ func generatedPathsComplete(c config.Config, paths GeneratedPaths) bool {
 	}
 	if len(FirewallRules(c)) > 0 {
 		if info, err := os.Stat(paths.FirewallFile); err != nil || info.IsDir() {
-			return false
-		}
-	}
-	if len(Mwan3Rules(c)) > 0 {
-		if info, err := os.Stat(paths.Mwan3File); err != nil || info.IsDir() {
 			return false
 		}
 	}
