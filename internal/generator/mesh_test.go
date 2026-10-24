@@ -56,10 +56,11 @@ func TestMeshListenerAndExitGroupEmitted(t *testing.T) {
 // this host's own proxies — never DIRECT (host's home IP) and never bounced
 // back into the mesh (loop).
 func TestMeshExitGroupNeverLeaksDirectOrFriendOrSection(t *testing.T) {
+	// Check base rendering; the guard overlay reserializes YAML and has separate coverage.
 	c := joinedMesh()
 	// Add a consumable friend so friend_* proxies also exist in the config.
 	c.MeshPeers = []config.MeshPeer{{HWID: "purewrt-bbbbbbbbbbbbbbbbbbbbbbbb", Name: "beta", Enabled: true, OverlayIP: "10.126.126.2", ListenPort: 7897, ExitOffered: true}}
-	out := string(Mihomo(c))
+	out := string(mihomoWithMixin(c))
 
 	block := meshExitBlock(t, out)
 	for _, forbidden := range []string{"DIRECT", "friend_bbbbbbbbbbbbbbbbbbbbbbbb", "Friends", "Media", "AI", "Common"} {
@@ -74,8 +75,9 @@ func TestMeshExitGroupNeverLeaksDirectOrFriendOrSection(t *testing.T) {
 }
 
 func TestMeshExitGroupFilters(t *testing.T) {
+	// Check base rendering; the guard overlay reserializes YAML and has separate coverage.
 	// Defaults: no filter keys at all.
-	block := meshExitBlock(t, string(Mihomo(joinedMesh())))
+	block := meshExitBlock(t, string(mihomoWithMixin(joinedMesh())))
 	if strings.Contains(block, "filter:") {
 		t.Fatalf("default MeshExit emits filter keys:\n%s", block)
 	}
@@ -83,7 +85,7 @@ func TestMeshExitGroupFilters(t *testing.T) {
 	c := joinedMesh()
 	c.Mesh.ExitFilter = "(?i)NL|DE"
 	c.Mesh.ExitExcludeFilter = "(?i)expire"
-	block = meshExitBlock(t, string(Mihomo(c)))
+	block = meshExitBlock(t, string(mihomoWithMixin(c)))
 	if !strings.Contains(block, `filter: "(?i)NL|DE"`) {
 		t.Fatalf("MeshExit missing include filter:\n%s", block)
 	}
@@ -102,10 +104,11 @@ func TestMeshExitNotEmittedWhenNotViable(t *testing.T) {
 }
 
 func TestFriendProxyAndFallbackWiring(t *testing.T) {
+	// Check base rendering; the guard overlay reserializes YAML and has separate coverage.
 	c := joinedMesh()
 	c.Mesh.ExitEnabled = false // pure consumer
 	c.MeshPeers = []config.MeshPeer{{HWID: "purewrt-bbbbbbbbbbbbbbbbbbbbbbbb", Name: "beta", Enabled: true, OverlayIP: "10.126.126.2", ListenPort: 7897, ExitOffered: true}}
-	out := string(Mihomo(c))
+	out := string(mihomoWithMixin(c))
 
 	if !strings.Contains(out, "name: friend_bbbbbbbbbbbbbbbbbbbbbbbb") || !strings.Contains(out, "server: 10.126.126.2") {
 		t.Fatalf("friend proxy missing:\n%s", out)
@@ -140,10 +143,11 @@ func TestFriendProxyAndFallbackWiring(t *testing.T) {
 }
 
 func TestFriendsGroupSingleFriendStillEmitted(t *testing.T) {
+	// Check base rendering; the guard overlay reserializes YAML and has separate coverage.
 	// One friend still gets the Friends wrapper — uniform YAML shape.
 	c := joinedMesh()
 	c.MeshPeers = []config.MeshPeer{{HWID: "purewrt-bbbbbbbbbbbbbbbbbbbbbbbb", Name: "beta", Enabled: true, OverlayIP: "10.126.126.2", ListenPort: 7897, ExitOffered: true}}
-	out := string(Mihomo(c))
+	out := string(mihomoWithMixin(c))
 	fr := groupBlock(t, out, "Friends")
 	if !strings.Contains(fr, "- friend_bbbbbbbbbbbbbbbbbbbbbbbb") {
 		t.Fatalf("Friends group missing its only member:\n%s", fr)

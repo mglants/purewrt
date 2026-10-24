@@ -3,14 +3,25 @@ package manager
 import (
 	"github.com/purewrt/purewrt/internal/config"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 )
 
-func wanFixture() (config.Config, zapretResolverRunner) {
+type networkResolverRunner map[string]string
+
+func (r networkResolverRunner) Run(name string, args ...string) (string, error) {
+	return r[name+" "+strings.Join(args, " ")], nil
+}
+func (r networkResolverRunner) RunWithTimeout(_ time.Duration, name string, args ...string) (string, error) {
+	return r.Run(name, args...)
+}
+
+func wanFixture() (config.Config, networkResolverRunner) {
 	c := config.Default()
 	c.Mwan3.ProxyWANEnabled = true
 	c.Mwan3.ProxyWANs = []string{"wan", "wanb"}
-	r := zapretResolverRunner{
+	r := networkResolverRunner{
 		"uci -q show mwan3":                "mwan3.wan=interface\nmwan3.wan.enabled='1'\nmwan3.wanb=interface\nmwan3.wanb.enabled='1'\n",
 		"ubus call network.interface dump": `{"interface":[{"interface":"wan","l3_device":"eth1"},{"interface":"wanb","l3_device":"pppoe-wanb"}]}`,
 		"ip -4 rule show":                  "1001: from all iif eth1 lookup 1\n1002: from all iif pppoe-wanb lookup 2\n2001: from all fwmark 0x100/0x3f00 lookup 1\n2002: from all fwmark 0x200/0x3f00 lookup 2\n2062: from all fwmark 0x3e00/0x3f00 unreachable\n",

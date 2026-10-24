@@ -117,11 +117,6 @@ func runFirstAvailable(paths ...string) {
 	os.Exit(1)
 }
 
-// ResolveZapretProfileInterfaces is exposed by the manager package; re-export
-// as a tiny local helper so the doctor --json path doesn't reach into
-// internals from the CLI.
-var ResolveZapretProfileInterfaces = manager.ResolveZapretProfileInterfaces
-
 const (
 	operationLockPath    = "/var/run/purewrt.lock"
 	operationDirtyPath   = "/var/run/purewrt.dirty"
@@ -806,7 +801,6 @@ var commands = []command{
 			if asJSON {
 				// Whole doctor: emit a JSON object with each component.
 				c, _ := m.Load()
-				c = ResolveZapretProfileInterfaces(c)
 				printJSON(map[string]any{
 					"warnings": m.DoctorWarnings(),
 					"ipv6":     checker.InspectIPv6(c),
@@ -1237,6 +1231,7 @@ var commands = []command{
 			}
 			printJSON(res)
 		}},
+	{name: "apply-health", group: "Status & diagnostics", desc: "Last apply result and generated-file health (JSON)", run: func(m manager.Manager) { printJSON(m.ApplyHealth()) }},
 	{name: "doctor-warnings", group: "Status & diagnostics",
 		args: "",
 		desc: "Doctor warnings only (JSON)",

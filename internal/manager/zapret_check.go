@@ -105,6 +105,8 @@ func (m Manager) zapretCheckStrategyWithOptions(hostsArg string, opt ZapretCheck
 	cmd := exec.CommandContext(ctx, script)
 	cmd.Env = append(os.Environ(),
 		"BATCH=1",
+		// Upstream prepends these options to every nfqws test invocation.
+		"PKTWS_EXTRA_PRE=--bind-fix4 --bind-fix6",
 		"DOMAINS="+strings.Join(hosts, " "),
 		"CURL_CMD=1",
 		"CURL_MAX_TIME=4",
@@ -124,7 +126,7 @@ func (m Manager) zapretCheckStrategyWithOptions(hostsArg string, opt ZapretCheck
 		cmd.Env = append(cmd.Env, "CURL_OPT=--interface "+iface+" --connect-timeout 2 --max-time 4")
 	}
 	if bin := firstZapretNFQWSBin(c); bin != "" {
-		cmd.Env = append(cmd.Env, "PKTWSD="+bin)
+		cmd.Env = append(cmd.Env, "NFQWS2="+bin)
 	}
 
 	prefix := zapretCheckInterfaceMessage(iface) + excludeOut + warning

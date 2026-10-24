@@ -418,6 +418,7 @@ install_cron() {
     # Adaptive proxy guard: cheap latency sweep each tick, with bounded real
     # transfers only when an active/suspect/recovering node is due.
     proxy_guard_enabled="$(uci -q get purewrt.settings.proxy_guard_enabled)"
+    [ -n "$proxy_guard_enabled" ] || proxy_guard_enabled=1
     if [ "$proxy_guard_enabled" = "1" ]; then
         proxy_guard_schedule="$(uci -q get purewrt.settings.proxy_guard_cron)"
         [ -n "$proxy_guard_schedule" ] || proxy_guard_schedule='*/5 * * * *'

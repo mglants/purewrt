@@ -118,7 +118,7 @@ func ZapretUpstreamConfig(c config.Config) []byte {
 	// detection (--filter-l7, MTProto) silently no-ops without ctrack, and
 	// it's harmless for non-L7 strategies — so always enable it in the head.
 	clauses := []string{
-		zapretLuaInit(luaDir) + " --ctrack-disable=0" + zapretBlobFlags(instances),
+		zapretLuaInit(luaDir) + " --bind-fix4 --bind-fix6 --ctrack-disable=0" + zapretBlobFlags(instances),
 	}
 	for _, inst := range instances {
 		clauses = append(clauses, zapretProfileClause(inst.strategy))

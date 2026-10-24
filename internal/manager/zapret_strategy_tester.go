@@ -197,6 +197,7 @@ func (m Manager) ZapretStrategyTest(opt ZapretStrategyTestOptions) (ZapretStrate
 
 	// Launch nfqws2 on the test queue.
 	args := []string{
+		"--bind-fix4", "--bind-fix6",
 		"--qnum=" + strconv.Itoa(zapretTestQNum),
 		"--user=daemon",
 		"--fwmark=" + zapretTestMark,

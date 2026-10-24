@@ -342,10 +342,11 @@ func TestMihomoCatchAllFallsToDirectWithoutCommon(t *testing.T) {
 }
 
 func TestMihomoNetCheckProbePath(t *testing.T) {
+	// Check base rendering; the guard overlay reserializes YAML and has separate coverage.
 	// Default config has proxy sections → the net-check probe path is emitted:
 	// a loopback `mixed` listener, the NetCheckProbe select group, and the
 	// IN-NAME rule routing the listener to that group.
-	out := string(Mihomo(config.Default()))
+	out := string(mihomoWithMixin(config.Default()))
 	for _, want := range []string{
 		"- name: netcheck-probe\n    type: mixed\n    port: 7899\n    listen: 127.0.0.1\n",
 		"- name: NetCheckProbe\n    type: select\n",
@@ -361,14 +362,15 @@ func TestMihomoNetCheckProbePath(t *testing.T) {
 	for i := range c.Sections {
 		c.Sections[i].Action = "direct"
 	}
-	out = string(Mihomo(c))
+	out = string(mihomoWithMixin(c))
 	if strings.Contains(out, "netcheck-probe") || strings.Contains(out, "NetCheckProbe") {
 		t.Fatalf("probe path must be absent when no proxy section is enabled:\n%s", out)
 	}
 }
 
 func TestMihomoDashboardEnabledByDefault(t *testing.T) {
-	out := string(Mihomo(config.Default()))
+	// Check base rendering; the guard overlay reserializes YAML and has separate coverage.
+	out := string(mihomoWithMixin(config.Default()))
 	for _, want := range []string{
 		"external-controller: 0.0.0.0:9090",
 		"external-ui: /etc/purewrt/dashboard",
@@ -622,6 +624,20 @@ func TestGenerationCacheStatusAndForce(t *testing.T) {
 	if err := WriteAll(c); err != nil {
 		t.Fatal(err)
 	}
+	for _, path := range []string{c.Settings.MihomoConfig, DefaultGeneratedPaths(c).NFTFile, DefaultGeneratedPaths(c).NFTSetsFile} {
+		if err := os.Truncate(path, 0); err != nil {
+			t.Fatal(err)
+		}
+		if status := CacheStatus(c); !strings.Contains(status, "generation cache: miss") {
+			t.Fatalf("empty %s must invalidate cache: %s", path, status)
+		}
+		if err := WriteAll(c); err != nil {
+			t.Fatal(err)
+		}
+		if info, err := os.Stat(path); err != nil || info.Size() == 0 {
+			t.Fatalf("empty %s was not regenerated: %v", path, err)
+		}
+	}
 	before, err := os.Stat(c.Settings.MihomoConfig)
 	if err != nil {
 		t.Fatal(err)
@@ -720,9 +736,10 @@ func TestGenerationMetricsCoverCompleteCallAndFractionalStages(t *testing.T) {
 }
 
 func TestMihomoDashboardEnabled(t *testing.T) {
+	// Check base rendering; the guard overlay reserializes YAML and has separate coverage.
 	c := config.Default()
 	c.Settings.DashboardEnabled = true
-	out := string(Mihomo(c))
+	out := string(mihomoWithMixin(c))
 	for _, want := range []string{
 		"external-controller: 0.0.0.0:9090",
 		"external-ui: /etc/purewrt/dashboard",
@@ -736,7 +753,8 @@ func TestMihomoDashboardEnabled(t *testing.T) {
 }
 
 func TestMihomoDNSIncludesUDPBootstrapFallbacks(t *testing.T) {
-	out := string(Mihomo(config.Default()))
+	// Check base rendering; the guard overlay reserializes YAML and has separate coverage.
+	out := string(mihomoWithMixin(config.Default()))
 	for _, want := range []string{
 		"proxy-server-nameserver:\n    - 77.88.8.8#DIRECT\n    - 77.88.8.1#DIRECT",
 		"default-nameserver:\n    - 77.88.8.8#DIRECT\n    - 77.88.8.1#DIRECT",
@@ -759,12 +777,13 @@ func TestDNSMasqIsOnlyDNSSetGenerator(t *testing.T) {
 }
 
 func TestMihomoExportsEnabledProxyProviders(t *testing.T) {
+	// Check base rendering; the guard overlay reserializes YAML and has separate coverage.
 	c := config.Default()
 	c.ProxyProviders = []config.ProxyProvider{
 		{Name: "disabled", Enabled: false, Type: "http", URL: "https://example.com/disabled.yaml", Path: "/etc/purewrt/providers/disabled.yaml", Interval: 86400, HealthCheck: true, HealthCheckURL: "https://www.gstatic.com/generate_204", HealthCheckInterval: 300},
 		{Name: "default_nodes", Enabled: true, Type: "file", Path: "/etc/purewrt/providers/default_nodes.yaml", HealthCheck: true, HealthCheckURL: "https://www.gstatic.com/generate_204", HealthCheckInterval: 300},
 	}
-	out := string(Mihomo(c))
+	out := string(mihomoWithMixin(c))
 	for _, want := range []string{
 		"proxy-providers:\n  default_nodes:",
 		"type: file",
@@ -783,6 +802,7 @@ func TestMihomoExportsEnabledProxyProviders(t *testing.T) {
 }
 
 func TestLowResourceProfileReducesRuntimeConfig(t *testing.T) {
+	// Check base rendering; the guard overlay reserializes YAML and has separate coverage.
 	c := config.Default()
 	c.Settings.ResourceProfile = "low"
 	c.Settings.MihomoGeodataEnabled = true
@@ -792,7 +812,7 @@ func TestLowResourceProfileReducesRuntimeConfig(t *testing.T) {
 	// recipe); a separate sibling test below covers the override case.
 	c.Settings.DashboardEnabled = false
 	c.ProxyProviders = []config.ProxyProvider{{Name: "main", Enabled: true, Type: "file", Path: "/etc/purewrt/providers/main.yaml", HealthCheck: true, HealthCheckURL: "https://www.gstatic.com/generate_204", HealthCheckInterval: 300}}
-	mihomo := string(Mihomo(c))
+	mihomo := string(mihomoWithMixin(c))
 	for _, want := range []string{
 		"find-process-mode: off",
 		"ipv6: false",
@@ -842,7 +862,8 @@ func TestLowResourceWithDashboardOverride(t *testing.T) {
 }
 
 func TestMihomoGeodataDisabledByDefault(t *testing.T) {
-	mihomo := string(Mihomo(config.Default()))
+	// Check base rendering; the guard overlay reserializes YAML and has separate coverage.
+	mihomo := string(mihomoWithMixin(config.Default()))
 	if !strings.Contains(mihomo, "geodata-mode: false\ngeo-auto-update: false") {
 		t.Fatalf("default Mihomo config should disable geodata:\n%s", mihomo)
 	}
@@ -869,6 +890,7 @@ func TestMihomoGeodataCanBeEnabled(t *testing.T) {
 }
 
 func TestMihomoProxyGroupOptions(t *testing.T) {
+	// Check base rendering; the guard overlay reserializes YAML and has separate coverage.
 	c := config.Default()
 	c.ProxyProviders = []config.ProxyProvider{{Name: "main", Enabled: true, Type: "file", Path: "/etc/purewrt/providers/main.yaml", HealthCheckURL: "https://www.gstatic.com/generate_204", HealthCheckInterval: 300}}
 	c.DNS.ProxyGroupType = "load-balance"
@@ -876,7 +898,7 @@ func TestMihomoProxyGroupOptions(t *testing.T) {
 	c.DNS.ProxyExcludeFilter = "(?i)direct"
 	c.DNS.ProxyStrategy = "sticky-sessions"
 	c.Sections = []config.Section{{Name: "media", Enabled: true, Action: "proxy", TPROXYPort: 7894, ProxyGroup: "Media", ProxyGroupType: "url-test", ProxyFilter: "(?i)hk|sg", ProxyExcludeFilter: "(?i)game", ProxyHealthCheckURL: "https://cp.cloudflare.com/generate_204", ProxyHealthCheckInterval: 600, IPv4Enabled: true, IPv6Enabled: true}}
-	out := string(Mihomo(c))
+	out := string(mihomoWithMixin(c))
 	for _, want := range []string{
 		"- name: DNSProxy\n    type: load-balance",
 		"filter: \"(?i)dns|safe\"",
@@ -1322,6 +1344,7 @@ func TestStandardSectionDedupAllowsCrossSectionDuplicate(t *testing.T) {
 // VPNs are mihomo `direct` outbounds selected per section, pooled with
 // providers — no kernel marks/ip-rules/masquerade.
 func TestVPNAsMihomoProxies(t *testing.T) {
+	// Check base rendering; the guard overlay reserializes YAML and has separate coverage.
 	c := config.Default()
 	c.VPNs = []config.VPN{
 		{Name: "work", Enabled: true, Interface: "wg0"},
@@ -1330,7 +1353,7 @@ func TestVPNAsMihomoProxies(t *testing.T) {
 	c.Sections = []config.Section{
 		{Name: "common", Enabled: true, Action: "proxy", TPROXYPort: 7893, ProxyGroup: "Common", ProxyGroupType: "url-test", IPv4Enabled: true, IPv6Enabled: true, VPNs: []string{"work", "home"}},
 	}
-	mi := string(Mihomo(c))
+	mi := string(mihomoWithMixin(c))
 	for _, want := range []string{
 		"name: vpn_work\n    type: direct\n    interface-name: wg0",
 		"name: vpn_home\n    type: direct\n    interface-name: tun0",

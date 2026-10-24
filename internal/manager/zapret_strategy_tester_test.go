@@ -288,6 +288,11 @@ func TestZapretStrategyTestKillsNFQWSOnReturn(t *testing.T) {
 	// Kill+Wait path is exercised for real (orphan-daemon regression).
 	var stub *exec.Cmd
 	zapretStartCmd = func(cmd *exec.Cmd) error {
+		for _, flag := range []string{"--bind-fix4", "--bind-fix6"} {
+			if !strings.Contains(strings.Join(cmd.Args, " "), flag) {
+				t.Fatalf("missing interface binding flag %s: %v", flag, cmd.Args)
+			}
+		}
 		real := exec.Command("sleep", "60")
 		if err := real.Start(); err != nil {
 			return err

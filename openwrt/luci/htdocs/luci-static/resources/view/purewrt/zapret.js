@@ -120,17 +120,8 @@ function applyPresetTo(sectionId, presetKey, fields) {
   });
 }
 
-// profileTitle never surfaces a raw cfgXXXX section id. Falls back through the
-// friendly fields (name -> OpenWrt network -> first Linux interface) before
-// giving up to the section id, so anonymous profiles still read sensibly.
+// Use the same profile identity as strategy references, not its first device.
 function profileTitle(sid) {
-  var name = uci.get('purewrt', sid, 'name');
-  if (name) return name;
-  var net = uci.get('purewrt', sid, 'network');
-  if (net) return net;
-  var ifaces = uci.get('purewrt', sid, 'interface');
-  if (Array.isArray(ifaces)) ifaces = ifaces[0];
-  if (ifaces) return ifaces;
   return naming.displayName(sid, 'zapret_profile') || _('New profile');
 }
 
@@ -173,19 +164,10 @@ function strategySummary(sid) {
   ];
 }
 
-function profileSummary(sid) {
-  var mode = uci.get('purewrt', sid, 'interface_mode') || 'mwan3_members';
-  var net = uci.get('purewrt', sid, 'network') || '';
-  var ifaces = uci.get('purewrt', sid, 'interface');
-  if (Array.isArray(ifaces))
-    ifaces = ifaces.join(',');
-  else
-    ifaces = ifaces || '';
-  var target = ifaces || net || '-';
+function profileSummary(sid, interfaces) {
   return [
     profileTitle(sid),
-    mode,
-    target,
+    (interfaces || []).join(', ') || _('None selected'),
     uci.get('purewrt', sid, 'fwmark') || 'auto'
   ];
 }
@@ -978,26 +960,51 @@ return view.extend({
     naming.installPrefixedAdd(p, 'zapret_profile');
     var profEnabled = p.option(form.Flag, 'enabled', _('Enabled'));
     profEnabled.default = '1'; // Go side treats an absent option as enabled
-    var mode = p.option(form.ListValue, 'interface_mode', _('Interface matching mode'));
-    mode.value('single', _('Single interface'));
-    mode.value('network', _('OpenWrt network'));
-    mode.value('mwan3_members', _('All mwan3 member interfaces'));
-    mode.default = 'mwan3_members';
-    mode.description = _('All-member mode emits nftables matches for every mwan3 WAN member, so failover does not require regenerating rules.');
-    var networkName = p.option(form.Value, 'network', _('OpenWrt network'));
-    networkName.placeholder = 'auto';
-    networkName.description = _('Use OpenWrt network names such as auto, wan, wan6, or vpn.');
-    var dev = p.option(form.Value, 'device', _('Linux device override'));
-    dev.placeholder = 'eth1';
-    dev.description = _('Advanced override. Usually leave empty and use OpenWrt network instead.');
-    var ifaces = p.option(form.DynamicList, 'interface', _('Linux interfaces'));
-    ifaces.placeholder = 'wan';
-    devices.forEach(function(d) {
-      var name = d.getName && d.getName();
-      if (name && name !== 'lo')
-        ifaces.value(name, name);
+    var networkDevices = {};
+    var deviceLabels = {};
+    networks.forEach(function(net) {
+      var name = net.getName && net.getName();
+      var device = wanDeviceOf(net);
+      if (name && device) {
+        networkDevices[name] = device;
+        deviceLabels[device] = (deviceLabels[device] ? deviceLabels[device] + ', ' : '') + name;
+      }
     });
-    ifaces.description = _('One or more Linux devices. In mwan3 member mode, PureWRT resolves all mwan3 member devices at apply time and uses them for nftables matching.');
+    function uniqueDevices(values) {
+      return values.filter(function(value, index) { return value && values.indexOf(value) === index; });
+    }
+    var defaultDevices = uniqueDevices(wanNets.concat(wan6Nets).map(wanDeviceOf));
+    function profileInterfaces(sid) {
+      var selected = uci.get('purewrt', sid, 'interface');
+      if (!selected) return defaultDevices;
+      return Array.isArray(selected) ? selected : [selected];
+    }
+    var ifaces = p.option(form.DynamicList, 'interface', _('Interfaces'));
+    ifaces.placeholder = _('Choose an interface');
+    ifaces.rmempty = false;
+    ifaces.forcewrite = true;
+    ifaces.cfgvalue = profileInterfaces;
+    ifaces.default = defaultDevices;
+    // DynamicList validates the empty add-item input separately. Enforce
+    // the minimum selection on the full list at save time, not that input.
+    var parseInterfaces = ifaces.parse;
+    ifaces.parse = function(sid) {
+      var selected = this.formvalue(sid);
+      if (this.isActive(sid) && (!selected || !selected.length))
+        return Promise.reject(new Error(_('Select at least one interface.')));
+      return parseInterfaces.call(this, sid);
+    };
+    ifaces.write = function(sid, value) {
+      uci.set('purewrt', sid, 'interface', value);
+    };
+    var choices = devices.map(function(d) { return d.getName && d.getName(); });
+    uci.sections('purewrt', 'zapret_profile', function(section) {
+      choices = choices.concat(profileInterfaces(section['.name']));
+    });
+    uniqueDevices(choices.concat(defaultDevices)).sort().forEach(function(name) {
+      if (name !== 'lo') ifaces.value(name, deviceLabels[name] ? deviceLabels[name] + ' (' + name + ')' : name);
+    });
+    ifaces.description = _('Select the WAN interfaces where Zapret should process traffic.');
     var pfw = p.option(form.Value, 'fwmark', _('Generated packet fwmark'));
     pfw.placeholder = '0x40000000';
     pfw.modalonly = true;
@@ -1158,12 +1165,12 @@ return view.extend({
 
       if (profileWrap) {
         tableSection.render(profileWrap, {
-          columns: '0 1.4fr 1fr 1.4fr 0.8fr 0.7fr 12rem',
-          headers: [ '', _('Name'), _('Mode'), _('Network/Devices'), _('Fwmark'), _('Enable'), '' ],
+          columns: '0 1.4fr 2.4fr 0.8fr 0.7fr 12rem',
+          headers: [ '', _('Name'), _('Interfaces'), _('Fwmark'), _('Enable'), '' ],
           showEnable: true,
           filterNode: inWrapper('cbi-purewrt-zapret_profile'),
           titleOf: function(sid) { return _('Profile') + ': ' + profileTitle(sid); },
-          summaryOf: profileSummary,
+          summaryOf: function(sid) { return profileSummary(sid, profileInterfaces(sid)); },
           save: function() {
             return saveChain.run(m, [
               { fn: callZapretRestart, label: _('Zapret restart') }

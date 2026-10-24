@@ -376,7 +376,7 @@ func pathComplete(path string) bool {
 		return false
 	}
 	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
+	return err == nil && info.Mode().IsRegular() && info.Size() > 0
 }
 
 func dirComplete(path string) bool {

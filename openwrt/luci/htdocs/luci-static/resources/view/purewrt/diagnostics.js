@@ -14,6 +14,7 @@ var callDisable = rpc.declare({ object: 'purewrt', method: 'disable' });
 var callCheck = rpc.declare({ object: 'purewrt', method: 'check', params: [ 'domain' ] });
 
 // Wave-2 diagnostic rpcd methods. Each returns parsed JSON; no wrapping.
+var callApplyHealth = rpc.declare({ object: 'purewrt', method: 'apply_health' });
 var callDoctorWarnings = rpc.declare({ object: 'purewrt', method: 'doctor_warnings' });
 var callInspectIPv6 = rpc.declare({ object: 'purewrt', method: 'inspect_ipv6' });
 var callFlushDnsSets = rpc.declare({ object: 'purewrt', method: 'flush_dns_sets' });
@@ -29,6 +30,17 @@ var callMihomoStatus = rpc.declare({ object: 'purewrt', method: 'mihomo_status' 
 // Each check's verdict(res) → { state: 'ok'|'warn'|'danger'|'info', detail, more }
 // where `more` (optional) is the raw payload shown behind a <details>.
 var HEALTH_CHECKS = [
+  { key: 'apply', label: _('Apply health'), run: callApplyHealth, verdict: function(r) {
+    var last = r && r.last;
+    var issues = (r && r.issues) || [];
+    var failed = last && !last.success;
+    var detail = failed ? _('Failed at %s: %s').format(last.stage, last.error || '')
+      : issues.length ? issues.join('; ')
+      : last ? _('Last apply succeeded') : _('No recorded apply result');
+    if (last && last.time) detail += ' — ' + last.time;
+    return { state: failed || issues.length ? 'danger' : last ? 'ok' : 'warn',
+      detail: detail, more: JSON.stringify(r, null, 2) };
+  } },
   { key: 'service', label: _('Service'), run: callStatus, verdict: function(r) {
     var enabled = r && (r.enabled === true || r.enabled === 'true' || r.status === 'ok');
     return { state: enabled ? 'ok' : 'warn', detail: enabled ? _('enabled') : _('not fully applied'),
@@ -69,7 +81,7 @@ function worstHealthState(states) {
 
 function renderHealthPanel() {
   var banner = E('div', { 'class': 'purewrt-banner purewrt-banner-muted', 'style': 'margin:.5em 0' },
-    _('Click "Run all" to check service, mihomo, DNS resolvers, bypass warnings and IPv6 in parallel.'));
+    _('Click "Run all" to check apply health, service, mihomo, DNS resolvers, bypass warnings and IPv6 in parallel.'));
   // One row per check; the status cell is swapped from spinner to chip in place.
   var rows = {};
   var cells = {};

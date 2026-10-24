@@ -323,7 +323,6 @@ func (m Manager) GenerateWithOptions(force bool) error {
 	if err != nil {
 		return err
 	}
-	c = ResolveZapretProfileInterfaces(c)
 	c = ResolveOONIUser(c)
 	log := newLog(c)
 	defer log.DebugTimer("generate: total")()
@@ -344,15 +343,10 @@ func (m Manager) GenerateCacheStatus() (string, error) {
 		return "", err
 	}
 	c = config.EnsureDefaults(c)
-	// Resolve zapret network=auto/mwan3_members interfaces exactly as Generate
-	// and applyPrepare do — otherwise this read-only status hashes the raw
-	// config while generate/apply hash the resolved one, and the zapret +
-	// openwrt_bundle groups report a permanent (phantom) cache miss.
 	c, err = ResolveProxyWANs(c)
 	if err != nil {
 		return "", err
 	}
-	c = ResolveZapretProfileInterfaces(c)
 	c = ResolveOONIUser(c)
 	return generator.CacheStatus(c), nil
 }
@@ -1269,6 +1263,9 @@ func validateConfigHardening(c config.Config) error {
 		}
 	}
 	for _, p := range c.EnabledZapretProfiles() {
+		if len(p.Interfaces) == 0 {
+			return fmt.Errorf("zapret profile %q: select at least one interface", p.Name)
+		}
 		if !safeProviderRE.MatchString(p.Name) {
 			return fmt.Errorf("zapret profile %q has unsafe name", p.Name)
 		}
@@ -1476,8 +1473,26 @@ func (m Manager) Apply() error {
 	return m.ApplyWithOptions(false)
 }
 
-func (m Manager) ApplyWithOptions(force bool) error {
+func (m Manager) ApplyWithOptions(force bool) (retErr error) {
 	applyStart := time.Now()
+	var c config.Config
+	defer func() {
+		if m.DryRun {
+			return
+		}
+		if retErr != nil {
+			newLog(c).Error("apply: failed: %v", retErr)
+			logApplyFailure("apply failed: " + retErr.Error())
+		}
+		if e := recordApplyAttempt(c, applyStart, retErr); e != nil {
+			newLog(c).Error("apply: could not save status: %v", e)
+			logApplyFailure("could not save apply status: " + e.Error())
+			_ = os.Remove(applyHealthPath(c))
+			if retErr != nil {
+				retErr = errors.Join(retErr, fmt.Errorf("save apply status: %w", e))
+			}
+		}
+	}()
 	metrics.ApplyLastAttempt.Set(float64(applyStart.Unix()))
 	c, backup, staged, gen, cleanup, err := m.applyPrepare(force)
 	if err != nil {
@@ -1501,7 +1516,6 @@ func (m Manager) ApplyWithOptions(force bool) error {
 	defer cleanup()
 	r := system.Runner{DryRun: m.DryRun}
 	if err := m.applyWithRunner(c, backup, staged, gen, r); err != nil {
-		log.Error("apply: failed: %v", err)
 		metrics.ApplyLastRunSuccess.Set(0)
 		return err
 	}
@@ -1564,13 +1578,12 @@ func (m Manager) applyPrepare(force bool) (config.Config, system.BackupSet, gene
 	if err != nil {
 		return c, nil, generator.GeneratedPaths{}, generator.GenerationResult{}, func() {}, err
 	}
-	c = ResolveZapretProfileInterfaces(c)
 	c = ResolveOONIUser(c)
 	log := newLog(c)
 	defer log.DebugTimer("apply: prepare")()
 	log.Info("apply: validating config")
 	if err := m.Validate(); err != nil {
-		return c, nil, generator.GeneratedPaths{}, generator.GenerationResult{}, func() {}, err
+		return c, nil, generator.GeneratedPaths{}, generator.GenerationResult{}, func() {}, applyFailure("configuration", err)
 	}
 	if c.Settings.BootstrapDoHEnabled && c.Settings.BootstrapHealthGate {
 		log.Info("apply: bootstrap-health gate probing %d DoH endpoint(s)", len(c.Settings.BootstrapDoHResolvers))
@@ -1585,7 +1598,7 @@ func (m Manager) applyPrepare(force bool) (config.Config, system.BackupSet, gene
 	log.Info("apply: creating temporary backups max_bytes=%d", applyBackupMaxBytes(c))
 	backup, backupCleanup, err := m.applyBackup(c)
 	if err != nil {
-		return c, nil, generator.GeneratedPaths{}, generator.GenerationResult{}, func() {}, err
+		return c, nil, generator.GeneratedPaths{}, generator.GenerationResult{}, func() {}, applyFailure("backup", err)
 	}
 	if err := m.EnsureZapretBlobs(c); err != nil {
 		backupCleanup()
@@ -1595,7 +1608,7 @@ func (m Manager) applyPrepare(force bool) (config.Config, system.BackupSet, gene
 	staged, gen, cleanup, err := m.applyStagedGenerate(c, force)
 	if err != nil {
 		backupCleanup()
-		return c, backup, generator.GeneratedPaths{}, generator.GenerationResult{}, func() {}, err
+		return c, backup, generator.GeneratedPaths{}, generator.GenerationResult{}, func() {}, applyFailure("generation", err)
 	}
 	combinedCleanup := func() {
 		cleanup()
@@ -1711,34 +1724,40 @@ func (m Manager) applyWithRunnerPaths(c config.Config, backup system.BackupSet, 
 	}
 	log := newLog(c)
 	if !gen.DirtyGroups.Any() {
+		if err := checkApplyFiles(live, generator.GenerationGroups{}.All()); err != nil {
+			return applyFailure("validation", err)
+		}
 		log.Info("apply: no dirty generation groups reason=%s; skipping reloads", gen.Reason)
 		m.touchLastApplied(c)
 		return nil
 	}
+	if err := checkApplyFiles(staged, gen.DirtyGroups); err != nil {
+		return applyFailure("validation", err)
+	}
 	if err := m.applyValidateStaged(c, staged, gen.DirtyGroups, r); err != nil {
-		return m.applyRollback(c, backup, r, err)
+		return m.applyRollback(c, backup, r, applyFailure("validation", err))
 	}
 	log.Info("apply: promoting staged outputs to live paths groups=%+v", gen.DirtyGroups)
 	if err := m.applyPromote(staged, live, gen.DirtyGroups); err != nil {
-		return m.applyRollback(c, backup, r, err)
+		return m.applyRollback(c, backup, r, applyFailure("promotion", err))
 	}
 	if err := m.applyNFT(c, live, gen.DirtyGroups, r); err != nil {
-		return m.applyRollback(c, backup, r, err)
+		return m.applyRollback(c, backup, r, applyFailure("nft", err))
 	}
 	if err := m.applyUCIDNSFirewall(c, live, gen.DirtyGroups, r); err != nil {
-		return m.applyRollback(c, backup, r, err)
+		return m.applyRollback(c, backup, r, applyFailure("firewall/dns", err))
 	}
 	if err := m.applyPolicyRules(c, gen.DirtyGroups, r); err != nil {
-		return m.applyRollback(c, backup, r, err)
+		return m.applyRollback(c, backup, r, applyFailure("policy routing", err))
 	}
 	if err := m.applyServiceRestarts(c, gen.DirtyGroups, r); err != nil {
-		return m.applyRollback(c, backup, r, err)
+		return m.applyRollback(c, backup, r, applyFailure("services", err))
 	}
 	if err := m.applyNetworkInterfaces(c, gen.DirtyGroups, r); err != nil {
-		return m.applyRollback(c, backup, r, err)
+		return m.applyRollback(c, backup, r, applyFailure("network", err))
 	}
 	if err := generator.CommitGenerationFingerprint(c); err != nil {
-		return m.applyRollback(c, backup, r, err)
+		return m.applyRollback(c, backup, r, applyFailure("fingerprint", err))
 	}
 	m.touchLastApplied(c)
 	return nil
@@ -1963,6 +1982,9 @@ func (m Manager) ensureCgroupDirs(c config.Config) {
 }
 
 func (m Manager) applyNFT(c config.Config, live generator.GeneratedPaths, groups generator.GenerationGroups, r commandRunner) error {
+	if err := checkApplyFiles(live, generator.GenerationGroups{OpenWrtBundle: true}); err != nil {
+		return err
+	}
 	log := logging.New(m.logLevel())
 	if !groups.OpenWrtBundle {
 		// Drift check: the fingerprint says nothing changed and we'd

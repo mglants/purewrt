@@ -20,6 +20,7 @@
           "zapret_test_sites",
           "zapret_dpi_suite",
           "zapret_strategy_sweep_status",
+          "apply_health",
           "doctor_warnings",
           "inspect_ipv6",
           "resolvers_probe",

@@ -11,7 +11,9 @@ import (
 
 func TestProxyGuardOverlayPreservesUserExcludeFilter(t *testing.T) {
 	c := config.Default()
-	c.Settings.ProxyGuardEnabled = true
+	if !c.Settings.ProxyGuardEnabled {
+		t.Fatal("proxy guard must be enabled by default")
+	}
 	c.ProxyProviders = []config.ProxyProvider{{Name: "main", Enabled: true, Type: "file", Path: "/tmp/main.yaml"}}
 	userFilter := `(?i)private|do-not-touch` + "`" + `^manual-exclude$`
 	for i := range c.Sections {

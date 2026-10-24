@@ -320,7 +320,11 @@ return view.extend({
       } catch (e) { /* seeding is best-effort; never block a save */ }
       return m.save(null, mode).then(function() {
         return callReload();
-      }).then(function() {
+      }).then(function(r) {
+        if (r && r.result === 'failed') {
+          ui.addNotification(null, E('p', _('Apply failed: %s').format(r.output || '')), 'danger');
+          return;
+        }
         ui.addNotification(null, E('p', _('Rule-provider routing saved and PureWRT applied')), 'info');
       });
     };

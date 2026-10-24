@@ -89,7 +89,7 @@ func TestValidateRejectsZapretOnVPNSection(t *testing.T) {
 
 func TestValidateAcceptsZapretOnZapretAction(t *testing.T) {
 	c := config.Default()
-	c.ZapretProfiles = []config.ZapretProfile{{Name: "wan", Enabled: true, Network: "auto", Interfaces: []string{"wan"}, FwMark: "0x40000000", NFQWSBin: "/usr/libexec/zapret/nfqws2"}}
+	c.ZapretProfiles = []config.ZapretProfile{{Name: "wan", Enabled: true, Interfaces: []string{"wan"}, FwMark: "0x40000000", NFQWSBin: "/usr/libexec/zapret/nfqws2"}}
 	c.ZapretStrategies = []config.ZapretStrategy{{Name: "youtube_tcp", Enabled: true, Profile: "wan", Protocols: []string{"tcp"}, TCPPorts: "443", QueueNum: 200, Params: "--lua-desync=multisplit"}}
 	c.Sections = []config.Section{{
 		Name: "media", Enabled: true, Action: "zapret",

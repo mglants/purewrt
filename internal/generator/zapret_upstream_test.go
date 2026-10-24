@@ -13,7 +13,7 @@ func makeZapretConfig(t *testing.T, strategies ...config.ZapretStrategy) config.
 	t.Helper()
 	c := config.Default()
 	c.ZapretProfiles = []config.ZapretProfile{{
-		Name: "wan", Enabled: true, Network: "auto",
+		Name: "wan", Enabled: true,
 		Interfaces: []string{"wan"}, FwMark: "0x40000000",
 		NFQWSBin: "/usr/libexec/zapret/nfqws2", LuaBundleDir: "/usr/libexec/zapret/lua",
 	}}
@@ -50,6 +50,11 @@ func TestZapretUpstreamConfigEmitsCustomBlobs(t *testing.T) {
 	out := string(ZapretUpstreamConfig(c))
 	// The file-backed blob path is canonicalized (shipped fake dir, else the
 	// /etc fetch cache) so the emitted --blob points where the fetch lands.
+	for _, flag := range []string{"--bind-fix4", "--bind-fix6"} {
+		if !strings.Contains(out, flag) {
+			t.Fatalf("compiled options missing %s", flag)
+		}
+	}
 	wantBlob := "--blob=tls_google:@" + config.CanonicalBlobPath("tls_clienthello_google_com_tlsrec.bin")
 	if !strings.Contains(out, wantBlob) {
 		t.Fatalf("missing %q in:\n%s", wantBlob, out)

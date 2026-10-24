@@ -4,6 +4,42 @@ All notable changes to PureWRT are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are the `purewrt`
 package version.
 
+## [0.8.0] - 2026-10-24
+
+### Added
+- Apply health in LuCI Diagnostics and the `apply-health` CLI: the last apply
+  result, failure stage, bounded error details, and missing or empty required
+  generated files. Status uses a small runtime file with syslog fallback.
+- Adaptive proxy guard selection in the setup wizard.
+
+### Fixed
+- Apply rejects missing, empty, or non-regular required generated Mihomo and
+  nftables files before promotion. Invalid cached output triggers regeneration.
+  Checks use file metadata without loading rule lists into memory.
+- LuCI save flows retain failed results instead of showing a final success.
+- Zapret-generated packets follow the original outgoing interface using native
+  `--bind-fix4 --bind-fix6` in production, Blockcheck, and the strategy tester.
+  IPv4 packet captures verified all three test WANs and new-flow failover when
+  a WAN was disabled through mwan3. IPv6 behavior remains unverified.
+- Blockcheck uses upstream's `NFQWS2` executable override.
+- Zapret interface-list validation and profile names in LuCI.
+
+### Changed
+- Adaptive proxy guard defaults on; explicit disabled settings remain respected.
+- Zapret profiles use one explicit interface list with add/remove controls.
+  Removed network/device overrides, interface matching modes, automatic mwan3
+  member resolution, and its hotplug hook. Zapret does not require mwan3.
+
+### Upgrade notes
+- Enabled legacy Zapret profiles must select their actual WAN interfaces in
+  LuCI. There is no automatic migration of removed selector options. Existing
+  disabled Zapret defaults remain safe to upgrade.
+- Configurations without an explicit `proxy_guard_enabled` option now enable
+  the guard. Set it to `0` to keep it disabled.
+- Generated-file checks detect absent/empty outputs, not arbitrary content
+  corruption or every possible full-storage failure.
+- The LAN-client strategy tester is planned separately and is not included.
+
 ## [0.7.0] - 2026-10-23
 
 ### Added

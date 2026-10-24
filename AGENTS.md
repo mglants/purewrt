@@ -273,7 +273,7 @@ mask — always derive it from `c.Settings.FwMark`/`FwMarkMask`.
 
 ## Adaptive proxy guard must not rewrite user filters
 
-The opt-in proxy guard detects throttled/unstable mihomo members with bounded
+The default-enabled proxy guard detects throttled/unstable mihomo members with bounded
 real-transfer probes and stores its measurements/quarantines only in
 `<RuntimeDir>/proxy-guard.json`. It must never write a quarantine into UCI or
 replace a section/DNS/mesh `proxy_exclude_filter`.
@@ -366,3 +366,13 @@ Keep the private resolver mount namespace: using router DNS would mix WAN
 measurements with the router's DNS/proxy path. Cron and LuCI must both call
 `purewrt ooni-run` so locking, cleanup and per-WAN homes stay consistent.
 See `docs/ooni-multi-wan.md`; empty WAN selection requires no mwan3 support.
+
+## Zapret generated packets must retain their outgoing interface
+
+Production nfqws2, the strategy tester, and blockcheck use `--bind-fix4
+--bind-fix6`. Without these native flags, generated fakes can follow the
+default WAN even when the original socket is bound to another device.
+An isolated IPv4 capture verified all three WANs with the flags; IPv6 has
+not been packet-tested. This does not depend on mwan3. Blockcheck receives
+the flags through upstream `PKTWS_EXTRA_PRE`; `NFQWS2` selects its executable
+(`PKTWSD` is an upstream process label, not the executable override).

@@ -104,7 +104,6 @@ func subscriptionExpiryLines(c config.Config) []string {
 
 func (m Manager) Doctor() string {
 	c, _ := m.Load()
-	c = ResolveZapretProfileInterfaces(c)
 	mwanMask, _ := (system.Runner{}).Run("uci", "-q", "get", "mwan3.globals.mmx_mask")
 	conflict, msg := generator.MarkConflict(c, strings.TrimSpace(mwanMask))
 	deps := system.CheckDependencies("dnsmasq", "nft", "ip", "mihomo")
@@ -114,7 +113,7 @@ func (m Manager) Doctor() string {
 	}
 	var zapretLines []string
 	for _, p := range c.EnabledZapretProfiles() {
-		zapretLines = append(zapretLines, fmt.Sprintf("%s: mode=%s network=%s interfaces=%s", p.Name, p.InterfaceMode, p.Network, strings.Join(p.Interfaces, ",")))
+		zapretLines = append(zapretLines, fmt.Sprintf("%s: interfaces=%s", p.Name, strings.Join(p.Interfaces, ",")))
 	}
 	if len(zapretLines) == 0 {
 		zapretLines = append(zapretLines, "none")

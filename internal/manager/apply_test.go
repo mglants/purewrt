@@ -175,6 +175,10 @@ func TestApplyMihomoOnlyChangeHotReloadsNotRestart(t *testing.T) {
 	dir := t.TempDir()
 	c, staged, backup := applyTestConfig(t, dir)
 	live := applyTestLivePaths(dir)
+	// A cached group has outputs from the preceding successful generation.
+	if err := generator.WriteAllTo(c, live); err != nil {
+		t.Fatal(err)
+	}
 	r := &fakeRunner{}
 	reloaded := false
 	m := Manager{
@@ -205,6 +209,10 @@ func TestApplyMihomoFallsBackToRestartWhenControllerDown(t *testing.T) {
 	dir := t.TempDir()
 	c, staged, backup := applyTestConfig(t, dir)
 	live := applyTestLivePaths(dir)
+	// A cached group has outputs from the preceding successful generation.
+	if err := generator.WriteAllTo(c, live); err != nil {
+		t.Fatal(err)
+	}
 	r := &fakeRunner{}
 	m := Manager{
 		mihomoReachable: func(config.Config) bool { return false },
@@ -224,6 +232,10 @@ func TestApplyMihomoFallsBackToRestartWhenReloadErrors(t *testing.T) {
 	dir := t.TempDir()
 	c, staged, backup := applyTestConfig(t, dir)
 	live := applyTestLivePaths(dir)
+	// A cached group has outputs from the preceding successful generation.
+	if err := generator.WriteAllTo(c, live); err != nil {
+		t.Fatal(err)
+	}
 	r := &fakeRunner{}
 	m := Manager{
 		mihomoReachable: func(config.Config) bool { return true },
@@ -319,6 +331,10 @@ func TestApplyFirewallOnlyChangeReloadsFirewallOnly(t *testing.T) {
 	c, staged, backup := applyTestConfig(t, dir)
 	c.DNS.HijackLANDNS = true
 	live := applyTestLivePaths(dir)
+	// A cached group has outputs from the preceding successful generation.
+	if err := generator.WriteAllTo(c, live); err != nil {
+		t.Fatal(err)
+	}
 	r := &fakeRunner{}
 	gen := generator.GenerationResult{DirtyGroups: generator.GenerationGroups{Firewall: true}, Reason: "test firewall only"}
 	if err := (Manager{}).applyWithRunnerPaths(c, backup, staged, live, gen, r); err != nil {
@@ -341,6 +357,10 @@ func TestApplyNoDirtyGroupsSkipsCommands(t *testing.T) {
 	dir := t.TempDir()
 	c, staged, backup := applyTestConfig(t, dir)
 	live := applyTestLivePaths(dir)
+	// A cached group has outputs from the preceding successful generation.
+	if err := generator.WriteAllTo(c, live); err != nil {
+		t.Fatal(err)
+	}
 	r := &fakeRunner{}
 	gen := generator.GenerationResult{DirtyGroups: generator.GenerationGroups{}, Reason: "all groups unchanged"}
 	if err := (Manager{}).applyWithRunnerPaths(c, backup, staged, live, gen, r); err != nil {
@@ -447,6 +467,10 @@ func TestApplyNoDirtyGroupsStillTouchesLastAppliedMarker(t *testing.T) {
 	dir := t.TempDir()
 	c, staged, backup := applyTestConfig(t, dir)
 	live := applyTestLivePaths(dir)
+	// A cached group has outputs from the preceding successful generation.
+	if err := generator.WriteAllTo(c, live); err != nil {
+		t.Fatal(err)
+	}
 	gen := generator.GenerationResult{Reason: "fingerprint match"}
 	if err := (Manager{}).applyWithRunnerPaths(c, backup, staged, live, gen, &fakeRunner{}); err != nil {
 		t.Fatal(err)

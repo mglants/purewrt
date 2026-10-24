@@ -19,7 +19,7 @@
 //      output:"…"}` envelope from rpcd is surfaced as a 'danger' toast and
 //      does NOT abort the chain (we still want to attempt the apply even
 //      if the upstream update timed out).
-//   3. Final success message is fired exactly once at the end of the
+//   3. Final success is shown only when every step succeeds in the
 //      chain. Failure messages are fired inline as each step rejects.
 //
 // Usage:
@@ -40,6 +40,7 @@ return baseclass.extend({
       // aborting the chain (mirrors the existing inline behaviour where
       // a failed update still falls through to try the reload).
       var p = Promise.resolve(null);
+      var failed = false;
       (steps || []).forEach(function(step) {
         p = p.then(function() {
           return step.fn().then(function(r) {
@@ -47,16 +48,19 @@ return baseclass.extend({
             // bg_job async helpers, and {result:"ok"|"failed", output}
             // from rpcd-wrapped CLI calls.
             if (r && r.ok === false) {
+              failed = true;
               ui.addNotification(null,
                 fmt.errorDetails(_('%s failed (rc=%s)').format(step.label, r.rc), r.output),
                 'danger');
             } else if (r && r.result === 'failed') {
+              failed = true;
               ui.addNotification(null,
                 fmt.errorDetails(_('%s failed').format(step.label), r.output),
                 'danger');
             }
             return r;
           }, function(err) {
+            failed = true;
             ui.addNotification(null,
               E('p', _('%s timed out: %s').format(step.label, err && err.message ? err.message : String(err))),
               'danger');
@@ -67,7 +71,7 @@ return baseclass.extend({
         });
       });
       return p.then(function() {
-        ui.addNotification(null, E('p', doneMsg), 'info');
+        if (!failed) ui.addNotification(null, E('p', doneMsg), 'info');
       });
     }).catch(function(err) {
       // m.save() rejection means form validation or UCI write failure.

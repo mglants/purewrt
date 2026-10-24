@@ -67,6 +67,7 @@ function makeInitialState() {
     ipv6WanInterfaces: wanList,     // [] = autodetect at apply time
     ipv6WanDetected: [],            // populated in load() from network.getNetworks()
     dohChoice: 'cloudflare',        // cloudflare | google | quad9 | none
+    proxyGuard: (uci.get('purewrt', 'settings', 'proxy_guard_enabled') || '1') === '1',
     autoUpdate: (uci.get('purewrt', 'settings', 'auto_update_enabled') || '1') === '1',
     autoUpdateCron: uci.get('purewrt', 'settings', 'auto_update_cron') || '17 */6 * * *',
     mihomoAutoUpdate: (uci.get('purewrt', 'settings', 'mihomo_auto_update_enabled') || '0') === '1',
@@ -982,6 +983,9 @@ function renderStep6() {
   });
   cronInput.addEventListener('input', function() { state.autoUpdateCron = cronInput.value; });
 
+  var guardChk = E('input', { 'type': 'checkbox', 'checked': state.proxyGuard ? 'checked' : null });
+  guardChk.addEventListener('change', function() { state.proxyGuard = guardChk.checked; });
+
   var dashChk = E('input', { 'type': 'checkbox', 'checked': state.dashboard ? 'checked' : null });
   dashChk.addEventListener('change', function() { state.dashboard = dashChk.checked; });
 
@@ -991,7 +995,12 @@ function renderStep6() {
   mihomoCronInput.addEventListener('input', function() { state.mihomoAutoUpdateCron = mihomoCronInput.value; });
 
   return E('div', { 'class': 'purewrt-card' }, [
-    E('h3', {}, _('Updates & dashboard')),
+    E('h3', {}, _('Updates, proxy guard & dashboard')),
+    E('div', { 'style': 'margin:.75em 0' }, [
+      E('label', { 'style': 'display:flex;gap:.5em;align-items:center' }, [ guardChk, E('strong', {}, _('Adaptive proxy guard')) ]),
+      E('p', { 'class': 'purewrt-text-dim', 'style': 'margin:.25em 0 .5em 1.5em' }, _('Enabled by default. Checks proxy and friend mesh exits every five minutes and temporarily avoids slow or unstable members for new connections. Bounded throughput probes consume some data quota.'))
+    ]),
+    E('hr', { 'style': 'opacity:.2' }),
     E('div', { 'style': 'margin:.75em 0' }, [
       E('label', { 'style': 'display:flex;gap:.5em;align-items:center' }, [ updateChk, E('strong', {}, _('Auto-update subscriptions + rule providers')) ]),
       E('p', { 'class': 'purewrt-text-dim', 'style': 'margin:.25em 0 .5em 1.5em' }, _('Cron runs `purewrt update-if-needed` on the schedule below. Failed downloads retry 3 times with backoff.')),
@@ -1112,6 +1121,7 @@ function renderStep8() {
     [ _('Resource profile'), state.profile ],
     [ _('IPv6'),         state.ipv6 ? _('Enabled') : _('Disabled (+ filter-aaaa, wan6 down)') ],
     [ _('Bootstrap DNS'), state.dohChoice ],
+    [ _('Adaptive proxy guard'), state.proxyGuard ? _('On') : _('Off') ],
     [ _('Auto-update'),  state.autoUpdate ? state.autoUpdateCron : _('Off') ],
     [ _('Mihomo auto-update'), state.mihomoAutoUpdate ? state.mihomoAutoUpdateCron : _('Off') ],
     [ _('Dashboard'),    state.dashboard ? _('Enabled') : _('Disabled') ],
@@ -1189,6 +1199,7 @@ function runApply() {
   uci.set('purewrt', 'settings', 'ipv6_mode', 'auto');
   uci.set('purewrt', 'settings', 'bootstrap_doh_enabled', doh.enabled);
   uci.set('purewrt', 'settings', 'bootstrap_doh_resolver', doh.urls);
+  uci.set('purewrt', 'settings', 'proxy_guard_enabled', state.proxyGuard ? '1' : '0');
   uci.set('purewrt', 'settings', 'auto_update_enabled', state.autoUpdate ? '1' : '0');
   uci.set('purewrt', 'settings', 'auto_update_cron', state.autoUpdateCron || '17 */6 * * *');
   // The existing uci.apply() below triggers the init script's

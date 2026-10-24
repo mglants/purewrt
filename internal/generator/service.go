@@ -532,7 +532,7 @@ func generatedPathsComplete(c config.Config, paths GeneratedPaths) bool {
 		if path == "" {
 			return false
 		}
-		if info, err := os.Stat(path); err != nil || info.IsDir() {
+		if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
 			return false
 		}
 	}
@@ -540,7 +540,7 @@ func generatedPathsComplete(c config.Config, paths GeneratedPaths) bool {
 		return false
 	}
 	if len(FirewallRules(c)) > 0 {
-		if info, err := os.Stat(paths.FirewallFile); err != nil || info.IsDir() {
+		if info, err := os.Stat(paths.FirewallFile); err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
 			return false
 		}
 	}

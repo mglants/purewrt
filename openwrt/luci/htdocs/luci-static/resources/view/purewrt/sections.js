@@ -359,7 +359,11 @@ return view.extend({
     m.handleSaveApply = function(ev, mode) {
       return m.save(null, mode).then(function() {
         return callReload();
-      }).then(function() {
+      }).then(function(r) {
+        if (r && r.result === 'failed') {
+          ui.addNotification(null, E('p', _('Apply failed: %s').format(r.output || '')), 'danger');
+          return;
+        }
         ui.addNotification(null, E('p', _('Routing sections saved and PureWRT applied')), 'info');
       });
     };

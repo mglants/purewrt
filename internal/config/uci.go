@@ -323,9 +323,6 @@ func applySection(c *Config, x struct {
 			name = "wan"
 		}
 		p := ZapretProfile{Name: name, Enabled: b(x.opts, "enabled", true)}
-		p.Network = one(x.opts, "network", "auto")
-		p.Device = one(x.opts, "device", "")
-		p.InterfaceMode = one(x.opts, "interface_mode", "")
 		p.Interfaces = list(x.opts, "interface", nil)
 		p.QueueNum = i(x.opts, "queue_num", 0)
 		p.TPWSPort = i(x.opts, "tpws_port", 0)

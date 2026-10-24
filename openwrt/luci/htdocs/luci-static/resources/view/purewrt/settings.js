@@ -166,8 +166,8 @@ return view.extend({
       description: _('Per-run download/upload size for the scheduled probe. Smaller bounds quota; ~2 MiB default. Each tick moves ~this down + half up.') });
     ncBytes.depends('net_check_enabled', '1');
 
-    var pgEnabled = addRow(netcheck, form.Flag, 'proxy_guard_enabled', _('Adaptive proxy guard'), { default: '0',
-      description: _('Detect throttled or unstable mihomo members and temporarily exclude them from new connections. Off by default because real throughput probes consume quota.') });
+    var pgEnabled = addRow(netcheck, form.Flag, 'proxy_guard_enabled', _('Adaptive proxy guard'), { default: '1',
+      description: _('Detect throttled or unstable mihomo members and temporarily exclude them from new connections. Enabled by default. Bounded throughput probes consume some data quota.') });
     var pgCron = addRow(netcheck, form.Value, 'proxy_guard_cron', _('Guard schedule (cron)'), { default: '*/5 * * * *',
       validate: fmt.validateCron });
     pgCron.depends('proxy_guard_enabled', '1');
