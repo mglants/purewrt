@@ -55,11 +55,11 @@ func TestZapretUpstreamConfigEmitsCustomBlobs(t *testing.T) {
 			t.Fatalf("compiled options missing %s", flag)
 		}
 	}
-	wantBlob := "--blob=tls_google:@" + config.CanonicalBlobPath("tls_clienthello_google_com_tlsrec.bin")
+	wantBlob := "--blob=pw_10000_tls_google:@" + config.CanonicalBlobPath("tls_clienthello_google_com_tlsrec.bin")
 	if !strings.Contains(out, wantBlob) {
 		t.Fatalf("missing %q in:\n%s", wantBlob, out)
 	}
-	if !strings.Contains(out, "--blob=myhex:0x1603010000") {
+	if !strings.Contains(out, "--blob=pw_10000_myhex:0x1603010000") {
 		t.Fatalf("missing myhex blob decl in:\n%s", out)
 	}
 	if strings.Contains(out, "0xDEAD") {
@@ -118,10 +118,9 @@ func TestZapretUpstreamConfigJoinsProfilesWithNew(t *testing.T) {
 		},
 	)
 	out := string(ZapretUpstreamConfig(c))
-	// One --new between each profile (and the lua-init bundle counts as the
-	// first profile too, so 2 strategies + lua-init = 2 --new separators).
-	if got := strings.Count(out, "--new"); got != 2 {
-		t.Fatalf("--new count = %d, want 2, in:\n%s", got, out)
+	// Global options precede the first selector-scoped profile.
+	if got := strings.Count(out, "--new"); got != 1 {
+		t.Fatalf("--new count = %d, want 1, in:\n%s", got, out)
 	}
 	if !strings.Contains(out, "--filter-tcp=443") {
 		t.Fatal("expected --filter-tcp=443 for tcp_tls strategy")

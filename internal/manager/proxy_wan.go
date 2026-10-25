@@ -105,8 +105,17 @@ func resolveProxyWANs(c config.Config, r commandRunner) (config.Config, error) {
 			return c, fmt.Errorf("proxy WAN %q has no unique active mwan3 mark/table for %s", name, devs[0])
 		}
 		m := found[0]
-		if uint64(m.mask)&pureMask != 0 || m.mask&0x40000000 != 0 {
+		if uint64(m.mask)&pureMask != 0 {
 			return c, fmt.Errorf("proxy WAN %q mark mask overlaps PureWRT routing marks", name)
+		}
+		for _, p := range c.EnabledZapretProfiles() {
+			mark, ok := parseHexMark(p.FwMark)
+			if !ok || mark == 0 {
+				return c, fmt.Errorf("zapret profile %q has invalid fwmark %q", p.Name, p.FwMark)
+			}
+			if uint64(m.mask)&mark != 0 {
+				return c, fmt.Errorf("proxy WAN %q mask 0x%x overlaps zapret profile %q mark %s", name, m.mask, p.Name, p.FwMark)
+			}
 		}
 		if used[m.mark] {
 			return c, fmt.Errorf("proxy WAN %q duplicates another selected WAN mark", name)

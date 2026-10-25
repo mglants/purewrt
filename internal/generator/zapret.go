@@ -17,32 +17,61 @@ func ZapretEnv(c config.Config) []byte {
 	} else {
 		b.WriteString("0\n")
 	}
-	var names []string
-	for _, inst := range instances {
-		names = append(names, shellQuote(inst.strategy.Name))
+	if len(instances) == 0 {
+		b.WriteString("PUREWRT_ZAPRET_INSTANCE_COUNT=\"0\"\n")
+		return []byte(b.String())
 	}
-	b.WriteString("PUREWRT_ZAPRET_INSTANCES=\"" + strings.Join(names, " ") + "\"\n")
-	catalog := zapretCatalogBlobFiles()
-	for i, inst := range instances {
-		p := inst.profile
-		zs := inst.strategy
-		prefix := fmt.Sprintf("PUREWRT_ZAPRET_INSTANCE_%d_", i)
-		b.WriteString(prefix + "NAME=\"" + shellEscape(zs.Name) + "\"\n")
-		b.WriteString(prefix + "PROFILE=\"" + shellEscape(p.Name) + "\"\n")
-		b.WriteString(prefix + "QUEUE=\"" + itoa(zs.QueueNum) + "\"\n")
-		b.WriteString(prefix + "FWMARK=\"" + shellEscape(p.FwMark) + "\"\n")
-		b.WriteString(prefix + "NFQWS=\"" + shellEscape(p.NFQWSBin) + "\"\n")
-		b.WriteString(prefix + "PARAMS=\"" + shellEscape(zs.Params) + "\"\n")
-		// Each nfqws instance must be told about the fake blobs its params
-		// reference (--lua-desync=fake:blob=NAME). Without this the daemon logs
-		// "LUA ERROR: blob 'NAME' unavailable" and passes packets unmodified —
-		// the desync silently no-ops. Auto-derived from the params (+ any
-		// explicit profile decls), so it works no matter how the strategy was
-		// created (tester apply, editor preset, blockcheck, manual edit).
-		b.WriteString(prefix + "BLOBS=\"" + shellEscape(strings.TrimSpace(zapretInstanceBlobFlags(inst, catalog))) + "\"\n")
+	p := instances[0].profile
+	params, blobs := zapretSharedParams(instances)
+	b.WriteString("PUREWRT_ZAPRET_INSTANCES=\"shared\"\nPUREWRT_ZAPRET_INSTANCE_COUNT=\"1\"\n")
+	fields := [][2]string{{"NAME", "shared"}, {"PROFILE", "shared"}, {"QUEUE", itoa(config.ZapretQueueBase)}, {"FWMARK", p.FwMark}, {"NFQWS", p.NFQWSBin}, {"PARAMS", params}, {"BLOBS", blobs}}
+	for _, field := range fields {
+		fmt.Fprintf(&b, "PUREWRT_ZAPRET_INSTANCE_0_%s=\"%s\"\n", field[0], shellEscape(field[1]))
 	}
-	b.WriteString("PUREWRT_ZAPRET_INSTANCE_COUNT=\"" + itoa(len(instances)) + "\"\n")
 	return []byte(b.String())
+}
+
+// Each assignment retains its own filters, including every TCP/UDP --new
+// clause. Blob aliases are namespaced because nfqws declarations are global.
+func zapretSharedParams(instances []zapretInstance) (string, string) {
+	var profiles, blobs []string
+	catalog := zapretCatalogBlobFiles()
+	for _, inst := range instances {
+		params := zapretProfileClause(inst.strategy)
+		aliases := map[string]string{}
+		for _, flag := range strings.Fields(zapretInstanceBlobFlags(inst, catalog)) {
+			name, value, ok := strings.Cut(strings.TrimPrefix(flag, "--blob="), ":")
+			if !ok {
+				continue
+			}
+			alias := fmt.Sprintf("pw_%x_%s", inst.strategy.SelectorMark, name)
+			aliases[name] = alias
+			blobs = append(blobs, "--blob="+alias+":"+value)
+		}
+		tokens := strings.Fields(params)
+		selector := fmt.Sprintf("--filter-mark=0x%x/0x%x", inst.strategy.SelectorMark, config.ZapretSelectorMask)
+		out := []string{selector}
+		for _, token := range tokens {
+			// Classification belongs to PureWRT, never to a library entry.
+			if strings.HasPrefix(token, "--filter-mark=") {
+				continue
+			}
+			if token == "--new" {
+				out = append(out, token, selector)
+				continue
+			}
+			segments := strings.Split(token, ":")
+			for i, segment := range segments {
+				key, value, ok := strings.Cut(segment, "=")
+				if ok && (key == "blob" || key == "seqovl_pattern") && aliases[value] != "" {
+					segments[i] = key + "=" + aliases[value]
+				}
+			}
+			out = append(out, strings.Join(segments, ":"))
+		}
+		profiles = append(profiles, strings.Join(out, " "))
+	}
+	return strings.Join(profiles, " --new "), strings.Join(blobs, " ")
 }
 
 type zapretInstance struct {
@@ -80,27 +109,8 @@ func shellEscape(s string) string { return strings.ReplaceAll(s, "\"", "\\\"") }
 
 func shellQuote(s string) string { return strings.ReplaceAll(s, " ", "_") }
 
-// ZapretUpstreamConfig compiles the enabled UCI zapret_strategy sections into
-// the single-NFQWS2_OPT upstream-format representation (what upstream zapret2's
-// init.d would source from /opt/zapret2/config). PureWRT does NOT write this
-// file — it runs nfqws per-instance from its own env via
-// /etc/init.d/purewrt-zapret. This is used only for the read-only
-// "Show compiled NFQWS2_OPT" preview and the `zapret-compiled-opt` CLI: a
-// human-readable overview of all strategies as one command line.
-//
-// Shape:
-//
-//	NFQWS2_ENABLE=1
-//	NFQWS2_OPT="--lua-init=@<lua>/zapret-lib.lua --lua-init=@<lua>/zapret-antidpi.lua \
-//	            --lua-init=@<lua>/zapret-auto.lua \
-//	            <strategy-1 protocol/port + params> --new \
-//	            <strategy-2 protocol/port + params> --new \
-//	            ..."
-//
-// Each enabled strategy becomes one `--new`-separated profile. nfqws2
-// evaluates profiles in order; PureWRT's nftables hook is what selects
-// which traffic enters the NFQUEUE, so the per-profile filter only has to
-// distinguish protocol/port — no --ipset= / --hostlist= clauses needed.
+// ZapretUpstreamConfig previews the shared daemon's profiles, selectors and
+// namespaced blobs. The service launches the equivalent parameters from env.
 func ZapretUpstreamConfig(c config.Config) []byte {
 	instances := zapretInstances(c)
 	var b strings.Builder
@@ -117,13 +127,8 @@ func ZapretUpstreamConfig(c config.Config) []byte {
 	// plus --ctrack-disable=0 to keep nfqws2's connection tracking ON. L7
 	// detection (--filter-l7, MTProto) silently no-ops without ctrack, and
 	// it's harmless for non-L7 strategies — so always enable it in the head.
-	clauses := []string{
-		zapretLuaInit(luaDir) + " --bind-fix4 --bind-fix6 --ctrack-disable=0" + zapretBlobFlags(instances),
-	}
-	for _, inst := range instances {
-		clauses = append(clauses, zapretProfileClause(inst.strategy))
-	}
-	opt := strings.Join(filterEmpty(clauses), " --new ")
+	params, blobs := zapretSharedParams(instances)
+	opt := zapretLuaInit(luaDir) + " --bind-fix4 --bind-fix6 --ctrack-disable=0 " + blobs + " " + params
 
 	b.WriteString("NFQWS2_ENABLE=1\n")
 	fmt.Fprintf(&b, "NFQWS2_OPT=\"%s\"\n", shellEscape(opt))
@@ -155,27 +160,8 @@ func zapretLuaInit(luaDir string) string {
 	return strings.Join(parts, " ")
 }
 
-// zapretBlobFlags renders custom blob declarations for the global head. Blobs
-// are global to the single nfqws2 daemon, so we union them across every enabled
-// profile and dedup by name (the part before the first ':'). Each entry is the
-// raw nfqws2 form "name:@/path" or "name:0xHEX". Entries that are empty, lack a
-// name:value shape, or contain whitespace (which would split the --blob arg)
-// are skipped. Returns a leading-space string ("" when there are none).
-func zapretBlobFlags(instances []zapretInstance) string {
-	catalog := zapretCatalogBlobFiles()
-	seen := map[string]bool{}
-	var parts []string
-	for _, inst := range instances {
-		parts = appendInstanceBlobFlags(parts, seen, inst, catalog)
-	}
-	if len(parts) == 0 {
-		return ""
-	}
-	return " " + strings.Join(parts, " ")
-}
-
 // zapretInstanceBlobFlags renders the --blob= decls for ONE instance — used by
-// ZapretEnv to give each per-instance nfqws launch exactly the blobs it needs.
+// the shared compiler before namespacing each assignment's blob aliases.
 // Leading-space string ("" when none).
 func zapretInstanceBlobFlags(inst zapretInstance, catalog map[string]string) string {
 	parts := appendInstanceBlobFlags(nil, map[string]bool{}, inst, catalog)
@@ -191,6 +177,7 @@ func zapretInstanceBlobFlags(inst zapretInstance, catalog map[string]string) str
 // catalog. Auto-derivation is why blobs work regardless of how the strategy was
 // created — no UI path has to remember to declare them.
 func appendInstanceBlobFlags(parts []string, seen map[string]bool, inst zapretInstance, catalog map[string]string) []string {
+	parts = appendBlobFlags(parts, seen, inst.strategy.LibraryBlobs)
 	parts = appendBlobFlags(parts, seen, inst.profile.Blobs)
 	for _, name := range zapretParamBlobNames(inst.strategy.Params) {
 		if seen[name] || zapretBuiltinBlobs[name] {
@@ -285,7 +272,7 @@ func ZapretRequiredBlobFiles(c config.Config) []string {
 	catalog := zapretCatalogBlobFiles()
 	for _, inst := range zapretInstances(c) {
 		// Explicit profile decls (file-backed only).
-		for _, raw := range inst.profile.Blobs {
+		for _, raw := range append(append([]string(nil), inst.profile.Blobs...), inst.strategy.LibraryBlobs...) {
 			entry := strings.TrimSpace(raw)
 			if entry == "" || strings.ContainsAny(entry, " \t\r\n\"") {
 				continue

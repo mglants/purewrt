@@ -208,7 +208,7 @@ func currentGenerationFingerprint(c config.Config) (generationFingerprint, error
 	if err != nil {
 		return generationFingerprint{}, err
 	}
-	return generationFingerprint{Version: 3, Hash: fmt.Sprintf("%x", h[:]), Groups: groups, GeneratedAt: time.Now().UTC(), Inputs: in}, nil
+	return generationFingerprint{Version: 4, Hash: fmt.Sprintf("%x", h[:]), Groups: groups, GeneratedAt: time.Now().UTC(), Inputs: in}, nil
 }
 
 func generationGroupHashes(c config.Config, in generationFingerprintInput) (map[string]string, error) {
@@ -219,9 +219,9 @@ func generationGroupHashes(c config.Config, in generationFingerprintInput) (map[
 	proxyProviders := c.ProxyProviders
 	groups := map[string]any{
 		"mihomo":         map[string]any{"proxy_wan_enabled": c.Mwan3.ProxyWANEnabled, "proxy_wans": c.Mwan3.ProxyWANs, "resolved_proxy_wans": c.Mwan3.ResolvedProxyWANs, "settings": in.Settings, "dns": in.DNS, "sections": in.Sections, "proxy_providers": proxyProviders, "rule_providers": in.RuleProvider, "vpns": in.VPNs, "mesh": in.Mesh, "mesh_peers": in.MeshPeers},
-		"openwrt_bundle": map[string]any{"settings": in.Settings, "dns": in.DNS, "sections": openWrtSections, "rule_providers": in.RuleProvider, "bypass": in.Bypass, "vpns": in.VPNs, "devices": in.Devices, "zapret": in.Zapret, "ooni": in.OONI, "mesh_nft": meshNFTFP(in.Mesh)},
+		"openwrt_bundle": map[string]any{"settings": in.Settings, "dns": in.DNS, "sections": openWrtSections, "rule_providers": in.RuleProvider, "bypass": in.Bypass, "vpns": in.VPNs, "devices": in.Devices, "zapret": in.Zapret, "zapret_strategies": in.ZapretStrategies, "ooni": in.OONI, "mesh_nft": meshNFTFP(in.Mesh)},
 		"firewall":       map[string]any{"dns_hijack": c.DNS.HijackLANDNS, "lan_source_zones": c.Settings.LANSourceZones, "fwmark": c.Settings.FwMark, "fwmark_mask": c.Settings.FwMarkMask, "mesh": in.Mesh},
-		"zapret":         map[string]any{"zapret": in.Zapret, "sections": openWrtSections},
+		"zapret":         map[string]any{"zapret": in.Zapret, "zapret_strategies": in.ZapretStrategies, "sections": openWrtSections},
 		"policy":         map[string]any{"settings": in.Settings, "vpns": in.VPNs, "devices": in.Devices, "sections": openWrtSections},
 		"mesh":           map[string]any{"mesh": in.Mesh, "mesh_peers": in.MeshPeers},
 		"easytier":       map[string]any{"easytier": easytierFP(c)},

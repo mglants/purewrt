@@ -16,6 +16,8 @@ var embeddedZapretCandidates []byte
 
 // ZapretCandidatesPath is the on-disk override the purewrt-lists fetch writes
 // (and users may hand-edit). Takes precedence over the embedded baseline.
+const ZapretUserCandidatesPath = "/etc/purewrt/zapret_user_candidates.json"
+
 const ZapretCandidatesPath = "/etc/purewrt/zapret_candidates.json"
 
 // ZapretCandidatesDir is where fetched blob decoys are cached.
@@ -56,6 +58,7 @@ func CanonicalBlobPath(file string) string {
 // games; empty or "generic" is a wildcard tried in every service-scoped sweep).
 type ZapretCandidate struct {
 	Name      string          `json:"name"`
+	Origin    string          `json:"origin,omitempty"`
 	ISP       string          `json:"isp"`               // "common" | ISP label, e.g. "Rostelecom (RU)"
 	Service   string          `json:"service,omitempty"` // "" | "generic" | "youtube" | "discord" | "games"
 	Protocols []string        `json:"protocols"`
@@ -76,6 +79,7 @@ type ZapretBlobRef struct {
 	Name   string `json:"name"`
 	File   string `json:"file"`
 	SHA256 string `json:"sha256,omitempty"`
+	Hex    string `json:"hex,omitempty"`
 }
 
 // ZapretCandidateList is the zapret_candidates.json root.
@@ -87,7 +91,7 @@ type ZapretCandidateList struct {
 // ZapretCandidatesPath (purewrt-lists fetch cache, or hand-edited) if present
 // and non-empty, else the embedded baseline. Never fails — a missing or
 // malformed override falls back to the embed.
-func LoadZapretCandidates() ZapretCandidateList {
+func LoadZapretCatalog() ZapretCandidateList {
 	if data, err := os.ReadFile(ZapretCandidatesPath); err == nil {
 		var l ZapretCandidateList
 		if json.Unmarshal(data, &l) == nil && len(l.Candidates) > 0 {
@@ -103,4 +107,29 @@ func EmbeddedZapretCandidates() ZapretCandidateList {
 	var l ZapretCandidateList
 	_ = json.Unmarshal(embeddedZapretCandidates, &l)
 	return l
+}
+
+// User entries live separately, so catalog refresh never overwrites them.
+func LoadZapretCandidates() ZapretCandidateList {
+	list := LoadZapretCatalog()
+	for i := range list.Candidates {
+		list.Candidates[i].Origin = "catalog"
+	}
+	if data, err := os.ReadFile(ZapretUserCandidatesPath); err == nil && len(data) <= 1<<20 {
+		var users ZapretCandidateList
+		if json.Unmarshal(data, &users) == nil {
+			seen := map[string]bool{}
+			for _, c := range list.Candidates {
+				seen[c.Name] = true
+			}
+			for _, c := range users.Candidates {
+				if !seen[c.Name] {
+					c.Origin = "user"
+					list.Candidates = append(list.Candidates, c)
+					seen[c.Name] = true
+				}
+			}
+		}
+	}
+	return list
 }

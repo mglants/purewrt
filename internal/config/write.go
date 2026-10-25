@@ -52,11 +52,13 @@ func Serialize(c Config) []byte {
 	writeMain(&b, c.Settings)
 	writeDNS(&b, c.DNS)
 	writeMwan3(&b, c.Mwan3)
-	for _, p := range c.ZapretProfiles {
-		writeZapretProfile(&b, p, seen)
-	}
-	for _, s := range c.ZapretStrategies {
-		writeZapretStrategy(&b, s, seen)
+	for _, app := range c.ZapretApplications {
+		if sectionHeader(&b, "zapret_strategy", prefixZapretStrat, app.Name, seen) {
+			opt(&b, "name", app.Name)
+		}
+		optb(&b, "enabled", app.Enabled)
+		listv(&b, "assignment", app.Assignments)
+		fmt.Fprintln(&b)
 	}
 	for _, v := range c.VPNs {
 		writeVPN(&b, v, seen)
@@ -461,39 +463,6 @@ func writeMwan3(b *bytes.Buffer, m Mwan3) {
 	fmt.Fprintln(b)
 }
 
-func writeZapretProfile(b *bytes.Buffer, p ZapretProfile, seen map[string]bool) {
-	if sectionHeader(b, "zapret_profile", prefixZapretProfile, p.Name, seen) {
-		opt(b, "name", p.Name)
-	}
-	optb(b, "enabled", p.Enabled)
-	listv(b, "interface", p.Interfaces)
-	opt(b, "fwmark", p.FwMark)
-	opt(b, "nfqws_bin", p.NFQWSBin)
-	opt(b, "tpws_bin", p.TPWSBin)
-	optNonEmpty(b, "lua_bundle_dir", p.LuaBundleDir)
-	listv(b, "blob", p.Blobs)
-	fmt.Fprintln(b)
-}
-
-func writeZapretStrategy(b *bytes.Buffer, s ZapretStrategy, seen map[string]bool) {
-	if sectionHeader(b, "zapret_strategy", prefixZapretStrat, s.Name, seen) {
-		opt(b, "name", s.Name)
-	}
-	optb(b, "enabled", s.Enabled)
-	opt(b, "profile", s.Profile)
-	opt(b, "preset", s.Preset)
-	opti(b, "queue_num", s.QueueNum)
-	listv(b, "protocols", s.Protocols)
-	opt(b, "tcp_ports", s.TCPPorts)
-	opt(b, "udp_ports", s.UDPPorts)
-	opti(b, "tcp_pkt_out", s.TCPPktOut)
-	opti(b, "tcp_pkt_in", s.TCPPktIn)
-	opti(b, "udp_pkt_out", s.UDPPktOut)
-	opti(b, "udp_pkt_in", s.UDPPktIn)
-	opt(b, "params", s.Params)
-	fmt.Fprintln(b)
-}
-
 func writeVPN(b *bytes.Buffer, v VPN, seen map[string]bool) {
 	if sectionHeader(b, "vpn", prefixVPN, v.Name, seen) {
 		opt(b, "name", v.Name)
@@ -545,7 +514,11 @@ func writeSection(b *bytes.Buffer, s Section, seen map[string]bool) {
 	opt(b, "udp_mode", s.UDPMode)
 	opti(b, "priority", s.Priority)
 	listv(b, "vpns", s.VPNs)
-	listv(b, "zapret_strategy", s.ZapretStrategies)
+	if s.ZapretApplicationNames != nil {
+		listv(b, "zapret_strategy", s.ZapretApplicationNames)
+	} else {
+		listv(b, "zapret_strategy", s.ZapretStrategies)
+	}
 	listv(b, "source_cidr4", s.SourceCIDR4)
 	listv(b, "source_cidr6", s.SourceCIDR6)
 	fmt.Fprintln(b)

@@ -22,8 +22,7 @@ func TestWizardResetPreservesAndFlushes(t *testing.T) {
 	c.Settings.AutoUpdateCron = "0 0 * * *"
 	// Stuff that must be preserved.
 	c.VPNs = []config.VPN{{Name: "wg0", Enabled: true, Interface: "wg0"}}
-	c.ZapretProfiles = []config.ZapretProfile{{Name: "custom", Enabled: true, Interfaces: []string{"wan"}}}
-	c.ZapretStrategies = []config.ZapretStrategy{{Name: "myst", Enabled: true, Profile: "custom", Params: "--foo"}}
+	c.ZapretApplications = []config.ZapretApplication{{Name: "myst", Enabled: true, Assignments: []string{"wan=youtube_combined"}}}
 	c.Settings.Secret = "my-real-secret-token"
 	c.Settings.MihomoBin = "/etc/purewrt/mihomo-bin/mihomo-alpha-abc123"
 	c.Settings.MihomoVersion = "alpha-abc123"
@@ -57,11 +56,8 @@ func TestWizardResetPreservesAndFlushes(t *testing.T) {
 	if len(got.VPNs) != 1 || got.VPNs[0].Name != "wg0" {
 		t.Fatalf("VPNs not preserved: %+v", got.VPNs)
 	}
-	if len(got.ZapretProfiles) != 1 || got.ZapretProfiles[0].Name != "custom" {
-		t.Fatalf("zapret profiles not preserved: %+v", got.ZapretProfiles)
-	}
-	if len(got.ZapretStrategies) != 1 || got.ZapretStrategies[0].Name != "myst" {
-		t.Fatalf("zapret strategies not preserved: %+v", got.ZapretStrategies)
+	if len(got.ZapretApplications) != 1 || got.ZapretApplications[0].Name != "myst" {
+		t.Fatal("Zapret application not preserved", got.ZapretApplications)
 	}
 	if got.Settings.Secret != "my-real-secret-token" {
 		t.Fatalf("secret not preserved: %q", got.Settings.Secret)

@@ -53,6 +53,11 @@ func (m Manager) ZapretCheckStrategyWithOptionsWriter(domain string, opt ZapretC
 }
 
 func (m Manager) zapretCheckStrategyWithOptions(hostsArg string, opt ZapretCheckOptions, w io.Writer) (string, error) {
+	lock, lockErr := system.TryAcquire(clientTestPath(".lock"))
+	if lockErr != nil {
+		return "", fmt.Errorf("another Zapret test is running: %w", lockErr)
+	}
+	defer lock.Close()
 	// hostsArg is one or more whitespace-separated domains. A single host is
 	// the classic manual blockcheck; 2+ makes blockcheck2.sh emit a "* COMMON"
 	// block (the intersection strategy that works for every host) — this is

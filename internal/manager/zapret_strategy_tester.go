@@ -88,6 +88,11 @@ type ZapretStrategyTestResult struct {
 // state is torn down on every exit path.
 func (m Manager) ZapretStrategyTest(opt ZapretStrategyTestOptions) (ZapretStrategyTestResult, error) {
 	res := ZapretStrategyTestResult{Strategy: strings.TrimSpace(opt.CmdOpts)}
+	lock, lockErr := system.TryAcquire(clientTestPath(".lock"))
+	if lockErr != nil {
+		return res, fmt.Errorf("another Zapret test is running: %w", lockErr)
+	}
+	defer lock.Close()
 	cmdOpts := strings.Fields(strings.TrimSpace(opt.CmdOpts))
 	if len(cmdOpts) == 0 {
 		return res, fmt.Errorf("strategy cmd_opts is required")
@@ -188,11 +193,18 @@ func (m Manager) ZapretStrategyTest(opt ZapretStrategyTestOptions) (ZapretStrate
 	// Resolve blobs → --blob= decls.
 	var blobArgs []string
 	for _, b := range opt.Blobs {
-		path, err := zapretResolveBlobFn(m, b.File, b.SHA256)
+		var path string
+		var err error
+		if b.Hex != "" {
+			path, err = m.zapretBlobValue(b)
+		} else {
+			path, err = zapretResolveBlobFn(m, b.File, b.SHA256)
+			path = "@" + path
+		}
 		if err != nil {
 			return res, fmt.Errorf("resolve blob %s: %w", b.File, err)
 		}
-		blobArgs = append(blobArgs, "--blob="+b.Name+":@"+path)
+		blobArgs = append(blobArgs, "--blob="+b.Name+":"+path)
 	}
 
 	// Launch nfqws2 on the test queue.
@@ -248,7 +260,7 @@ func (m Manager) ZapretStrategyTest(opt ZapretStrategyTestOptions) (ZapretStrate
 // call (which times out the XHR on a full nfqws probe). Results are unsorted
 // (completion order); rank at display.
 func (m Manager) ZapretStrategySweepStream(iface string, sites []string, isp, service, name string, download bool, emit func(ZapretStrategyTestResult)) {
-	list := config.LoadZapretCandidates()
+	list := m.ZapretCandidates()
 	for _, c := range zapretSelectCandidates(list.Candidates, isp, service) {
 		if name != "" && c.Name != name {
 			continue

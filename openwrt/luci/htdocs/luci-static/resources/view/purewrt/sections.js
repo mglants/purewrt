@@ -527,9 +527,9 @@ return view.extend({
       return E('div', { 'style': 'display:flex;align-items:center;flex-wrap:wrap;gap:.25em' }, [ widget, addBtn ]);
     };
 
-    var zapretStrategies = s.option(form.DynamicList, 'zapret_strategy', _('Zapret strategies'));
+    var zapretStrategies = s.option(form.DynamicList, 'zapret_strategy', _('Zapret applications'));
     zapretStrategies.depends('action', 'zapret');
-    zapretStrategies.description = _('One or more Zapret strategies applied to this routing section. Configure strategy details on the Zapret page.');
+    zapretStrategies.description = _('Select applications once; their WAN-specific library strategies are configured on the Zapret page.');
     uci.sections('purewrt', 'zapret_strategy').forEach(function(section) {
       var name = naming.nameOf(section, 'zapret_strategy');
 

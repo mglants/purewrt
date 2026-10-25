@@ -1404,6 +1404,18 @@ var commands = []command{
 			}
 			fatal(err)
 		}},
+	{name: "zapret-library", group: "Zapret (DPI bypass)", desc: "Manage user strategy library and blobs (JSON on stdin)", run: func(m manager.Manager) {
+		data, err := io.ReadAll(io.LimitReader(os.Stdin, (256<<10)+1))
+		fatal(err)
+		if len(data) > 256<<10 {
+			fatal(fmt.Errorf("library request too large"))
+		}
+		var req manager.ZapretLibraryRequest
+		fatal(json.Unmarshal(data, &req))
+		result, err := m.ZapretLibrary(req)
+		fatal(err)
+		printJSON(result)
+	}},
 	{name: "zapret-candidates", group: "Zapret (DPI bypass)",
 		args: "[--update]",
 		desc: "Print (optionally refresh) the strategy candidate list",
@@ -1413,8 +1425,36 @@ var commands = []command{
 			if len(os.Args) > 2 && os.Args[2] == "--update" {
 				fatal(m.FetchZapretCandidates())
 			}
-			printJSON(config.LoadZapretCandidates())
+			printJSON(m.ZapretCandidates())
 		}},
+	{name: "zapret-client-run", group: "Zapret (DPI bypass)",
+		args: "<client-ip> <mac> <wan-device> <candidate> [extra-candidate] [manual-parameters]",
+		desc: "Temporarily test a LAN client through Zapret (five minutes)",
+		run: func(m manager.Manager) {
+			need(6)
+			o := manager.ZapretClientOptions{IP: os.Args[2], MAC: os.Args[3], Interface: os.Args[4], Candidate: os.Args[5]}
+			if len(os.Args) > 6 {
+				o.Extra = os.Args[6]
+			}
+			if len(os.Args) > 7 {
+				o.Manual = os.Args[7]
+			}
+			fatal(m.ZapretClientRun(o))
+		}},
+	{name: "zapret-client-switch", group: "Zapret (DPI bypass)", args: "<candidate> [extra-candidate] [manual-parameters]", desc: "Switch an active client test strategy without restoring routing", run: func(m manager.Manager) {
+		need(3)
+		extra := ""
+		if len(os.Args) > 3 {
+			extra = os.Args[3]
+		}
+		manual := ""
+		if len(os.Args) > 4 {
+			manual = os.Args[4]
+		}
+		fatal(m.ZapretClientSwitch(os.Args[2], extra, manual))
+	}},
+	{name: "zapret-client-status", group: "Zapret (DPI bypass)", desc: "Read client test status", run: func(m manager.Manager) { printJSON(m.ZapretClientStatus()) }},
+	{name: "zapret-client-stop", group: "Zapret (DPI bypass)", desc: "Stop the client test and restore routing", run: func(m manager.Manager) { fatal(m.ZapretClientStop()) }},
 	{name: "zapret-strategy-test", group: "Zapret (DPI bypass)",
 		args: "<candidate> [iface] [--download] [--suite=dpi] [site...]",
 		desc: "Probe one desync strategy candidate",
@@ -1422,7 +1462,7 @@ var commands = []command{
 			// zapret-strategy-test <candidate-name> [iface] [--download] [site...] —
 			// probe one candidate through real nfqws2 desync; emits per-site verdicts.
 			need(3)
-			list := config.LoadZapretCandidates()
+			list := m.ZapretCandidates()
 			var cand *config.ZapretCandidate
 			for i := range list.Candidates {
 				if list.Candidates[i].Name == os.Args[2] {

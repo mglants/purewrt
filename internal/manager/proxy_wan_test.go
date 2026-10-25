@@ -71,3 +71,20 @@ func TestProxyWANRejectsUnresolvedSelections(t *testing.T) {
 		})
 	}
 }
+
+func TestProxyWANChecksConfiguredZapretMarks(t *testing.T) {
+	c, r := wanFixture()
+	c.ZapretProfiles = []config.ZapretProfile{{Name: "custom", Enabled: true, FwMark: "0x20000100"}}
+	if _, e := resolveProxyWANs(c, r); e == nil || !strings.Contains(e.Error(), "zapret") {
+		t.Fatalf("expected custom Zapret conflict, got %v", e)
+	}
+	c.ZapretProfiles[0].Enabled = false
+	if _, e := resolveProxyWANs(c, r); e != nil {
+		t.Fatal(e)
+	}
+	c.ZapretProfiles[0].Enabled = true
+	c.ZapretProfiles[0].FwMark = "0x20000000"
+	if _, e := resolveProxyWANs(c, r); e != nil {
+		t.Fatal(e)
+	}
+}

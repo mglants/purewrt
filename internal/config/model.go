@@ -92,21 +92,22 @@ func DefaultDoH3BlockIPs6() []string {
 }
 
 type Config struct {
-	Settings         Settings
-	DNS              DNS
-	Mwan3            Mwan3
-	ZapretProfiles   []ZapretProfile
-	ZapretStrategies []ZapretStrategy
-	VPNs             []VPN
-	Devices          []Device
-	Sections         []Section
-	Subscriptions    []Subscription
-	ProxyProviders   []ProxyProvider
-	RuleProviders    []RuleProvider
-	Bypass           Bypass
-	OONI             OONI
-	Mesh             Mesh
-	MeshPeers        []MeshPeer
+	Settings           Settings
+	DNS                DNS
+	Mwan3              Mwan3
+	ZapretApplications []ZapretApplication
+	ZapretProfiles     []ZapretProfile
+	ZapretStrategies   []ZapretStrategy
+	VPNs               []VPN
+	Devices            []Device
+	Sections           []Section
+	Subscriptions      []Subscription
+	ProxyProviders     []ProxyProvider
+	RuleProviders      []RuleProvider
+	Bypass             Bypass
+	OONI               OONI
+	Mesh               Mesh
+	MeshPeers          []MeshPeer
 }
 
 type Settings struct {
@@ -376,20 +377,26 @@ type ZapretProfile struct {
 	Blobs []string
 }
 
+const ZapretSelectorMask uint32 = 0x00ff0000
+
 type ZapretStrategy struct {
-	Name      string
-	Enabled   bool
-	Profile   string
-	QueueNum  int
-	Protocols []string
-	TCPPorts  string
-	UDPPorts  string
-	TCPPktOut int
-	TCPPktIn  int
-	UDPPktOut int
-	UDPPktIn  int
-	Preset    string
-	Params    string
+	SelectorMark uint32 // runtime-only application/WAN selector
+
+	LibraryBlobs []string // resolved in memory; never serialized to UCI
+	Candidate    string   // library reference; empty retains legacy custom parameters
+	Name         string
+	Enabled      bool
+	Profile      string
+	QueueNum     int
+	Protocols    []string
+	TCPPorts     string
+	UDPPorts     string
+	TCPPktOut    int
+	TCPPktIn     int
+	UDPPktOut    int
+	UDPPktIn     int
+	Preset       string
+	Params       string
 }
 
 // VPN is a tunnel interface mihomo can egress through. Routing is done by
@@ -436,6 +443,7 @@ type Section struct {
 	UDPMode                  string
 	Priority                 int
 	VPNs                     []string // VPN names whose interfaces join this section's proxy pool
+	ZapretApplicationNames   []string // persisted application names before runtime expansion
 	ZapretStrategies         []string
 	SourceCIDR4              []string
 	SourceCIDR6              []string
@@ -674,11 +682,9 @@ func DefaultMesh() Mesh {
 
 func Default() Config {
 	return Config{
-		Settings:         Settings{ConfigVersion: 1, Enabled: true, Workdir: DefaultWorkdir, RuntimeDir: DefaultRuntimeDir, DNSMasqIncludeDir: "", MihomoBin: "/usr/bin/mihomo", MihomoConfig: DefaultMihomoConfig, MihomoAllowLAN: false, ExternalController: "127.0.0.1:9090", Secret: "auto-generated-secret", DNSBackend: "dnsmasq", FirewallBackend: "nftables", FwMark: "0x1", FwMarkMask: "0xff", RouteTable: "100", IPRulePriority: "100", IPv6: true, DNSListen: "127.0.0.1:7874", AutoReload: true, SafeApply: true, RollbackOnFail: true, BackupRetention: 3, ApplyBackupMaxBytes: 0, MihomoChannel: "alpha", MihomoReleaseAPI: "https://api.github.com/repos/MetaCubeX/mihomo/releases/tags/Prerelease-Alpha", MihomoStableReleaseAPI: "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest", MihomoMixinEnabled: false, MihomoAutoUpdateEnabled: false, MihomoAutoUpdateCron: "23 4 * * *", NetCheckEnabled: false, NetCheckCron: "", NetCheckBytes: 2 << 20, ProxyGuardEnabled: true, ProxyGuardCron: "*/5 * * * *", ProxyGuardMinMembers: 3, ProxyGuardMinDownKbps: 2000, ProxyGuardProbeBytes: 1 << 20, ProxyGuardMaxJitterMS: 250, ProxyGuardActiveProbeInterval: 1800, ProxyGuardFleetProbeInterval: 21600, ProxyGuardQuarantineSeconds: 1800, MihomoGeodataEnabled: false, UpdateViaProxy: false, UpdateProxyURL: "http://127.0.0.1:7890", UpdateConcurrency: 2, AutoUpdateEnabled: true, AutoUpdateCron: "17 */6 * * *", ReloadAfterUpdate: true, BackgroundUpdates: true, BootUpdateDelay: 0, UpdateNice: 19, UpdateIONiceClass: 3, UpdateIONiceLevel: 7, DashboardEnabled: true, DashboardListen: "0.0.0.0:9090", DashboardPath: "/etc/purewrt/dashboard", DashboardURL: "https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip", DashboardName: "metacubexd", DefaultListsBaseURL: "https://github.com/mglants/purewrt-lists/releases/latest/download/", ResourceProfile: "standard", CacheMode: "auto", CacheDir: "", ArtifactCacheMode: "auto", ArtifactCacheMaxBytes: 16777216, ArtifactCacheMaxEntries: 50000, RuleDedupMode: "auto", LogLevel: "warn", BootstrapDoHEnabled: true, BootstrapDoHResolvers: DefaultBootstrapDoHResolvers(), BootstrapDoHTimeoutMs: 8000, BootstrapProxyFallback: true, BootstrapTLSFingerprint: "browser", IPv6Mode: "auto", IPv6RejectWhenOff: false, RouterOutputProxy: true, CgroupV2Path: "services/mihomo", LANSourceZones: []string{"lan"}},
-		DNS:              DNS{Enabled: true, Backend: "dnsmasq", UpstreamMode: "mihomo", HijackLANDNS: true, BlockDoT: true, BlockDoH3: true, BlockDoQ: true, DoH3BlockIPs4: DefaultDoH3BlockIPs4(), DoH3BlockIPs6: DefaultDoH3BlockIPs6(), DoHPolicy: "proxy", Listen: "127.0.0.1:7874", EnhancedMode: "redir-host", ProxyGroupType: "url-test", ProxyStrategy: "sticky-sessions", DoHUpstreams: []string{"https://dns.google/dns-query#DNSProxy", "https://cloudflare-dns.com/dns-query#DNSProxy", "https://dns.quad9.net/dns-query#DNSProxy"}, UDPUpstreams: []string{"77.88.8.8#DIRECT", "77.88.8.1#DIRECT"}, FallbackUpstreams: []string{"https://common.dot.dns.yandex.net/dns-query#DIRECT"}, FallbackDomains: []string{"+.ru", "+.su", "+.xn--p1ai"}},
-		Mwan3:            Mwan3{},
-		ZapretProfiles:   []ZapretProfile{{Name: "wan", Enabled: false, Interfaces: []string{"wan"}, FwMark: "0x40000000", NFQWSBin: "/usr/libexec/zapret/nfqws2", TPWSBin: "/usr/libexec/zapret/tpws", LuaBundleDir: "/usr/libexec/zapret/lua"}},
-		ZapretStrategies: []ZapretStrategy{{Name: "youtube_tcp", Enabled: false, Profile: "wan", Protocols: []string{"tcp"}, TCPPorts: "443", TCPPktOut: 15, TCPPktIn: 6, Preset: "youtube_tcp", Params: "--filter-tcp=443 --payload=tls_client_hello --lua-desync=fake:blob=fake_default_tls:tcp_md5:ip_autottl=-2,3-20:ip6_autottl=-2,3-20 --lua-desync=multisplit:pos=midsld"}, {Name: "youtube_quic", Enabled: false, Profile: "wan", Protocols: []string{"udp"}, UDPPorts: "443", UDPPktOut: 9, UDPPktIn: 0, Preset: "youtube_quic", Params: "--filter-udp=443 --payload=quic_initial --lua-desync=fake:blob=fake_default_quic:repeats=6:ip_autottl=-2,3-20:ip6_autottl=-2,3-20"}},
+		Settings: Settings{ConfigVersion: 1, Enabled: true, Workdir: DefaultWorkdir, RuntimeDir: DefaultRuntimeDir, DNSMasqIncludeDir: "", MihomoBin: "/usr/bin/mihomo", MihomoConfig: DefaultMihomoConfig, MihomoAllowLAN: false, ExternalController: "127.0.0.1:9090", Secret: "auto-generated-secret", DNSBackend: "dnsmasq", FirewallBackend: "nftables", FwMark: "0x1", FwMarkMask: "0xff", RouteTable: "100", IPRulePriority: "100", IPv6: true, DNSListen: "127.0.0.1:7874", AutoReload: true, SafeApply: true, RollbackOnFail: true, BackupRetention: 3, ApplyBackupMaxBytes: 0, MihomoChannel: "alpha", MihomoReleaseAPI: "https://api.github.com/repos/MetaCubeX/mihomo/releases/tags/Prerelease-Alpha", MihomoStableReleaseAPI: "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest", MihomoMixinEnabled: false, MihomoAutoUpdateEnabled: false, MihomoAutoUpdateCron: "23 4 * * *", NetCheckEnabled: false, NetCheckCron: "", NetCheckBytes: 2 << 20, ProxyGuardEnabled: true, ProxyGuardCron: "*/5 * * * *", ProxyGuardMinMembers: 3, ProxyGuardMinDownKbps: 2000, ProxyGuardProbeBytes: 1 << 20, ProxyGuardMaxJitterMS: 250, ProxyGuardActiveProbeInterval: 1800, ProxyGuardFleetProbeInterval: 21600, ProxyGuardQuarantineSeconds: 1800, MihomoGeodataEnabled: false, UpdateViaProxy: false, UpdateProxyURL: "http://127.0.0.1:7890", UpdateConcurrency: 2, AutoUpdateEnabled: true, AutoUpdateCron: "17 */6 * * *", ReloadAfterUpdate: true, BackgroundUpdates: true, BootUpdateDelay: 0, UpdateNice: 19, UpdateIONiceClass: 3, UpdateIONiceLevel: 7, DashboardEnabled: true, DashboardListen: "0.0.0.0:9090", DashboardPath: "/etc/purewrt/dashboard", DashboardURL: "https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip", DashboardName: "metacubexd", DefaultListsBaseURL: "https://github.com/mglants/purewrt-lists/releases/latest/download/", ResourceProfile: "standard", CacheMode: "auto", CacheDir: "", ArtifactCacheMode: "auto", ArtifactCacheMaxBytes: 16777216, ArtifactCacheMaxEntries: 50000, RuleDedupMode: "auto", LogLevel: "warn", BootstrapDoHEnabled: true, BootstrapDoHResolvers: DefaultBootstrapDoHResolvers(), BootstrapDoHTimeoutMs: 8000, BootstrapProxyFallback: true, BootstrapTLSFingerprint: "browser", IPv6Mode: "auto", IPv6RejectWhenOff: false, RouterOutputProxy: true, CgroupV2Path: "services/mihomo", LANSourceZones: []string{"lan"}},
+		DNS:      DNS{Enabled: true, Backend: "dnsmasq", UpstreamMode: "mihomo", HijackLANDNS: true, BlockDoT: true, BlockDoH3: true, BlockDoQ: true, DoH3BlockIPs4: DefaultDoH3BlockIPs4(), DoH3BlockIPs6: DefaultDoH3BlockIPs6(), DoHPolicy: "proxy", Listen: "127.0.0.1:7874", EnhancedMode: "redir-host", ProxyGroupType: "url-test", ProxyStrategy: "sticky-sessions", DoHUpstreams: []string{"https://dns.google/dns-query#DNSProxy", "https://cloudflare-dns.com/dns-query#DNSProxy", "https://dns.quad9.net/dns-query#DNSProxy"}, UDPUpstreams: []string{"77.88.8.8#DIRECT", "77.88.8.1#DIRECT"}, FallbackUpstreams: []string{"https://common.dot.dns.yandex.net/dns-query#DIRECT"}, FallbackDomains: []string{"+.ru", "+.su", "+.xn--p1ai"}},
+		Mwan3:    Mwan3{},
 		// VPNs starts empty — the LuCI Sections page + VPN modal handle
 		// the no-VPN-configured case cleanly (empty dropdown / "add VPN"
 		// prompt). Shipping a placeholder `config vpn 'vpn'` led to users
@@ -780,8 +786,9 @@ func (c Config) NormalizeZapretStrategyAt(s ZapretStrategy, index int) ZapretStr
 	if s.Profile == "" {
 		s.Profile = "wan"
 	}
-	if s.QueueNum == 0 && index >= 0 {
-		s.QueueNum = ZapretQueueBase + index
+	s.QueueNum = ZapretQueueBase
+	if s.SelectorMark == 0 && index >= 0 {
+		s.SelectorMark = uint32(index+1) << 16
 	}
 	if len(s.Protocols) == 0 {
 		s.Protocols = []string{"tcp"}

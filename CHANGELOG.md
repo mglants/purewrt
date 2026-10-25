@@ -4,6 +4,46 @@ All notable changes to PureWRT are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are the `purewrt`
 package version.
 
+## [0.9.0] - 2026-10-25
+
+### Added
+- Five-minute LAN-client Zapret tests with a selected WAN, combined TCP/UDP
+  candidates, live strategy switching, and Previous/Next rotation. Stop, timeout
+  and failure cleanup restore routing; timed memberships bound interrupted tests.
+- Local strategy library with parameter previews, JSON import/export, custom
+  blob uploads, validation and nfqws2 dry-run checks.
+- Manual LAN-client strategies: paste TCP/UDP parameters, test and switch without
+  saving first, then optionally add the tested result to routing.
+- Application-level WAN assignments: select an application in a routing section
+  and assign different library strategies to its WANs. Test results can stage
+  the tested WAN assignment without creating runtime profiles or copying presets.
+
+### Changed
+- Production Zapret uses one shared nfqws2 daemon and queue, with private selectors
+  for application/WAN strategies and isolated blob aliases. Client tests retain
+  a separate temporary daemon.
+- Removed user-configured runtime profiles, inline routing parameters and queue
+  overrides. Applications reference the strategy library directly.
+
+### Fixed
+- Preserve routing marks and validate selector conflicts even when multi-WAN
+  proxy generation is disabled. Zapret remains independent of mwan3.
+- Restart Zapret when its generated environment changes, including rollback.
+- Honor routing-section priority for router-originated Zapret traffic.
+- Report client-test Stop failures and allow cleanup retry after worker errors.
+- Include the user strategy library and uploaded blobs in OpenWrt sysupgrade
+  backups when configuration preservation is enabled.
+
+### Upgrade notes
+- Active old Zapret configurations require explicit conversion to application
+  WAN assignments; there is no compatibility loader or automatic migration.
+- Routers without Zapret, including old disabled defaults, remain supported.
+- Unassigned WANs receive no Zapret processing and no automatic proxy fallback.
+- Client tests are IPv4-only and temporarily block the selected client's IPv6
+  internet forwarding. Shared-daemon live verification covers IPv4 HTTPS and
+  controlled WAN failover, not IPv6, forwarded voice or sustained throughput.
+- See [Zapret setup, testing and backup instructions](docs/zapret.md).
+
 ## [0.8.0] - 2026-10-24
 
 ### Added

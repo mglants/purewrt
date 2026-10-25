@@ -50,8 +50,7 @@ func TestConfigRoundTripPreservesKeyFields(t *testing.T) {
 	c.DNS.FakeIP = true
 	c.DNS.FallbackUpstreams = []string{"https://common.dot.dns.yandex.net/dns-query#DIRECT"}
 	c.DNS.FallbackDomains = []string{"+.ru", "+.su", "+.xn--p1ai"}
-	c.ZapretProfiles = []ZapretProfile{{Name: "wan_a", Enabled: true, Interfaces: []string{"wan_a"}, FwMark: "0x40000001", NFQWSBin: "/usr/bin/nfqws", TPWSBin: "/usr/bin/tpws"}}
-	c.ZapretStrategies = []ZapretStrategy{{Name: "zap_a", Enabled: true, Profile: "wan_a", QueueNum: 201, Protocols: []string{"tcp", "udp"}, TCPPorts: "443", UDPPorts: "443", TCPPktOut: 15, TCPPktIn: 6, UDPPktOut: 9, UDPPktIn: 3, Preset: "custom", Params: "--strategy-a"}}
+	c.ZapretApplications = []ZapretApplication{{Name: "zap_a", Enabled: true, Assignments: []string{"wan_a=youtube_combined"}}}
 	c.Subscriptions = []Subscription{{Name: "sub", Enabled: true, URL: "https://example.com/sub.yaml", Mode: "auto", PresetIfNoRules: "minimal", ImportRulesOnLowResource: true, AutoApply: true, Interval: 123, HWID: "sub-hwid", DeviceName: "router", UserAgent: "sub-agent", Headers: []string{"X-Sub: yes"}}}
 	c.ProxyProviders = []ProxyProvider{{Name: "pp", Enabled: true, Type: "http", URL: "https://example.com/pp.yaml", Interval: 456, Path: "/tmp/pp.yaml", HealthCheck: true, HealthCheckURL: "https://example.com/204", HealthCheckInterval: 30, HWID: "pp-hwid", DeviceName: "pp-device", UserAgent: "pp-agent", Headers: []string{"X-PP: yes"}}}
 	c.RuleProviders = []RuleProvider{{Name: "rp", Enabled: true, Behavior: "domain", Format: "text", ParseMode: "native_import", URL: "https://example.com/rp.txt", Interval: 789, Path: "/tmp/rp.txt", Section: "common", UserAgent: "rp-agent", Headers: []string{"X-RP: yes"}}}
@@ -80,8 +79,11 @@ func TestConfigRoundTripPreservesKeyFields(t *testing.T) {
 	// Safe identifiers become named sections (id carries the name); names
 	// with dashes/dots fall back to anonymous + option name — that case is
 	// covered by TestSerializeFallsBackToAnonymousForUnsafeIDs.
-	if !strings.Contains(string(written), "config zapret_profile 'zp_wan_a'") {
+	if !strings.Contains(string(written), "config zapret_strategy 'zs_zap_a'") {
 		t.Fatalf("zapret profile with safe id must serialize as a named section, got:\n%s", written)
+	}
+	if err := c.CompileZapretApplications(LoadZapretCandidates()); err != nil {
+		t.Fatal(err)
 	}
 	got, err := Load(path)
 	if err != nil {
@@ -93,11 +95,8 @@ func TestConfigRoundTripPreservesKeyFields(t *testing.T) {
 	if !reflect.DeepEqual(got.DNS, c.DNS) {
 		t.Fatalf("dns mismatch\ngot:  %#v\nwant: %#v", got.DNS, c.DNS)
 	}
-	if !reflect.DeepEqual(got.ZapretProfiles, c.ZapretProfiles) {
-		t.Fatalf("zapret profiles mismatch\ngot:  %#v\nwant: %#v", got.ZapretProfiles, c.ZapretProfiles)
-	}
-	if !reflect.DeepEqual(got.ZapretStrategies, c.ZapretStrategies) {
-		t.Fatalf("zapret strategies mismatch\ngot:  %#v\nwant: %#v", got.ZapretStrategies, c.ZapretStrategies)
+	if !reflect.DeepEqual(got.ZapretApplications, c.ZapretApplications) {
+		t.Fatal("application round trip mismatch")
 	}
 	if !reflect.DeepEqual(got.Subscriptions, c.Subscriptions) {
 		t.Fatalf("subscriptions mismatch\ngot:  %#v\nwant: %#v", got.Subscriptions, c.Subscriptions)

@@ -31,11 +31,7 @@ func stubZapretStatusSeams(t *testing.T, procs map[int]int, counters map[string]
 
 func zapretStatusTestConfig() config.Config {
 	c := config.Default()
-	c.ZapretProfiles = []config.ZapretProfile{{Name: "wan", Enabled: true, FwMark: "0x40000000", NFQWSBin: "/usr/bin/nfqws"}}
-	c.ZapretStrategies = []config.ZapretStrategy{
-		{Name: "yt", Enabled: true, Profile: "wan", QueueNum: 200, Params: "--filter-tcp=443"},
-		{Name: "dc", Enabled: true, Profile: "wan", QueueNum: 201, Params: "--filter-udp=443"},
-	}
+	c.ZapretApplications = []config.ZapretApplication{{Name: "yt", Enabled: true, Assignments: []string{"wan=youtube_combined"}}, {Name: "dc", Enabled: true, Assignments: []string{"wan=discord_combined"}}}
 	c.Sections = []config.Section{
 		{Name: "Youtube", Enabled: true, Action: "zapret", IPv4Enabled: true, Priority: 10, ZapretStrategies: []string{"yt"}},
 		{Name: "Discord", Enabled: true, Action: "zapret", IPv4Enabled: true, Priority: 20, ZapretStrategies: []string{"dc"}},
@@ -45,7 +41,7 @@ func zapretStatusTestConfig() config.Config {
 }
 
 func TestZapretStatusRunningInstances(t *testing.T) {
-	// Only queue 200 has a live nfqws; 201 is down.
+	// All applications share the process listening on queue 200.
 	stubZapretStatusSeams(t, map[int]int{200: 3415}, map[string]nftCounter{
 		"dns_proxy_Youtube4": {Packets: 110, Bytes: 27306},
 		"proxy_Youtube4":     {Packets: 5, Bytes: 200},
@@ -56,19 +52,20 @@ func TestZapretStatusRunningInstances(t *testing.T) {
 	if !s.Running {
 		t.Fatal("expected Running=true (queue 200 up)")
 	}
-	if s.RoutedSections != 2 || s.EnabledStrategies != 2 || s.EnabledProfiles != 1 {
-		t.Fatalf("counts: routed=%d strat=%d prof=%d, want 2/2/1", s.RoutedSections, s.EnabledStrategies, s.EnabledProfiles)
+	if s.RoutedSections != 2 || s.EnabledStrategies != 2 || s.EnabledProfiles != 2 {
+		t.Fatalf("counts: routed=%d strat=%d prof=%d, want 2/2/2", s.RoutedSections, s.EnabledStrategies, s.EnabledProfiles)
 	}
 	byStrat := map[string]ZapretInstanceStatus{}
 	for _, i := range s.Instances {
 		byStrat[i.Strategy] = i
 	}
-	if yt := byStrat["yt"]; !yt.Running || yt.PID != 3415 || yt.Queue != 200 {
+	if yt := byStrat["shared"]; !yt.Running || yt.PID != 3415 || yt.Queue != 200 {
 		t.Fatalf("yt instance = %+v, want running pid 3415 queue 200", yt)
 	}
-	if dc := byStrat["dc"]; dc.Running || dc.PID != 0 || dc.Queue != 201 {
-		t.Fatalf("dc instance = %+v, want not-running queue 201", dc)
+	if len(s.Instances) != 1 {
+		t.Fatalf("expected one shared instance: %+v", s.Instances)
 	}
+
 	// Youtube section aggregates proxy_ + dns_proxy_ (110+5 packets).
 	var ytPkts uint64
 	for _, sec := range s.Sections {

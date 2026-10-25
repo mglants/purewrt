@@ -2,6 +2,7 @@
 'require view';
 'require form';
 'require rpc';
+'require poll';
 'require ui';
 'require network';
 'require uci';
@@ -36,6 +37,7 @@ var callZapretRestart = rpc.declare({ object: 'purewrt', method: 'zapret_restart
 // Shared strategy candidate list (single source of truth — embed / /etc /
 // purewrt-lists, resolved by the CLI). Drives both the preset dropdown and the
 // strategy tester; replaces the old hardcoded ZAPRET_PRESETS.
+var callZapretLibrary = rpc.declare({ object: 'purewrt', method: 'zapret_library', params: ['body'] });
 var callZapretCandidates = rpc.declare({ object: 'purewrt', method: 'zapret_candidates', expect: { candidates: [] } });
 var callZapretCandidatesRefresh = rpc.declare({ object: 'purewrt', method: 'zapret_candidates_refresh' });
 var callZapretStatus = rpc.declare({ object: 'purewrt', method: 'zapret_status' });
@@ -43,8 +45,12 @@ var callZapretSweepStart = rpc.declare({ object: 'purewrt', method: 'zapret_stra
 var callZapretSweepStatus = rpc.declare({ object: 'purewrt', method: 'zapret_strategy_sweep_status', params: [ ] });
 
 // zapretPresets maps candidate name → its object (protocols/ports/pkt/params/
-// blobs), populated in render() from the fetched candidate list. applyPresetTo
-// reads it to fill the strategy-editor fields.
+// blobs), populated in render() for library references and previews.
+var callZapretClientSwitch = rpc.declare({ object: 'purewrt', method: 'zapret_client_switch', params: ['candidate', 'extra', 'manual'] });
+var callZapretClientStart = rpc.declare({ object: 'purewrt', method: 'zapret_client_start', params: ['ip', 'mac', 'interface', 'candidate', 'extra', 'manual'] });
+var callZapretClientStatus = rpc.declare({ object: 'purewrt', method: 'zapret_client_status' });
+var callZapretClientStop = rpc.declare({ object: 'purewrt', method: 'zapret_client_stop' });
+var callClientLeases = rpc.declare({ object: 'luci-rpc', method: 'getDHCPLeases' });
 var zapretPresets = {};
 
 // refreshStrategyCandidates is set by renderStrategyTesterCard to a function
@@ -54,128 +60,22 @@ var zapretPresets = {};
 // different part of the form from the tester closure it mutates.
 var refreshStrategyCandidates = null;
 
-// applyPresetTo uses each form option's widget instance to write the preset
-// values. The previous DOM-poking helpers (querySelectorAll on
-// `[data-widget-id]` / `[id$="..."]`) matched the wrapper DIVs instead of
-// the real input/select/cbi-dropdown elements, so changing the preset
-// silently did nothing in the LuCI modal. `option.getUIElement(sectionId)`
-// returns the widget object LuCI created for that section, which exposes a
-// `setValue` that handles inputs, dropdowns, and MultiValue uniformly.
-// setSimpleWidget writes to a plain <input>/<select>/<textarea> by its
-// LuCI widget id, then dispatches the events LuCI listens for so the form
-// model registers the change.
-function setSimpleWidget(sectionId, option, value) {
-  var el = document.querySelector('[id="widget.cbid.purewrt.' + sectionId + '.' + option + '"]');
-  if (!el) return false;
-  el.value = (value == null) ? '' : value;
-  el.dispatchEvent(new Event('input', { bubbles: true }));
-  el.dispatchEvent(new Event('change', { bubbles: true }));
-  return true;
-}
-
-// setMultiDropdown drives LuCI's cbi-dropdown widget (used by MultiValue):
-// it toggles the `selected` attribute on each <li data-value>, rewrites the
-// hidden input that holds the joined value, and dispatches a `widget-change`
-// event on the wrapper so the form model picks the new selection up. We
-// don't try to call the dropdown's own JS class — accessing it via
-// `findClassInstance` returns null after the section is moved into a modal.
-function setMultiDropdown(sectionId, option, values) {
-  var wrap = document.querySelector('[id="cbid.purewrt.' + sectionId + '.' + option + '"]');
-  if (!wrap) return false;
-  var want = {};
-  (values || []).forEach(function(v) { want[v] = true; });
-  var picked = [];
-  wrap.querySelectorAll('li[data-value]').forEach(function(li) {
-    var v = li.getAttribute('data-value');
-    if (want[v]) {
-      li.setAttribute('selected', '');
-      picked.push(v);
-    } else {
-      li.removeAttribute('selected');
-    }
-  });
-  var hidden = wrap.querySelector('input[type=hidden]');
-  if (hidden) hidden.value = picked.join(' ');
-  wrap.setAttribute('data-changed', 'true');
-  wrap.dispatchEvent(new CustomEvent('cbi-dropdown-change', { bubbles: true }));
-  wrap.dispatchEvent(new CustomEvent('widget-change', { bubbles: true }));
-  return true;
-}
-
-// applyPresetTo pushes the preset's values into each dependent field.
-// Uses direct DOM-by-id selectors rather than `option.getUIElement` because
-// the latter returns null once the section wrapper is moved into LuCI's
-// modal (the bound class instance gets detached).
-function applyPresetTo(sectionId, presetKey, fields) {
-  var data = zapretPresets[presetKey];
-  if (!data) return;
-  Object.keys(fields).forEach(function(key) {
-    var optName = fields[key];
-    if (!optName) return;
-    var val = data[key];
-    if (key === 'protocols')
-      setMultiDropdown(sectionId, optName, val);
-    else
-      setSimpleWidget(sectionId, optName, val);
-  });
-}
-
 // Use the same profile identity as strategy references, not its first device.
-function profileTitle(sid) {
-  return naming.displayName(sid, 'zapret_profile') || _('New profile');
-}
 
 function strategyTitle(sid) {
   return naming.displayName(sid, 'zapret_strategy') || _('New strategy');
 }
 
-function strategyProtocols(sid) {
-  var v = uci.get('purewrt', sid, 'protocols') || uci.get('purewrt', sid, 'protocol') || [ 'tcp' ];
 
-  if (!Array.isArray(v))
-    v = String(v).split(/\s+/);
 
-  return v.filter(function(x) { return x; }).join(', ') || 'tcp';
-}
-
-function strategyPorts(sid) {
-  var out = [];
-  var tcp = uci.get('purewrt', sid, 'tcp_ports');
-  var udp = uci.get('purewrt', sid, 'udp_ports');
-
-  if (tcp)
-    out.push('tcp:' + tcp);
-  if (udp)
-    out.push('udp:' + udp);
-
-  return out.join(' ') || '-';
-}
 
 function strategySummary(sid) {
-  var queue = uci.get('purewrt', sid, 'queue_num');
-
-  return [
-    strategyTitle(sid),
-    uci.get('purewrt', sid, 'preset') || 'custom',
-    uci.get('purewrt', sid, 'profile') || 'wan',
-    strategyProtocols(sid),
-    strategyPorts(sid),
-    queue && queue !== '0' ? queue : 'auto'
-  ];
+  var items = uci.get('purewrt', sid, 'assignment') || [];
+  if (!Array.isArray(items)) items = [items];
+  return [strategyTitle(sid), items.map(function(v) { return v.replace('=', ' → '); }).join('; ') || _('No WAN assignments')];
 }
 
-function profileSummary(sid, interfaces) {
-  return [
-    profileTitle(sid),
-    (interfaces || []).join(', ') || _('None selected'),
-    uci.get('purewrt', sid, 'fwmark') || 'auto'
-  ];
-}
 
-// Match a section by its rendered LuCI wrapper id (`cbi-<package>-<type>`).
-// The bare `data-section-type` attribute is NOT emitted by LuCI, so the old
-// `getAttribute('data-section-type')` filter rejected every node and tableSection
-// silently no-op'd. Walking up to the wrapper gives a reliable section-type test.
 function inWrapper(wrapperId) {
   return function(node) {
     var p = node.closest('.cbi-section');
@@ -323,68 +223,46 @@ function blockcheckVerdict(text, foundCount) {
   return '';
 }
 
-// stageStrategyFromParams stages (does NOT write) a zapret_strategy from one
-// blockcheck winner. It appears in LuCI's Unsaved Changes; Save & Apply
-// commits it. Protocols/ports come from the nfqws --filter-tcp/udp clause when
-// present, else from the card's protocol toggles. Returns the derived name.
-function stageStrategyFromParams(params, common, hostsLabel, protoDefaults) {
-  var sid = uci.add('purewrt', 'zapret_strategy');
-  var base = (common ? 'bc_common' : 'bc_' + (hostsLabel || 'host'));
-  base = base.replace(/[^A-Za-z0-9_]+/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '') || 'bc';
-  var existing = {};
-  uci.sections('purewrt', 'zapret_strategy').forEach(function(s) {
-    var n = naming.nameOf(s, 'zapret_strategy'); if (n) existing[n] = true;
-  });
+// Blockcheck winners are new library content, not copied routing parameters.
+function saveBlockcheckCandidate(params, common, hostsLabel, defaults) {
+  var base = 'user_' + (common ? 'bc_common' : 'bc_' + (hostsLabel || 'host'));
+  base = base.replace(/[^A-Za-z0-9_]+/g, '_').slice(0, 55);
   var name = base, i = 2;
-  while (existing[name]) { name = base + '_' + i; i++; }
-  uci.set('purewrt', sid, 'name', name);
-  uci.set('purewrt', sid, 'enabled', '1');
-  uci.set('purewrt', sid, 'profile', 'wan');
-  uci.set('purewrt', sid, 'preset', 'custom');
-  uci.set('purewrt', sid, 'params', params);
-  var protos = [], tcpPorts = '', udpPorts = '';
-  var mt = params.match(/--filter-tcp=(\S+)/); if (mt) { protos.push('tcp'); tcpPorts = mt[1]; }
-  var mu = params.match(/--filter-udp=(\S+)/); if (mu) { protos.push('udp'); udpPorts = mu[1]; }
-  if (!protos.length && protoDefaults) {
-    protos = protoDefaults.protocols || [];
-    tcpPorts = protoDefaults.tcp_ports || '';
-    udpPorts = protoDefaults.udp_ports || '';
+  while (zapretPresets[name]) name = base + '_' + i++;
+  var tcp = params.match(/--filter-tcp=(\S+)/), udp = params.match(/--filter-udp=(\S+)/);
+  var protocols = [], tcpPorts = tcp ? tcp[1] : '', udpPorts = udp ? udp[1] : '';
+  if (tcp) protocols.push('tcp'); if (udp) protocols.push('udp');
+  if (!protocols.length) {
+    protocols = defaults.protocols || [];
+    tcpPorts = defaults.tcp_ports || ''; udpPorts = defaults.udp_ports || '';
+    params = protocols.map(function(p) { return '--filter-' + p + '=' + (p === 'tcp' ? tcpPorts : udpPorts) + ' ' + params; }).join(' --new ');
   }
-  if (protos.length) uci.set('purewrt', sid, 'protocols', protos);
-  if (tcpPorts) uci.set('purewrt', sid, 'tcp_ports', tcpPorts);
-  if (udpPorts) uci.set('purewrt', sid, 'udp_ports', udpPorts);
-  return name;
-}
-
-// stageCandidate stages a full candidate (from the shared list) as a
-// zapret_strategy — its params/protocols/ports plus any blob decls added to
-// the wan profile's Custom-blobs list (pointing at the shipped fake dir; the
-// router's ResolveBlob prefers the shipped copy). Returns the staged name.
-function stageCandidate(cand) {
-  var sid = uci.add('purewrt', 'zapret_strategy');
-  var existing = {};
-  uci.sections('purewrt', 'zapret_strategy').forEach(function(s) { var n = naming.nameOf(s, 'zapret_strategy'); if (n) existing[n] = true; });
-  var name = cand.name, i = 2;
-  while (existing[name]) { name = cand.name + '_' + i; i++; }
-  uci.set('purewrt', sid, 'name', name);
-  uci.set('purewrt', sid, 'enabled', '1');
-  uci.set('purewrt', sid, 'profile', 'wan');
-  uci.set('purewrt', sid, 'preset', 'custom');
-  uci.set('purewrt', sid, 'params', cand.params);
-  if (cand.protocols && cand.protocols.length) uci.set('purewrt', sid, 'protocols', cand.protocols);
-  if (cand.tcp_ports) uci.set('purewrt', sid, 'tcp_ports', cand.tcp_ports);
-  if (cand.udp_ports) uci.set('purewrt', sid, 'udp_ports', cand.udp_ports);
-  (cand.blobs || []).forEach(function(b) {
-    if (!b.name || !b.file) return;
-    var decl = b.name + ':@/usr/libexec/zapret/files/fake/' + b.file;
-    uci.sections('purewrt', 'zapret_profile').forEach(function(p) {
-      var psid = p['.name'];
-      if (naming.nameOf(p, 'zapret_profile') !== 'wan') return;
-      var cur = uci.get('purewrt', psid, 'blob') || [];
-      if (!Array.isArray(cur)) cur = cur ? [cur] : [];
-      if (cur.indexOf(decl) < 0) { cur.push(decl); uci.set('purewrt', psid, 'blob', cur); }
+  var candidate = { name: name, isp: 'common', protocols: protocols, tcp_ports: tcpPorts, udp_ports: udpPorts, params: params, blobs: [] };
+  Object.keys(zapretPresets).forEach(function(key) {
+    (zapretPresets[key].blobs || []).forEach(function(b) {
+      if (params.indexOf('=' + b.name) >= 0 && !candidate.blobs.some(function(x) { return x.name === b.name; })) candidate.blobs.push(b);
     });
   });
+  return callZapretLibrary(JSON.stringify({ action: 'save', candidate: candidate })).then(function(r) {
+    if (r.error) throw new Error(r.error);
+    zapretPresets[name] = candidate;
+    return name;
+  });
+}
+
+// One application owns WAN-to-library references. Updating another WAN does
+// not create another application or duplicate strategy parameters.
+function stageCandidate(cand, device, displayName) {
+  if (!device) throw new Error(_('Select a WAN interface first.'));
+  var name = (displayName || cand.name).slice(0, 48);
+  var existing = uci.sections('purewrt', 'zapret_strategy').find(function(s) { return naming.nameOf(s, 'zapret_strategy') === name; });
+  var sid = existing ? existing['.name'] : uci.add('purewrt', 'zapret_strategy');
+  if (!existing) { uci.set('purewrt', sid, 'name', name); uci.set('purewrt', sid, 'enabled', '1'); }
+  var assignments = uci.get('purewrt', sid, 'assignment') || [];
+  if (!Array.isArray(assignments)) assignments = [assignments];
+  assignments = assignments.filter(function(v) { return v.split('=')[0] !== device; });
+  assignments.push(device + '=' + cand.name);
+  uci.set('purewrt', sid, 'assignment', assignments);
   return name;
 }
 
@@ -394,18 +272,13 @@ function stageCandidate(cand) {
 // to it (so it silently won't take effect). Not a global DoctorWarning —
 // advanced users configure zapret deliberately.
 function renderZapretStatusBlock() {
-  function flagOn(s) { return s.enabled === '1'; }
-  var profiles = uci.sections('purewrt', 'zapret_profile').filter(flagOn);
+  function flagOn(s) { return s.enabled == null || s.enabled === '1' || s.enabled === 'true' || s.enabled === 'yes' || s.enabled === 'on'; }
   var strategies = uci.sections('purewrt', 'zapret_strategy').filter(flagOn);
   var sections = uci.sections('purewrt', 'section');
   var zapretSections = sections.filter(function(s) { return s.enabled !== '0' && s.action === 'zapret'; });
   var rows = [];
   rows.push(E('div', {}, [
-    E('strong', {}, _('Enabled profiles: ')),
-    profiles.length ? profiles.map(function(s) { return naming.nameOf(s, 'zapret_profile'); }).join(', ') : _('none')
-  ]));
-  rows.push(E('div', {}, [
-    E('strong', {}, _('Enabled strategies: ')),
+    E('strong', {}, _('Enabled applications: ')),
     strategies.length ? strategies.map(function(s) { return naming.nameOf(s, 'zapret_strategy'); }).join(', ') : _('none')
   ]));
   rows.push(E('div', {}, [
@@ -516,13 +389,14 @@ function renderBlockcheckCard(networks, wanNets, wan6Nets) {
     strategiesBox.appendChild(E('h4', {}, _('Working strategies (%d)').format(accOrder.length)));
     accOrder.forEach(function(key) {
       var s = acc[key];
-      var btn = E('button', { 'class': 'btn cbi-button cbi-button-add' }, [ _('Create strategy') ]);
+      var btn = E('button', { 'class': 'btn cbi-button cbi-button-add' }, [ _('Save to library') ]);
       btn.addEventListener('click', function(ev) {
         ev.preventDefault();
-        var name = stageStrategyFromParams(s.params, s.common, hostsLabel(), protoDefaults());
         btn.disabled = true;
-        btn.textContent = _('Staged: %s').format(name);
-        ui.addNotification(null, E('p', _('Strategy "%s" staged. Review it in Unsaved Changes, then Save & Apply to create it.').format(name)), 'info');
+        saveBlockcheckCandidate(s.params, s.common, hostsLabel(), protoDefaults()).then(function(name) {
+          btn.textContent = _('Saved: %s').format(name);
+          ui.addNotification(null, E('p', _('Saved "%s" to the library. Refresh the library, then select it for an application WAN.').format(name)), 'info');
+        }).catch(function(e) { btn.disabled = false; ui.addNotification(null, E('p', e.message), 'error'); });
       });
       strategiesBox.appendChild(E('div', { 'style': 'display:flex;gap:.5em;align-items:center;margin:.25em 0;flex-wrap:wrap' }, [
         s.common ? E('span', { 'class': 'purewrt-pill run', 'style': 'flex:0 0 auto' }, _('COMMON'))
@@ -638,7 +512,7 @@ function renderBlockcheckCard(networks, wanNets, wan6Nets) {
   };
   return E('div', { 'class': 'cbi-section purewrt-card' }, [
     E('h3', {}, _('Blockcheck — DPI-bypass finder')),
-    E('p', { 'class': 'purewrt-text-dim' }, _('Runs zapret blockcheck2 against one or more hosts with live output, then lists the working nfqws strategies. One host debugs a single site; 2+ hosts (space-separated) also yields the COMMON strategy that works for all of them. Runs in the background — you can close this tab and come back. Nothing is written until you click Create strategy and Save & Apply.')),
+    E('p', { 'class': 'purewrt-text-dim' }, _('Runs zapret blockcheck2 against one or more hosts with live output, then lists the working nfqws strategies. One host debugs a single site; 2+ hosts (space-separated) also yields the COMMON strategy that works for all of them. Runs in the background — you can close this tab and come back. Nothing is saved until you click Save to library.')),
     row(_('Hosts'), input),
     row(_('WAN interface'), wan),
     row(_('Scan level'), scan),
@@ -661,6 +535,389 @@ function renderBlockcheckCard(networks, wanNets, wan6Nets) {
 // sites through real nfqws2 desync (backend zapret-strategy-test/-sweep),
 // ranks by sites unblocked, and lets you Apply the winner. Complements
 // Blockcheck (which discovers) — this validates a curated set + applies it.
+// Manual end-to-end verification: traffic comes from the chosen LAN client.
+// User presets persist independently of the downloaded catalog. Only explicit
+// Save/Upload mutates the library; neither changes production routing.
+function renderZapretLibrary(candidates, blobs) {
+  var select = E('select', { 'class': 'cbi-input-select', style: 'max-width:100%' });
+  var edit, remove, preview;
+  function selected() { return candidates.find(function(c) { return c.name === select.value; }); }
+  function fill() {
+    var old = select.value;
+    select.innerHTML = '';
+    candidates.forEach(function(c) { select.appendChild(E('option', { value: c.name }, '[' + (c.origin || 'catalog') + '] ' + c.name)); });
+    if (candidates.some(function(c) { return c.name === old; })) select.value = old;
+    var c = selected();
+    if (preview) preview.disabled = !c;
+    if (edit) edit.disabled = !c || c.origin !== 'user';
+    if (remove) remove.disabled = !c || c.origin !== 'user';
+  }
+  function reload() {
+    return Promise.all([callZapretCandidates(), callZapretBlobs()]).then(function(data) {
+      candidates.splice.apply(candidates, [0, candidates.length].concat(data[0] || []));
+      blobs.splice.apply(blobs, [0, blobs.length].concat(data[1] || []));
+      zapretPresets = {};
+      candidates.forEach(function(c) { zapretPresets[c.name] = c; });
+      document.dispatchEvent(new CustomEvent('purewrt-candidates-updated'));
+    });
+  }
+  function request(body) {
+    return callZapretLibrary(JSON.stringify(body)).then(function(r) { if (r.error) throw new Error(r.error); return r; });
+  }
+  function field(label, control) { return E('div', { style: 'margin:.6em 0' }, [E('label', { style: 'display:block;margin-bottom:.25em' }, label), control]); }
+  function editor(source, editing) {
+    var original = editing ? source.name : '';
+    var c = JSON.parse(JSON.stringify(source || { name: '', protocols: ['tcp'], tcp_ports: '443', params: '--filter-tcp=443 --filter-l7=tls --payload=tls_client_hello --lua-desync=fake:blob=fake_default_tls:tcp_md5' }));
+    var name = E('input', { 'class': 'cbi-input-text', type: 'text', maxlength: 59, value: c.name ? c.name.replace(/^user_/, '') + (editing ? '' : '_copy') : '', placeholder: _('Name') });
+    var tcp = E('input', { type: 'checkbox', checked: (c.protocols || []).indexOf('tcp') >= 0 });
+    var udp = E('input', { type: 'checkbox', checked: (c.protocols || []).indexOf('udp') >= 0 });
+    var tcpPorts = E('input', { 'class': 'cbi-input-text', value: c.tcp_ports || '', placeholder: '443' });
+    var udpPorts = E('input', { 'class': 'cbi-input-text', value: c.udp_ports || '', placeholder: '443,50000-65535' });
+    var params = E('textarea', { 'class': 'cbi-input-textarea', rows: 8, style: 'width:100%;font-family:monospace' }, c.params || '');
+    var blobRows = E('div'), rows = [], error = E('p', { 'class': 'alert-message warning', style: 'display:none;white-space:pre-wrap' });
+    function showError(e) { error.textContent = e.message || String(e); error.style.display = ''; }
+    function addBlob(ref) {
+      ref = ref || {};
+      var alias = E('input', { 'class': 'cbi-input-text', value: ref.name || '', placeholder: _('Alias, e.g. user_tls') });
+      var file = E('select', { 'class': 'cbi-input-select', style: 'max-width:100%' });
+      file.appendChild(E('option', { value: '' }, _('Choose a blob file')));
+      var seen = {};
+      blobs.forEach(function(b) {
+        var filename = b.path.split('/').pop();
+        if (!seen[filename]) { file.appendChild(E('option', { value: filename }, filename)); seen[filename] = true; }
+      });
+      if (ref.file && !seen[ref.file]) file.appendChild(E('option', { value: ref.file }, ref.file));
+      if (ref.hex) file.appendChild(E('option', { value: '__hex__' }, _('Inline hex from imported strategy')));
+      file.value = ref.hex ? '__hex__' : (ref.file || '');
+      var del = E('button', { 'class': 'btn cbi-button' }, _('Remove'));
+      var row = { alias: alias, file: file, ref: ref };
+      var node = E('div', { style: 'display:flex;flex-wrap:wrap;gap:.4em;margin:.4em 0' }, [alias, file, del]);
+      row.node = node; rows.push(row); blobRows.appendChild(node);
+      del.addEventListener('click', function(ev) { ev.preventDefault(); rows.splice(rows.indexOf(row), 1); node.remove(); });
+    }
+    (c.blobs || []).forEach(addBlob);
+    var add = E('button', { 'class': 'btn cbi-button' }, _('Add blob reference'));
+    add.addEventListener('click', function(ev) { ev.preventDefault(); addBlob(); });
+    var uploadAlias = E('input', { 'class': 'cbi-input-text', placeholder: _('New blob alias, e.g. user_tls') });
+    var uploadFile = E('input', { type: 'file', accept: '.bin' });
+    var upload = E('button', { 'class': 'btn cbi-button' }, _('Upload blob'));
+    upload.addEventListener('click', function(ev) {
+      ev.preventDefault();
+      var f = uploadFile.files && uploadFile.files[0];
+      if (!f || !/\.bin$/i.test(f.name) || !f.size || f.size > 65536) { showError(new Error(_('Choose a nonempty .bin file, up to 64 KiB.'))); return; }
+      upload.disabled = true;
+      var reader = new FileReader();
+      reader.onerror = function() { upload.disabled = false; showError(new Error(_('Unable to read file'))); };
+      reader.onload = function() {
+        request({ action: 'upload_blob', name: uploadAlias.value.trim(), data: String(reader.result).split(',')[1] }).then(function(ref) {
+          blobs.push({ name: ref.file.replace(/\.bin$/, ''), path: '/etc/purewrt/blobs/' + ref.file });
+          addBlob(ref);
+          uploadFile.value = '';
+        }).catch(showError).finally(function() { upload.disabled = false; });
+      };
+      reader.readAsDataURL(f);
+    });
+    var save = E('button', { 'class': 'btn cbi-button cbi-button-positive' }, _('Validate and save'));
+    save.addEventListener('click', function(ev) {
+      ev.preventDefault(); error.style.display = 'none'; save.disabled = true;
+      var out = Object.assign({}, c, { name: 'user_' + name.value.trim(), origin: 'user', isp: c.isp || 'common', protocols: [], tcp_ports: tcpPorts.value.trim(), udp_ports: udpPorts.value.trim(), params: params.value.trim(), blobs: [] });
+      if (tcp.checked) out.protocols.push('tcp'); if (udp.checked) out.protocols.push('udp');
+      rows.forEach(function(row) {
+        var ref = { name: row.alias.value.trim() };
+        if (row.file.value === '__hex__') ref.hex = row.ref.hex;
+        else { ref.file = row.file.value; if (ref.file === row.ref.file && row.ref.sha256) ref.sha256 = row.ref.sha256; }
+        out.blobs.push(ref);
+      });
+      request({ action: 'save', original_name: original, candidate: out }).then(reload).then(function() {
+        ui.hideModal(); select.value = out.name; fill();
+        ui.addNotification(null, E('p', _('Strategy saved to your local library. It is now available in the testers; routing has not changed.')), 'info');
+      }).catch(showError).finally(function() { save.disabled = false; });
+    });
+    ui.showModal(editing ? _('Edit user strategy') : _('New user strategy'), [
+      field(_('Name'), name), field(_('Protocols'), E('div', {}, [E('label', {}, [tcp, ' TCP ']), E('label', {}, [udp, ' UDP'])])),
+      field(_('TCP ports'), tcpPorts), field(_('UDP ports'), udpPorts), field(_('nfqws parameters'), params),
+      E('p', {}, _('Include --filter-tcp/udp in the parameters. Port fields describe the matching scope when saved for routing. Built-in fake_default_tls/http/quic need no blob reference.')),
+      field(_('Blob aliases and files'), blobRows), add,
+      E('details', {}, [E('summary', {}, _('Upload custom blob')), field(_('Alias'), uploadAlias), uploadFile, ' ', upload]), error,
+      E('div', { 'class': 'right' }, [E('button', { 'class': 'btn', click: ui.hideModal }, _('Cancel')), ' ', save])
+    ]);
+  }
+  function button(label, fn) { var b = E('button', { 'class': 'btn cbi-button', style: 'margin-right:.4em' }, label); b.addEventListener('click', function(ev) { ev.preventDefault(); fn(); }); return b; }
+  preview = button(_('Preview'), function() {
+    var c = selected(); if (!c) return;
+    function code(text) { return E('pre', { style: 'white-space:pre-wrap;overflow-wrap:anywhere;max-height:45vh;overflow:auto' }, text); }
+    var refs = (c.blobs || []).map(function(b) {
+      return b.name + ': ' + (b.hex || b.file || '') + (b.sha256 ? '\n  SHA256: ' + b.sha256 : '');
+    }).join('\n');
+    ui.showModal(_('Strategy preview'), [
+      field(_('Name'), E('span', {}, c.name)),
+      field(_('Source'), E('span', {}, c.origin || 'catalog')),
+      field(_('Protocols'), E('span', {}, (c.protocols || []).join(' / ').toUpperCase())),
+      field(_('TCP ports'), E('span', {}, c.tcp_ports || '—')),
+      field(_('UDP ports'), E('span', {}, c.udp_ports || '—')),
+      field(_('nfqws parameters'), code(c.params || '')),
+      field(_('Blob references'), refs ? code(refs) : E('span', {}, _('No explicit blob references'))),
+      E('div', { 'class': 'right' }, [E('button', { 'class': 'btn', click: ui.hideModal }, _('Close'))])
+    ]);
+  });
+  var add = button(_('New'), function() { editor(null, false); });
+  var copy = button(_('Duplicate'), function() { if (selected()) editor(selected(), false); });
+  edit = button(_('Edit'), function() { if (selected() && selected().origin === 'user') editor(selected(), true); });
+  remove = button(_('Delete'), function() {
+    var c = selected(); if (!c || c.origin !== 'user') return;
+    ui.showModal(_('Delete user strategy'), [E('p', {}, _('Delete %s from the local library? Saved routing sections are not changed.').format(c.name)), E('div', { 'class': 'right' }, [E('button', { 'class': 'btn', click: ui.hideModal }, _('Cancel')), button(_('Delete'), function() {
+      request({ action: 'delete', original_name: c.name }).then(reload).then(ui.hideModal).catch(function(e) { ui.addNotification(null, E('p', e.message), 'error'); });
+    })])]);
+  });
+  var importFile = E('input', { type: 'file', accept: '.json,application/json', style: 'display:none' });
+  importFile.addEventListener('change', function() {
+    var f = importFile.files && importFile.files[0]; if (!f) return;
+    if (f.size > 262144) { ui.addNotification(null, E('p', _('Import is limited to 256 KiB.')), 'error'); return; }
+    var reader = new FileReader();
+    reader.onload = function() { try { var c = JSON.parse(reader.result); if (!c || typeof c.name !== 'string' || typeof c.params !== 'string' || !Array.isArray(c.protocols)) throw new Error(_('Import one strategy object with name, protocols, params and optional blobs.')); editor(c, false); } catch(e) { ui.addNotification(null, E('p', e.message), 'error'); } importFile.value = ''; };
+    reader.onerror = function() { importFile.value = ''; ui.addNotification(null, E('p', _('Unable to read file')), 'error'); };
+    reader.readAsText(f);
+  });
+  var importBtn = button(_('Import JSON'), function() { importFile.click(); });
+  var exportBtn = button(_('Export JSON'), function() {
+    var c = selected(); if (!c) return;
+    var url = URL.createObjectURL(new Blob([JSON.stringify(c, null, 2)], { type: 'application/json' }));
+    var a = E('a', { href: url, download: c.name + '.json' }); a.click(); setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
+  });
+  var refresh = button(_('Refresh library'), function() { reload().catch(function(e) { ui.addNotification(null, E('p', e.message), 'error'); }); });
+  select.addEventListener('change', fill); document.addEventListener('purewrt-candidates-updated', fill); fill();
+  return E('div', { 'class': 'cbi-section purewrt-card' }, [E('h3', {}, _('Strategy library')),
+    E('p', {}, _('Duplicate a catalog preset or user strategy, edit its parameters and blobs, then test your copy. User entries survive catalog updates. JSON exports reference blob files; custom files must be uploaded separately.')),
+    select, E('p', {}, [preview, add, copy, edit, remove, importBtn, exportBtn, refresh, importFile])]);
+}
+
+function renderClientTesterCard(networks, wanNets, wan6Nets, candidates, leases) {
+  var client = E('select', { 'class': 'cbi-input-select' }, [ E('option', { value: '' }, _('Choose a LAN client')) ]);
+  (leases || []).forEach(function(l) {
+    if (l.ipaddr && l.macaddr) client.appendChild(E('option', { value: l.ipaddr, 'data-mac': l.macaddr }, (l.hostname || l.ipaddr) + ' (' + l.ipaddr + ')'));
+  });
+  var wan = buildWanSelect(networks, wanNets, wan6Nets);
+  var service = E('input', { 'class': 'cbi-input-text', type: 'text', maxlength: 64, placeholder: _('Application name, e.g. Discord or YouTube') });
+  var primary = E('select', { 'class': 'cbi-input-select' });
+  var manual = E('textarea', { 'class': 'cbi-input-textarea', rows: 6, maxlength: 16384, style: 'width:100%;font-family:monospace', placeholder: '--filter-tcp=443 --lua-desync=fake:blob=fake_default_tls:tcp_md5' });
+  var manualBox = E('div', { style: 'display:none' }, [manual, E('p', {}, _('Paste nfqws2 strategy parameters, not a shell command. Include --filter-tcp/udp; combine profiles with --new. Built-in blobs and inline hex are supported. For custom blob files, use the Strategy library. Nothing is saved until Add to routing strategies.'))]);
+  function manualCandidate(params) {
+    var c = { name: 'user_manual_test', params: (params || '').trim().split(/\s+/).join(' '), protocols: [], blobs: [] };
+    ['tcp', 'udp'].forEach(function(p) {
+      var ports = c.params.split(' ').filter(function(v) { return v.indexOf('--filter-' + p + '=') === 0; }).map(function(v) { return v.split('=')[1]; });
+      if (ports.length) { c.protocols.push(p); c[p + '_ports'] = ports.join(','); }
+    });
+    return c;
+  }
+  var paramsPreview = E('pre', { style: 'white-space:pre-wrap;max-height:12em;overflow:auto' });
+  var extra = E('select', { 'class': 'cbi-input-select' });
+  function candidate(name) { if (name === '__manual__') return manualCandidate(manual.value); return name === '__direct__' ? { name: name, protocols: ['tcp', 'udp'], params: _('Direct baseline: no packet modification') } : candidates.find(function(c) { return c.name === name; }); }
+  function fillExtra() {
+    var prev = extra.value, c = candidate(primary.value);
+    extra.innerHTML = ''; extra.appendChild(E('option', { value: '' }, _('None / candidate already combines protocols')));
+    if (primary.value !== '__manual__' && c && c.protocols && c.protocols.length === 1) candidates.filter(function(x) {
+      return x.protocols && x.protocols.length === 1 && x.protocols[0] !== c.protocols[0];
+    }).forEach(function(x) { extra.appendChild(E('option', { value: x.name }, x.name + ' [' + x.protocols.join(', ') + ']')); });
+    if (Array.prototype.some.call(extra.options, function(x) { return x.value === prev; })) extra.value = prev;
+    previewParams();
+  }
+  function previewParams() {
+    manualBox.style.display = primary.value === '__manual__' ? '' : 'none';
+    var a = candidate(primary.value), b = candidate(extra.value);
+    paramsPreview.textContent = (a ? a.params : '') + (b ? ' --new ' + b.params : '');
+  }
+  extra.addEventListener('change', previewParams);
+  manual.addEventListener('input', previewParams);
+  function fillCandidates() {
+    primary.innerHTML = '';
+    primary.appendChild(E('option', { value: '__direct__' }, _('Direct baseline (no strategy)')));
+    primary.appendChild(E('option', { value: '__manual__' }, _('Manual strategy (paste parameters)')));
+    candidates.forEach(function(c) { primary.appendChild(E('option', { value: c.name }, c.name + ' [' + (c.protocols || []).join(', ') + ']')); });
+    fillExtra();
+  }
+  primary.addEventListener('change', fillExtra); fillCandidates();
+  document.addEventListener('purewrt-candidates-updated', function() {
+    var p = primary.value, e = extra.value;
+    fillCandidates(); primary.value = p; fillExtra(); extra.value = e; previewParams();
+    updateRotationButtons();
+  });
+  var status = E('p', {}, _('No client test running.'));
+  var counters = E('pre', { style: 'white-space:pre-wrap' });
+  var active = null, starting = false, switching = false, saving = false, activePair = null;
+  function stageResult(row) {
+    var a = row.candidate === '__manual__' ? manualCandidate(row.manual) : candidate(row.candidate), b = candidate(row.extra);
+    if (row.candidate === '__direct__') throw new Error(_('A baseline is not a strategy.'));
+    if (!a || (row.extra && !b)) throw new Error(_('Candidate is no longer available.'));
+    var label = (row.name || '').trim();
+    var requestedName = label.replace(/[^A-Za-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '');
+    if (requestedName && !/^[A-Za-z_]/.test(requestedName)) requestedName = 'test_' + requestedName;
+    requestedName = requestedName.slice(0, 48);
+    if (label && !requestedName) throw new Error(_('Use at least one Latin letter or number for the test name.'));
+    if (requestedName && !/^[A-Za-z_][A-Za-z0-9_-]{0,63}$/.test(requestedName))
+      throw new Error(_('Use up to 48 letters, numbers, underscores or hyphens; start with a letter or underscore.'));
+    var strategyName = requestedName || (a.name + (b ? '_' + b.name : '')).slice(0, 48);
+    var blobs = [];
+    (a.blobs || []).concat(b ? b.blobs || [] : []).forEach(function(ref) {
+      var existing = blobs.find(function(x) { return x.name === ref.name; });
+      if (existing && (existing.file !== ref.file || existing.hex !== ref.hex))
+        throw new Error(_('The combined strategies use conflicting blob aliases.'));
+      if (!existing) blobs.push(ref);
+    });
+    var combo = Object.assign({}, a, { name: strategyName,
+      params: a.params + (b ? ' --new ' + b.params : ''),
+      protocols: (a.protocols || []).concat(b ? b.protocols || [] : []),
+      tcp_ports: a.tcp_ports || (b && b.tcp_ports) || '', udp_ports: a.udp_ports || (b && b.udp_ports) || '',
+      blobs: blobs });
+    ['tcp_pkt_out', 'tcp_pkt_in', 'udp_pkt_out', 'udp_pkt_in'].forEach(function(key) {
+      combo[key] = Math.max(a[key] || 0, b ? b[key] || 0 : 0);
+    });
+    function addReference(entry) {
+      var name = stageCandidate(entry, row.wan, strategyName);
+      return uci.save().then(function() {
+        ui.addNotification(null, E('p', _('Routing strategy "%s" now references "%s". Its assignment uses the tested WAN. Reload the page, select the application in a routing section, then Save & Apply.').format(name, entry.name)), 'info');
+      });
+    }
+    if (!b && row.candidate !== '__manual__') return addReference(a);
+    // A combined test needs one reusable library entry. Reuse an exact pair
+    // already in the library rather than creating another copy.
+    var match = candidates.find(function(c) { return c.params === combo.params && JSON.stringify(c.blobs || []) === JSON.stringify(combo.blobs || []); });
+    if (match) return addReference(match);
+    combo.name = 'user_' + strategyName.replace(/^user_/, '').slice(0, 59);
+    return callZapretLibrary(JSON.stringify({ action: 'save', candidate: combo })).then(function(r) {
+      if (r.error) throw new Error(r.error);
+      candidates.push(combo); zapretPresets[combo.name] = combo;
+      document.dispatchEvent(new CustomEvent('purewrt-candidates-updated'));
+      return addReference(combo);
+    });
+  }
+  var start = E('button', { 'class': 'btn cbi-button cbi-button-action' }, _('Start five-minute test'));
+  var change = E('button', { 'class': 'btn cbi-button cbi-button-action' }, _('Switch strategy'));
+  var stop = E('button', { 'class': 'btn cbi-button' }, _('Stop and restore'));
+  var stage = E('button', { 'class': 'btn cbi-button cbi-button-positive' }, _('Add to routing strategies'));
+  stage.addEventListener('click', function(ev) {
+    ev.preventDefault();
+    if (!active || !active.candidate || saving) return;
+    var tested = { candidate: active.candidate, extra: active.extra || '', wan: active.interface, name: service.value, manual: active.manual || '' };
+    saving = true; stage.disabled = true;
+    Promise.resolve().then(function() { return stageResult(tested); })
+      .catch(function(e) { ui.addNotification(null, E('p', e.message), 'error'); })
+      .finally(function() { saving = false; refresh(); });
+  });
+  var rotationButtons = [];
+  function syncActivePair() {
+    if (!active || !active.running) return;
+    primary.value = active.candidate;
+    if (active.candidate === '__manual__') manual.value = active.manual || '';
+    fillExtra();
+    extra.value = active.extra || '';
+    previewParams();
+  }
+  function rotationChoices(select) {
+    var current = candidate(primary.value);
+    return Array.prototype.map.call(select.options, function(o) { return o.value; }).filter(function(name) {
+      if (!name || name === '__direct__' || name === '__manual__') return false;
+      if (primary.value === '__manual__') return false;
+      if (select !== primary || !current || primary.value === '__direct__') return true;
+      var next = candidate(name);
+      // Keep the other protocol fixed, including when no extra is selected.
+      return next && (next.protocols || []).slice().sort().join(',') === (current.protocols || []).slice().sort().join(',');
+    });
+  }
+  function updateRotationButtons() {
+    rotationButtons.forEach(function(b) {
+      b.button.disabled = starting || switching || (active && active.running && active.phase !== 'testing') || rotationChoices(b.select).length < 2;
+    });
+  }
+  function switchSelected() {
+    if (!active || !active.running || switching || !primary.value) return;
+    switching = true; change.disabled = true;
+    primary.disabled = extra.disabled = true;
+    updateRotationButtons();
+    return callZapretClientSwitch(primary.value, extra.value, primary.value === '__manual__' ? manual.value : '').then(function(r) {
+      if (r.result !== 'ok') throw new Error(r.output || r.result || _('Unable to switch strategy'));
+    }).catch(function(e) { syncActivePair(); ui.addNotification(null, E('p', e.message), 'error'); })
+      .finally(function() { switching = false; refresh(); });
+  }
+  function rotatingSelect(select) {
+    var buttons = [-1, 1].map(function(direction) {
+      var button = E('button', { 'class': 'btn cbi-button', style: 'margin-left:.4em' }, direction < 0 ? _('Previous') : _('Next'));
+      rotationButtons.push({ button: button, select: select });
+      button.addEventListener('click', function(ev) {
+        ev.preventDefault();
+        if (starting || switching || (active && active.running && active.phase !== 'testing')) return;
+        // Rotate the actually running pair, not an unapplied dropdown edit.
+        syncActivePair();
+        var choices = rotationChoices(select);
+        if (choices.length < 2) return;
+        var index = choices.indexOf(select.value);
+        select.value = choices[index < 0 ? (direction > 0 ? 0 : choices.length - 1) : (index + direction + choices.length) % choices.length];
+        if (select === primary) fillExtra(); else previewParams();
+        updateRotationButtons();
+        switchSelected();
+      });
+      return button;
+    });
+    return E('div', {}, [select, buttons[0], buttons[1]]);
+  }
+  var primaryControl = rotatingSelect(primary), extraControl = rotatingSelect(extra);
+  primary.addEventListener('change', updateRotationButtons);
+  extra.addEventListener('change', updateRotationButtons);
+  function refresh() {
+    return callZapretClientStatus().then(function(s) {
+      active = s;
+      var pair = s.running ? s.candidate + '\n' + (s.extra || '') + '\n' + (s.manual || '') : null;
+      if (pair !== activePair && !switching) { syncActivePair(); activePair = pair; }
+      updateRotationButtons();
+      var running = !!s.running;
+      start.disabled = running || starting;
+      stop.disabled = !running && !starting && !s.error;
+      [client, wan].forEach(function(x) { x.disabled = running || starting; });
+      [primary, extra, manual].forEach(function(x) { x.disabled = starting || switching || (running && s.phase !== 'testing'); });
+      change.disabled = !running || s.phase !== 'testing' || switching;
+      change.textContent = switching ? _('Switching…') : _('Switch strategy');
+      service.disabled = saving;
+      stage.textContent = saving ? _('Saving…') : _('Add to routing strategies');
+      stage.disabled = saving || !s.candidate || s.candidate === '__direct__' || starting || switching || s.phase === 'preparing';
+      status.textContent = s.phase === 'preparing' && running ? _('Preparing strategy…') : running ? _('Testing %s via %s — %s seconds remaining. Restart the application, then test login/chat and voice.').format(s.ip, s.interface, Math.max(0, s.expires - Math.floor(Date.now()/1000))) + ' [' + s.candidate + (s.extra ? ' + ' + s.extra : '') + ']' :
+        (starting ? _('Starting test…') : (s.error || _('Stopped. Normal routing restored.')));
+      counters.textContent = (s.counters || '') + (running && s.error ? '\n' + s.error : '');
+    }).catch(function(e) { status.textContent = e.message; });
+  }
+  start.addEventListener('click', function(ev) {
+    ev.preventDefault();
+    var opt = client.options[client.selectedIndex];
+    if (!client.value || !primary.value) { ui.addNotification(null, E('p', _('Select a client and strategy.')), 'warning'); return; }
+    starting = true; start.disabled = true;
+    callZapretClientStart(client.value, opt.getAttribute('data-mac'), wan.value, primary.value, extra.value, primary.value === '__manual__' ? manual.value : '').then(function(r) {
+      if (r.result !== 'started') throw new Error(r.result || _('Unable to start test'));
+      window.setTimeout(function() { starting = false; refresh(); }, 2000);
+    }).catch(function(e) { starting = false; ui.addNotification(null, E('p', e.message), 'error'); refresh(); });
+  });
+  change.addEventListener('click', function(ev) { ev.preventDefault(); switchSelected(); });
+  stop.addEventListener('click', function(ev) {
+    ev.preventDefault();
+    stop.disabled = true;
+    callZapretClientStop().then(function(r) {
+      if (r.result !== 'ok') throw new Error(r.output || r.result || _('Unable to restore client routing'));
+      window.setTimeout(refresh, 1500);
+    }).catch(function(e) {
+      ui.addNotification(null, E('p', e.message), 'error');
+      refresh();
+    });
+  });
+  function field(label, node) { return E('div', { 'class': 'cbi-value' }, [E('label', { 'class': 'cbi-value-title' }, label), E('div', { 'class': 'cbi-value-field' }, [node])]); }
+  refresh(); poll.add(refresh, 2);
+  return E('div', { 'class': 'cbi-section purewrt-card' }, [
+    E('h3', {}, _('Test with a LAN client')),
+    E('p', {}, _('Temporarily bypasses PureWRT proxy routing for the selected client and sends internet TCP/UDP traffic through the candidate on one WAN. Local access and router DNS stay available. IPv6 forwarding is blocked for this client during the IPv4 test. Stop or the five-minute timeout restores routing, even if you close this page.')),
+    field(_('What are you testing?'), service), field(_('Client'), client), field(_('WAN interface'), wan),
+    field(_('Strategy'), primaryControl), manualBox, field(_('Additional TCP/UDP strategy'), extraControl),
+    E('details', {}, [E('summary', {}, _('Candidate parameters')), paramsPreview]),
+    E('p', {}, [start, ' ', change, ' ', stop, ' ', stage]), status, counters,
+    E('p', {}, _('Counters confirm traffic reached the test queue, not that the application works. Switch strategy keeps client routing and the original timeout unchanged. Previous/Next wraps through candidates for the same protocol and switches immediately during a test, keeping the other strategy fixed. Reconnect or restart the application to test new connections.'))
+  ]);
+}
+
 function renderStrategyTesterCard(networks, wanNets, wan6Nets, candidates) {
   var sites = E('input', { 'class': 'cbi-input-text', 'style': 'width:100%;max-width:36em', 'placeholder': 'redirector.googlevideo.com telegram.org discord.com (blank = defaults)' });
   var wan = buildWanSelect(networks, wanNets, wan6Nets);
@@ -723,7 +980,7 @@ function renderStrategyTesterCard(networks, wanNets, wan6Nets, candidates) {
         ev.preventDefault();
         var cand = zapretPresets[name];
         if (!cand) { ui.addNotification(null, E('p', _('Unknown candidate %s').format(name)), 'warning'); return; }
-        var sn = stageCandidate(cand);
+        var sn = stageCandidate(cand, wan.value);
         applyBtn.disabled = true; applyBtn.textContent = _('Staged: %s').format(sn);
         ui.addNotification(null, E('p', _('Strategy "%s" staged. Review in Unsaved Changes, then Save & Apply.').format(sn)), 'info');
       });
@@ -820,9 +1077,11 @@ function renderStrategyTesterCard(networks, wanNets, wan6Nets, candidates) {
       candidates.forEach(function(c) { if (c && c.name) zapretPresets[c.name] = c; });
       rebuildFilters();
       rebuildCandidates();
+      document.dispatchEvent(new CustomEvent('purewrt-candidates-updated'));
       return candidates.length;
     });
   };
+  document.addEventListener('purewrt-candidates-updated', function() { rebuildFilters(); rebuildCandidates(); });
   window.setTimeout(function() { callZapretSweepStatus().then(function(r) { if (r && (r.running === 1 || r.running === true)) pollSweep(); }).catch(function() {}); }, 0);
   var row = function(label, control) {
     return E('div', { 'style': 'display:flex;gap:.75em;align-items:center;margin:.35em 0' }, [ E('label', { 'style': 'min-width:8em' }, label), control ]);
@@ -885,7 +1144,8 @@ return view.extend({
       network.getWANNetworks().catch(function() { return []; }),
       network.getWAN6Networks().catch(function() { return []; }),
       callZapretBlobs().catch(function() { return []; }),
-      callZapretCandidates().catch(function() { return []; })
+      callZapretCandidates().catch(function() { return []; }),
+      callClientLeases().catch(function() { return {}; })
     ]);
   },
 
@@ -950,198 +1210,74 @@ return view.extend({
       });
     };
 
-    // ---- Runtime profiles (folded into a table after m.render) ----
-    var p = m.section(form.TypedSection, 'zapret_profile', _('Zapret runtime profiles'));
-    p.addremove = true;
-    // Named sections: the id is the type-prefixed name (zp_<name>); the Go
-    // parser strips the prefix. One name, no separate field to drift.
-    p.anonymous = false;
-    p.sectiontitle = profileTitle;
-    naming.installPrefixedAdd(p, 'zapret_profile');
-    var profEnabled = p.option(form.Flag, 'enabled', _('Enabled'));
-    profEnabled.default = '1'; // Go side treats an absent option as enabled
-    var networkDevices = {};
-    var deviceLabels = {};
+    // Application editor: one library strategy selector per WAN device.
+    var deviceLabels = {}, choices = [];
     networks.forEach(function(net) {
-      var name = net.getName && net.getName();
-      var device = wanDeviceOf(net);
-      if (name && device) {
-        networkDevices[name] = device;
-        deviceLabels[device] = (deviceLabels[device] ? deviceLabels[device] + ', ' : '') + name;
-      }
+      var device = wanDeviceOf(net), name = net.getName && net.getName();
+      if (device && device !== 'lo') { choices.push(device); deviceLabels[device] = name + ' (' + device + ')'; }
     });
-    function uniqueDevices(values) {
-      return values.filter(function(value, index) { return value && values.indexOf(value) === index; });
-    }
-    var defaultDevices = uniqueDevices(wanNets.concat(wan6Nets).map(wanDeviceOf));
-    function profileInterfaces(sid) {
-      var selected = uci.get('purewrt', sid, 'interface');
-      if (!selected) return defaultDevices;
-      return Array.isArray(selected) ? selected : [selected];
-    }
-    var ifaces = p.option(form.DynamicList, 'interface', _('Interfaces'));
-    ifaces.placeholder = _('Choose an interface');
-    ifaces.rmempty = false;
-    ifaces.forcewrite = true;
-    ifaces.cfgvalue = profileInterfaces;
-    ifaces.default = defaultDevices;
-    // DynamicList validates the empty add-item input separately. Enforce
-    // the minimum selection on the full list at save time, not that input.
-    var parseInterfaces = ifaces.parse;
-    ifaces.parse = function(sid) {
-      var selected = this.formvalue(sid);
-      if (this.isActive(sid) && (!selected || !selected.length))
-        return Promise.reject(new Error(_('Select at least one interface.')));
-      return parseInterfaces.call(this, sid);
-    };
-    ifaces.write = function(sid, value) {
-      uci.set('purewrt', sid, 'interface', value);
-    };
-    var choices = devices.map(function(d) { return d.getName && d.getName(); });
-    uci.sections('purewrt', 'zapret_profile', function(section) {
-      choices = choices.concat(profileInterfaces(section['.name']));
+    devices.forEach(function(d) { var name = d.getName && d.getName(); if (name && name !== 'lo') choices.push(name); });
+    uci.sections('purewrt', 'zapret_strategy').forEach(function(app) {
+      var assignments = app.assignment || []; if (!Array.isArray(assignments)) assignments = [assignments];
+      assignments.forEach(function(v) { choices.push(v.split('=')[0]); });
     });
-    uniqueDevices(choices.concat(defaultDevices)).sort().forEach(function(name) {
-      if (name !== 'lo') ifaces.value(name, deviceLabels[name] ? deviceLabels[name] + ' (' + name + ')' : name);
-    });
-    ifaces.description = _('Select the WAN interfaces where Zapret should process traffic.');
-    var pfw = p.option(form.Value, 'fwmark', _('Generated packet fwmark'));
-    pfw.placeholder = '0x40000000';
-    pfw.modalonly = true;
-    var pnfq = p.option(form.Value, 'nfqws_bin', _('nfqws binary'));
-    pnfq.placeholder = '/usr/libexec/zapret/nfqws2';
-    pnfq.modalonly = true;
-    var ptpws = p.option(form.Value, 'tpws_bin', _('tpws binary'));
-    ptpws.placeholder = '/usr/libexec/zapret/tpws';
-    ptpws.modalonly = true;
-    var plua = p.option(form.Value, 'lua_bundle_dir', _('Lua bundle directory'));
-    plua.placeholder = '/usr/libexec/zapret/lua';
-    plua.modalonly = true;
-    plua.description = _('Directory containing zapret2 Lua scripts. The generated NFQWS2_OPT prepends --lua-init=@&lt;dir&gt;/...lua so named blobs like fake_default_tls resolve.');
-    // Custom blobs: pick from the shipped fake-payload .bin files. Each option's
-    // VALUE is the nfqws2 declaration `name:@/path` (name = filename minus .bin);
-    // the generator emits it as --blob= in the head, and a strategy references
-    // the name (fake:blob=name / seqovl_pattern=name). The stock
-    // fake_default_tls/http/quic need no entry.
-    var pblob = p.option(form.MultiValue, 'blob', _('Custom blobs'));
-    pblob.modalonly = true;
-    // Union two naming systems so the picker matches whatever a strategy's
-    // params reference: (1) shipped .bin files by filename-stem, and (2) the
-    // candidate-list aliases (e.g. quic_google → quic_initial_www_google_com.bin)
-    // that the shared candidates use in params. Resolving the alias's file to a
-    // shipped path keeps the decl consistent; the generator re-canonicalizes the
-    // path at apply time anyway. Note: with params-driven auto-declare, picking
-    // here is only needed for manual strategies — candidate strategies work
-    // without it.
-    var blobPathByFile = {};
-    availBlobs.forEach(function(bl) {
-      if (bl && bl.name && bl.path) {
-        pblob.value(bl.name + ':@' + bl.path, bl.name);
-        blobPathByFile[bl.name + '.bin'] = bl.path;
-      }
-    });
-    var aliasSeen = {};
-    candidates.forEach(function(c) {
-      (c.blobs || []).forEach(function(b) {
-        if (!b.name || !b.file || aliasSeen[b.name]) return;
-        aliasSeen[b.name] = true;
-        var path = blobPathByFile[b.file] || '/usr/libexec/zapret/files/fake/' + b.file;
-        pblob.value(b.name + ':@' + path, b.name + ' → ' + b.file);
-      });
-    });
-    if (!availBlobs.length && !Object.keys(aliasSeen).length)
-      pblob.value('', _('(no fake .bin files found on router)'));
-    pblob.description = _('Declare nfqws2 fake payloads (--blob=), referenced from a strategy\'s params by name (<code>fake:blob=&lt;name&gt;</code> / <code>seqovl_pattern=&lt;name&gt;</code>). Lists both shipped .bin files (by filename) and the shared-candidate aliases (e.g. <code>quic_google</code>). Strategies applied from the candidate list auto-declare their blobs — you only need this for manually-written params. Stock <code>fake_default_tls/http/quic</code> need no entry.');
-
-    // ---- Strategies (folded into a table after m.render) ----
-    var zs = m.section(form.TypedSection, 'zapret_strategy', _('Zapret strategies'));
-    zs.addremove = true;
-    // Named for the same reason as profiles above: zs_<name> id.
-    zs.anonymous = false;
+    choices = choices.filter(function(v, i) { return v && choices.indexOf(v) === i; }).sort();
+    var zs = m.section(form.TypedSection, 'zapret_strategy', _('Zapret applications'));
+    zs.addremove = true; zs.anonymous = false;
     zs.sectiontitle = strategyTitle;
-    naming.installPrefixedAdd(zs, 'zapret_strategy');
-    var stratEnabled = zs.option(form.Flag, 'enabled', _('Enabled'));
-    stratEnabled.default = '1'; // Go side treats an absent option as enabled
-    var preset = zs.option(form.ListValue, 'preset', _('Preset'));
-    preset.value('custom', _('custom'));
-    // Preset options come from the fetched candidate list, labelled by ISP.
-    candidates.forEach(function(c) {
-      preset.value(c.name, c.isp ? c.name + ' (' + c.isp + ')' : c.name);
-    });
-    preset.description = _('Selecting a preset overwrites protocols, ports, packet limits, and nfqws parameters from the shared candidate list. Use custom for manual tuning.');
-    var profile = zs.option(form.ListValue, 'profile', _('Runtime profile'));
-    var profileValues = { wan: true };
-    profile.value('wan', 'wan');
-    uci.sections('purewrt', 'zapret_profile').forEach(function(sec) {
-      var name = naming.nameOf(sec, 'zapret_profile');
-      if (name && !profileValues[name]) {
-        profile.value(name, name);
-        profileValues[name] = true;
+    naming.installPrefixedAdd(zs, 'zapret_strategy', function(name) { return name.length > 48 ? _('Use at most 48 characters.') : null; });
+    var enabled = zs.option(form.Flag, 'enabled', _('Enabled')); enabled.default = '1';
+    zs.description = _('Assign a library strategy only to the WANs this application uses.');
+    var assignments = zs.option(form.Value, 'assignment', _('WAN assignments'));
+    var assignmentRows = {};
+    assignments.renderWidget = function(sid, optionId, cfgvalue) {
+      var rows = [], list = E('div', { style: 'display:grid;gap:.6em;width:100%' });
+      assignmentRows[sid] = rows;
+      function changed() { list.dispatchEvent(new CustomEvent('widget-change', { bubbles: true })); }
+      function addRow(value) {
+        var parts = (value || '').split('=');
+        var wan = E('select', { 'class': 'cbi-input-select', style: 'width:100%;min-width:0', 'aria-label': _('WAN interface') });
+        wan.appendChild(E('option', { value: '' }, _('Choose a WAN')));
+        choices.forEach(function(device) { wan.appendChild(E('option', { value: device }, deviceLabels[device] || device)); });
+        wan.value = parts[0] || '';
+        var strategy = E('select', { 'class': 'cbi-input-select', style: 'width:100%;min-width:0', 'aria-label': _('Library strategy') });
+        strategy.appendChild(E('option', { value: '' }, _('Choose a strategy')));
+        candidates.forEach(function(c) { strategy.appendChild(E('option', { value: c.name }, c.name)); });
+        if (parts[1] && !candidates.some(function(c) { return c.name === parts[1]; })) strategy.appendChild(E('option', { value: parts[1] }, parts[1] + ' (' + _('missing') + ')'));
+        strategy.value = parts[1] || '';
+        var remove = E('button', { type: 'button', 'class': 'btn cbi-button cbi-button-remove', 'aria-label': _('Remove assignment'), title: _('Remove assignment') }, '×');
+        var row = { wan: wan, strategy: strategy };
+        var node = E('div', { style: 'display:flex;gap:.5em;align-items:center;flex-wrap:wrap' }, [
+          E('div', { style: 'flex:1 1 9em;min-width:0' }, wan),
+          E('span', { 'aria-hidden': 'true' }, '→'),
+          E('div', { style: 'flex:1 1 9em;min-width:0' }, strategy), remove
+        ]);
+        rows.push(row); list.appendChild(node);
+        wan.addEventListener('change', changed); strategy.addEventListener('change', changed);
+        remove.addEventListener('click', function(ev) { ev.preventDefault(); rows.splice(rows.indexOf(row), 1); node.remove(); changed(); });
       }
-    });
-    profile.default = 'wan';
-    var queue = zs.option(form.Value, 'queue_num', _('NFQUEUE number'));
-    queue.datatype = 'uinteger';
-    queue.placeholder = _('auto');
-    queue.description = _('Leave empty or 0 to auto-assign starting at 200. Set only to avoid conflicts with external NFQUEUE users.');
-    var protocols = zs.option(form.MultiValue, 'protocols', _('Protocols'));
-    protocols.value('tcp', _('TCP'));
-    protocols.value('udp', _('UDP'));
-    var tcpPorts = zs.option(form.Value, 'tcp_ports', _('TCP ports'));
-    tcpPorts.placeholder = '443,2053,2083,2087,2096,8443';
-    var udpPorts = zs.option(form.Value, 'udp_ports', _('UDP ports'));
-    udpPorts.placeholder = '443';
-    var tcpOut = zs.option(form.Value, 'tcp_pkt_out', _('TCP outgoing packet limit'));
-    tcpOut.datatype = 'uinteger';
-    tcpOut.modalonly = true;
-    var tcpIn = zs.option(form.Value, 'tcp_pkt_in', _('TCP incoming packet limit'));
-    tcpIn.datatype = 'uinteger';
-    tcpIn.modalonly = true;
-    var udpOut = zs.option(form.Value, 'udp_pkt_out', _('UDP outgoing packet limit'));
-    udpOut.datatype = 'uinteger';
-    udpOut.modalonly = true;
-    var udpIn = zs.option(form.Value, 'udp_pkt_in', _('UDP incoming packet limit'));
-    udpIn.datatype = 'uinteger';
-    udpIn.modalonly = true;
-    var params = zs.option(form.TextValue, 'params', _('nfqws strategy parameters'));
-    params.rows = 4;
-    params.modalonly = true;
-    params.description = _('Raw nfqws2 args (<code>--lua-desync=...</code>). If this includes its own <code>--filter-tcp/udp</code> it is used verbatim (the fields above are ignored). Put <code>--payload</code> before <code>--lua-desync</code>.');
-    // Arg-order guard: warn if --lua-desync precedes --payload in params.
-    params.validate = function(sid, value) {
-      if (value && /--payload=/.test(value) && value.indexOf('--lua-desync') >= 0 &&
-          value.indexOf('--lua-desync') < value.indexOf('--payload=')) {
-        return _('--payload must come before --lua-desync, otherwise it will not scope the desync.');
+      var values = cfgvalue || []; if (!Array.isArray(values)) values = [values];
+      values.forEach(addRow);
+      var add = E('button', { type: 'button', 'class': 'btn cbi-button cbi-button-add', style: 'margin-top:.7em' }, _('Add WAN'));
+      add.addEventListener('click', function(ev) { ev.preventDefault(); addRow(''); changed(); });
+      return E('div', { style: 'width:100%;max-width:54rem' }, [list, add]);
+    };
+    assignments.formvalue = function(sid) {
+      if (!assignmentRows[sid]) return uci.get('purewrt', sid, 'assignment') || [];
+      return assignmentRows[sid].map(function(row) { return row.wan.value + '=' + row.strategy.value; });
+    };
+    assignments.parse = function(sid) {
+      var values = this.formvalue(sid), seen = {};
+      if (enabled.formvalue(sid) !== '0' && !values.length) return Promise.reject(new Error(_('Add at least one WAN assignment.')));
+      for (var i = 0; i < values.length; i++) {
+        var parts = values[i].split('=');
+        if (!parts[0] || !parts[1]) return Promise.reject(new Error(_('Choose a WAN and strategy for every assignment.')));
+        if (seen[parts[0]]) return Promise.reject(new Error(_('Each WAN can appear only once in an application.')));
+        seen[parts[0]] = true;
       }
-      return true;
+      uci.set('purewrt', sid, 'assignment', values);
+      return Promise.resolve();
     };
-
-    // Wire preset auto-fill via the document-level `widget-change` event
-    // LuCI fires when any form widget mutates. `option.onchange` is set
-    // for completeness but isn't reliably invoked by ListValue on this
-    // LuCI version — the document listener catches every dropdown change.
-    var presetFields = {
-      protocols: 'protocols',
-      tcp_ports: 'tcp_ports',
-      udp_ports: 'udp_ports',
-      tcp_pkt_out: 'tcp_pkt_out',
-      tcp_pkt_in: 'tcp_pkt_in',
-      udp_pkt_out: 'udp_pkt_out',
-      udp_pkt_in: 'udp_pkt_in',
-      params: 'params'
-    };
-    preset.onchange = function(ev, sectionId, value) {
-      applyPresetTo(sectionId, value, presetFields);
-    };
-    document.addEventListener('widget-change', function(ev) {
-      var target = ev.target;
-      if (!target || !target.id) return;
-      // Match wrapper id: cbid.purewrt.<sid>.preset
-      var m = /^cbid\.purewrt\.([^.]+)\.preset$/.exec(target.id);
-      if (!m) return;
-      var sel = target.querySelector('select');
-      if (sel) applyPresetTo(m[1], sel.value, presetFields);
-    }, true);
 
     // ---- Usage + merged Blockcheck (DPI-bypass finder) ----
     var help = m.section(form.NamedSection, 'zapret_help', 'purewrt_zapret_help', _('Usage'));
@@ -1151,8 +1287,10 @@ return view.extend({
           E('p', {}, _('Set a routing section Action to Zapret on the Sections / Routing page. Matching OpenWrt-exported rule provider IP/CIDR sets for that section will be sent through zapret instead of mihomo TPROXY.')),
           E('p', {}, _('After saving, run PureWRT Reload/Apply so nftables and purewrt-zapret are regenerated and restarted.'))
         ]),
+        renderZapretLibrary(candidates, availBlobs),
         renderBlockcheckCard(networks, wanNets, wan6Nets),
-        renderStrategyTesterCard(networks, wanNets, wan6Nets, candidates)
+        renderStrategyTesterCard(networks, wanNets, wan6Nets, candidates),
+        renderClientTesterCard(networks, wanNets, wan6Nets, candidates, (data[9] || {}).dhcp_leases || [])
       ]);
     };
 
@@ -1160,33 +1298,12 @@ return view.extend({
       // Scope each tableSection.render call to its own section wrapper so
       // the cleanup at the top of render() doesn't clobber the other
       // table's header row.
-      var profileWrap = root.querySelector('#cbi-purewrt-zapret_profile');
       var strategyWrap = root.querySelector('#cbi-purewrt-zapret_strategy');
-
-      if (profileWrap) {
-        tableSection.render(profileWrap, {
-          columns: '0 1.4fr 2.4fr 0.8fr 0.7fr 12rem',
-          headers: [ '', _('Name'), _('Interfaces'), _('Fwmark'), _('Enable'), '' ],
-          showEnable: true,
-          filterNode: inWrapper('cbi-purewrt-zapret_profile'),
-          titleOf: function(sid) { return _('Profile') + ': ' + profileTitle(sid); },
-          summaryOf: function(sid) { return profileSummary(sid, profileInterfaces(sid)); },
-          save: function() {
-            return saveChain.run(m, [
-              { fn: callZapretRestart, label: _('Zapret restart') }
-            ], { onDone: _('Profile saved and zapret restarted.') });
-          },
-          actions: [
-            { label: _('Edit'), kind: 'edit' },
-            { label: _('Delete'), kind: 'delete', style: 'remove' }
-          ]
-        });
-      }
 
       if (strategyWrap) {
         tableSection.render(strategyWrap, {
-          columns: '0 1.4fr 1.2fr 1fr 1fr 1.5fr .7fr 0.7fr 12rem',
-          headers: [ '', _('Name'), _('Preset'), _('Profile'), _('Protocols'), _('Ports'), _('Queue'), _('Enable'), '' ],
+          columns: '0 1.2fr 4fr .7fr 12rem',
+          headers: [ '', _('Application'), _('WAN → Library strategy'), _('Enable'), '' ],
           showEnable: true,
           filterNode: inWrapper('cbi-purewrt-zapret_strategy'),
           titleOf: function(sid) { return _('Strategy') + ': ' + strategyTitle(sid); },

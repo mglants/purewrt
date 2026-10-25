@@ -58,10 +58,9 @@ func TestUpdateProxyURLLoadAndSave(t *testing.T) {
 	}
 }
 
-func TestZapretProfilesLoadAndSave(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "purewrt")
-	data := "config zapret 'zapret'\n    option enabled '1'\n    option mode 'nfqws'\n    option queue_num '200'\n    option params '--legacy-ignored'\n\nconfig zapret_profile 'zp_wan_a'\n    option enabled '1'\n    list interface 'wan_a'\n    option mode 'nfqws'\n    option queue_num '201'\n    option fwmark '0x40000001'\n    option params '--strategy-a'\n\nconfig zapret_profile 'zp_wan_b'\n    option enabled '1'\n    list interface 'wan_b'\n    option mode 'tpws'\n    option tpws_port '989'\n    option params '--strategy-b'\n"
+func TestZapretApplicationsLoadAndSave(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "purewrt")
+	data := "config zapret_strategy 'zs_discord'\n option enabled '1'\n list assignment 'wan_a=youtube_combined'\n list assignment 'wan_b=discord_combined'\n"
 	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -69,24 +68,11 @@ func TestZapretProfilesLoadAndSave(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(c.ZapretProfiles) != 2 {
-		t.Fatalf("expected two zapret profiles, got %+v", c.ZapretProfiles)
+	if len(c.ZapretApplications) != 1 || len(c.ZapretStrategies) != 2 {
+		t.Fatal(c.ZapretApplications, c.ZapretStrategies)
 	}
-	if c.ZapretProfiles[0].Name != "wan_a" || len(c.ZapretProfiles[0].Interfaces) != 1 || c.ZapretProfiles[0].Interfaces[0] != "wan_a" || c.ZapretProfiles[0].QueueNum != 201 || c.ZapretProfiles[1].Name != "wan_b" || c.ZapretProfiles[1].TPWSPort != 989 {
-		t.Fatalf("unexpected zapret profiles: %+v", c.ZapretProfiles)
-	}
-	out := filepath.Join(dir, "purewrt.out")
-	if err := Save(out, c); err != nil {
-		t.Fatal(err)
-	}
-	written, err := os.ReadFile(out)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(written), "config zapret 'zapret'") || strings.Contains(string(written), "--legacy-ignored") {
-		t.Fatalf("saved config must drop legacy single zapret config:\n%s", string(written))
-	}
-	if !strings.Contains(string(written), "config zapret_profile 'zp_wan_a'") || !strings.Contains(string(written), "config zapret_profile 'zp_wan_b'") || !strings.Contains(string(written), "list interface 'wan_b'") || strings.Contains(string(written), "option interface '") {
-		t.Fatalf("saved config missing zapret profiles:\n%s", string(written))
+	out := string(Serialize(c))
+	if strings.Contains(out, "zapret_profile") || strings.Contains(out, "option params") || !strings.Contains(out, "list assignment 'wan_b=discord_combined'") {
+		t.Fatal(out)
 	}
 }

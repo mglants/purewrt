@@ -28,30 +28,31 @@ func TestZapretStrategyQueueAutoDerivation(t *testing.T) {
 	if got := c.NormalizeZapretStrategyAt(c.ZapretStrategies[0], 0).QueueNum; got != 200 {
 		t.Fatalf("first auto queue = %d, want 200", got)
 	}
-	if got := c.NormalizeZapretStrategyAt(c.ZapretStrategies[1], 1).QueueNum; got != 250 {
-		t.Fatalf("manual queue = %d, want 250", got)
+	if got := c.NormalizeZapretStrategyAt(c.ZapretStrategies[1], 1).QueueNum; got != 200 {
+		t.Fatalf("manual queue = %d, want 200", got)
 	}
-	if got := c.NormalizeZapretStrategyAt(c.ZapretStrategies[2], 2).QueueNum; got != 202 {
-		t.Fatalf("third auto queue = %d, want 202", got)
+	if got := c.NormalizeZapretStrategyAt(c.ZapretStrategies[2], 2).QueueNum; got != 200 {
+		t.Fatalf("third auto queue = %d, want 200", got)
 	}
 }
 
-func TestValidateRejectsZapretAutoQueueCollision(t *testing.T) {
+func TestValidateRejectsZapretSelectorCollision(t *testing.T) {
 	c := config.Default()
 	c.ZapretProfiles = []config.ZapretProfile{{Name: "wan", Enabled: true, Interfaces: []string{"wan"}, FwMark: "0x40000000"}}
 	c.ZapretStrategies = []config.ZapretStrategy{
-		{Name: "auto", Enabled: true, Profile: "wan", QueueNum: 0, Protocols: []string{"tcp"}, TCPPorts: "443"},
-		{Name: "manual", Enabled: true, Profile: "wan", QueueNum: 200, Protocols: []string{"tcp"}, TCPPorts: "443"},
+		{Name: "auto", Enabled: true, Profile: "wan", QueueNum: 0, SelectorMark: 0x10000, Protocols: []string{"tcp"}, TCPPorts: "443"},
+		{Name: "manual", Enabled: true, Profile: "wan", QueueNum: 200, SelectorMark: 0x10000, Protocols: []string{"tcp"}, TCPPorts: "443"},
 	}
-	if err := validateZapretStrategies(c); err == nil || !strings.Contains(err.Error(), "duplicates queue_num") {
-		t.Fatalf("expected queue collision, got %v", err)
+	if err := validateZapretStrategies(c); err == nil || !strings.Contains(err.Error(), "duplicate selector") {
+		t.Fatalf("expected selector collision, got %v", err)
 	}
 }
 
 func TestValidateCommandRejectsZapretMarkConflict(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "purewrt")
-	data := "config main 'settings'\n    option fwmark '0x1'\n    option fwmark_mask '0xff'\n\nconfig zapret_profile 'bad'\n    option enabled '1'\n    list interface 'wan'\n    option fwmark '0x1'\n"
+	data := "config main 'settings'\n option fwmark '0x1'\n option fwmark_mask '0x400000ff'\nconfig zapret_strategy 'zs_test'\n list assignment 'wan=youtube_combined'\n"
+
 	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -224,5 +225,19 @@ func TestValidateAllowsDuplicateGroupOnDisabledSection(t *testing.T) {
 	}
 	if err := validateConfigHardening(c); err != nil {
 		t.Fatalf("disabled section duplicate group should pass, got %v", err)
+	}
+}
+
+func TestZapretMarksRejectAnyProxyMaskBit(t *testing.T) {
+	c := config.Default()
+	for _, mark := range []string{"0x2", "0x40000080"} {
+		c.ZapretProfiles = []config.ZapretProfile{{Name: "custom", Enabled: true, FwMark: mark}}
+		if validateZapretProfileMarks(c) == nil {
+			t.Fatalf("accepted overlapping %s", mark)
+		}
+	}
+	c.ZapretProfiles = []config.ZapretProfile{{Name: "a", Enabled: true, FwMark: "0x20000000"}, {Name: "b", Enabled: true, FwMark: "0x20000000"}, {Name: "unused", Enabled: false, FwMark: "0x1"}}
+	if e := validateZapretProfileMarks(c); e != nil {
+		t.Fatal(e)
 	}
 }

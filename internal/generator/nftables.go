@@ -1,6 +1,7 @@
 package generator
 
 import (
+	"fmt"
 	"io"
 	"net/netip"
 	"sort"
@@ -211,7 +212,6 @@ func NFTablesWithNative(c config.Config, native map[string][]string) []byte {
 			continue
 		}
 		if s.Action == "zapret" {
-			writeZapretPreroutingRules(&b, c, s, includeIPv6)
 			writeZapretClaimReturns(&b, c, s, includeIPv6)
 			continue
 		}
@@ -280,13 +280,30 @@ func NFTablesWithNative(c config.Config, native map[string][]string) []byte {
 		b.WriteString(nat.String())
 	}
 	if len(c.EnabledZapretProfiles()) > 0 && hasEnabledZapretStrategies(c) {
-		b.WriteString("  }\n\n  chain postrouting {\n    type filter hook postrouting priority srcnat + 1; policy accept;\n")
-		for _, s := range c.Sections {
+		b.WriteString("  }\n\n  chain postrouting {\n    type filter hook postrouting priority srcnat + 1; policy accept;\n    ct direction reply return\n")
+		for _, s := range sectionsByPriority(c.Sections) {
 			if !s.Enabled || s.Action != "zapret" {
 				continue
 			}
 			writeZapretPostroutingRules(&b, c, s, includeIPv6)
 		}
+		b.WriteString("  }\n\n  chain zapret_reply {\n    type filter hook prerouting priority mangle - 1; policy accept;\n    ct direction original return\n")
+		for _, inst := range zapretInstances(c) {
+			zs, p := inst.strategy, inst.profile
+			match := fmt.Sprintf("    ct mark & 0x%x == 0x%x", config.ZapretSelectorMask, zs.SelectorMark) + nftIfaceExpr("iifname", p.Interfaces)
+			for _, proto := range []string{"tcp", "udp"} {
+				limit := zs.TCPPktIn
+				if proto == "udp" {
+					limit = zs.UDPPktIn
+				}
+				if !protocolEnabled(zs, proto) || limit <= 0 {
+					continue
+				}
+				b.WriteString(match + " meta l4proto " + proto + " ct reply packets >= 1 ct reply packets <= " + itoa(limit) + fmt.Sprintf(" meta mark set meta mark & 0xff00ffff | 0x%x queue num %d bypass\n", zs.SelectorMark, config.ZapretQueueBase))
+			}
+		}
+		b.WriteString("  }\n\n  chain zapret_clear_pre {\n    type filter hook prerouting priority mangle + 2; policy accept;\n    meta mark set meta mark & 0xff00ffff\n")
+		b.WriteString("  }\n\n  chain zapret_clear_post {\n    type filter hook postrouting priority srcnat + 2; policy accept;\n    meta mark set meta mark & 0xff00ffff\n")
 		// Notrack any packet already carrying the zapret profile's fwmark
 		// in OUTPUT so its own re-injected packets (and any traffic that
 		// was already classified upstream) bypass conntrack. Applied
@@ -346,7 +363,7 @@ func writeMeshLimiterChains(b *strings.Builder, c config.Config) {
 //     to the remote proxy server would itself get re-marked.
 //   - `@proxy_server_bypass4/6` provides destination-based defense in depth
 //     if the cgroup wiring fails.
-//   - Zapret's re-injected output already carries `0x40000000`; we skip it.
+//   - Zapret's re-injected output carries its enabled profile's mark; we skip it.
 //   - `fib daddr type local` skips router-to-self; `ct direction reply`
 //     skips return packets of established connections.
 //
@@ -357,8 +374,7 @@ func writeMeshLimiterChains(b *strings.Builder, c config.Config) {
 //     (protocol, port) pairs only — those stay out of mihomo so nfqws can
 //     mangle them via POSTROUTING; other ports to the same hosts fall
 //     through to the proxy mark rules below.
-//   - vpn sections: mark with the VPN's fwmark; the VPN's own ip rule
-//     handles the route.
+//   - VPN outbounds use mihomo's cgroup exemption, not kernel VPN marks.
 //   - proxy sections: mark with `Settings.FwMark`. No `tproxy` action here
 //     (PREROUTING-only); the existing PREROUTING TPROXY rule fires on the
 //     re-injected packet and dispatches to the right per-section port.
@@ -367,7 +383,13 @@ func writeOutputChain(b *strings.Builder, c config.Config, includeIPv6 bool) {
 	b.WriteString(cgroupExemptionRule(c))
 	b.WriteString(easytierExemptionRule(c))
 	b.WriteString(ooniExemptionRule(c))
-	b.WriteString("    meta mark & 0x40000000 != 0 return\n")
+	seenMarks := map[string]bool{}
+	for _, p := range c.EnabledZapretProfiles() {
+		if !seenMarks[p.FwMark] {
+			b.WriteString("    meta mark & " + p.FwMark + " != 0 return\n")
+			seenMarks[p.FwMark] = true
+		}
+	}
 	b.WriteString("    fib daddr type { local, broadcast, anycast, multicast } return\n")
 	b.WriteString("    ct direction reply return\n")
 	b.WriteString("    meta l4proto != { tcp, udp } return\n")
@@ -387,7 +409,7 @@ func writeOutputChain(b *strings.Builder, c config.Config, includeIPv6 bool) {
 	if includeIPv6 {
 		b.WriteString("    ip6 daddr @proxy_server_bypass6" + counterTag("proxy_server_bypass6") + " return\n")
 	}
-	for _, s := range c.Sections {
+	for _, s := range sectionsByPriority(c.Sections) {
 		if !s.Enabled {
 			continue
 		}
@@ -525,7 +547,6 @@ func writeSectionSourceRules(b *strings.Builder, c config.Config, s config.Secti
 			b.WriteString("    ip6 saddr " + v6 + " return\n")
 		}
 	case "zapret":
-		writeZapretSourcePreroutingRules(b, c, s, v4, v6)
 	case "proxy", "":
 		if v4 != "" {
 			b.WriteString("    ip saddr " + v4 + " meta l4proto tcp meta mark set meta mark | " + c.Settings.FwMark + " tproxy ip to :" + itoa(s.TPROXYPort) + " accept\n")
@@ -556,61 +577,6 @@ func hasEnabledZapretStrategies(c config.Config) bool {
 	return false
 }
 
-func writeZapretPreroutingRules(b *strings.Builder, c config.Config, s config.Section, includeIPv6 bool) {
-	for _, name := range s.ZapretStrategies {
-		zs, ok := c.ZapretStrategyByName(name)
-		if !ok {
-			continue
-		}
-		p, ok := c.ZapretProfileByName(zs.Profile)
-		if !ok {
-			continue
-		}
-		for _, set := range nftSetRefs(s.NFTSet4()) {
-			writeZapretPreroutingSetRules(b, "ip", "@"+set, set, p, zs)
-		}
-		if includeIPv6 {
-			for _, set := range nftSetRefs(s.NFTSet6()) {
-				writeZapretPreroutingSetRules(b, "ip6", "@"+set, set, p, zs)
-			}
-		}
-	}
-}
-
-func writeZapretSourcePreroutingRules(b *strings.Builder, c config.Config, s config.Section, v4, v6 string) {
-	for _, name := range s.ZapretStrategies {
-		zs, ok := c.ZapretStrategyByName(name)
-		if !ok {
-			continue
-		}
-		p, ok := c.ZapretProfileByName(zs.Profile)
-		if !ok {
-			continue
-		}
-		if v4 != "" {
-			// No set name when matching on a CIDR-literal saddr; skip the counter.
-			writeZapretPreroutingSetRules(b, "ip", v4, "", p, zs)
-		}
-		if v6 != "" {
-			writeZapretPreroutingSetRules(b, "ip6", v6, "", p, zs)
-		}
-	}
-}
-
-func writeZapretPreroutingSetRules(b *strings.Builder, family, src, counterSet string, p config.ZapretProfile, zs config.ZapretStrategy) {
-	iif := nftIfaceExpr("iifname", p.Interfaces)
-	cnt := ""
-	if counterSet != "" {
-		cnt = counterTag(counterSet)
-	}
-	if protocolEnabled(zs, "tcp") && zs.TCPPktIn > 0 {
-		b.WriteString("    " + family + " saddr " + src + iif + " meta l4proto tcp" + nftPortExpr("tcp", "sport", zs.TCPPorts) + " ct reply packets >= 1 ct reply packets <= " + itoa(zs.TCPPktIn) + cnt + " queue num " + itoa(zs.QueueNum) + " bypass\n")
-	}
-	if protocolEnabled(zs, "udp") && zs.UDPPktIn > 0 {
-		b.WriteString("    " + family + " saddr " + src + iif + " meta l4proto udp" + nftPortExpr("udp", "sport", zs.UDPPorts) + " ct reply packets >= 1 ct reply packets <= " + itoa(zs.UDPPktIn) + cnt + " queue num " + itoa(zs.QueueNum) + " bypass\n")
-	}
-}
-
 func writeZapretPostroutingRules(b *strings.Builder, c config.Config, s config.Section, includeIPv6 bool) {
 	for _, name := range s.ZapretStrategies {
 		zs, ok := c.ZapretStrategyByName(name)
@@ -633,17 +599,17 @@ func writeZapretPostroutingRules(b *strings.Builder, c config.Config, s config.S
 }
 
 func writeZapretPostroutingSetRules(b *strings.Builder, family, dst, counterSet string, p config.ZapretProfile, zs config.ZapretStrategy) {
-	oif := nftIfaceExpr("oifname", p.Interfaces)
+	oif := nftIfaceExpr("oifname", p.Interfaces) + fmt.Sprintf(" ct mark & 0x%x == { 0x0, 0x%x }", config.ZapretSelectorMask, zs.SelectorMark)
 	cnt := ""
 	if counterSet != "" {
 		cnt = counterTag(counterSet)
 	}
 	if protocolEnabled(zs, "tcp") {
-		b.WriteString("    " + family + " daddr " + dst + oif + " meta mark & " + p.FwMark + " == 0 meta l4proto tcp" + nftPortExpr("tcp", "dport", zs.TCPPorts) + " ct original packets >= 1 ct original packets <= " + itoa(zs.TCPPktOut) + cnt + " queue num " + itoa(zs.QueueNum) + " bypass\n")
-		b.WriteString("    " + family + " daddr " + dst + oif + " meta mark & " + p.FwMark + " == 0 meta l4proto tcp" + nftPortExpr("tcp", "dport", zs.TCPPorts) + " tcp flags & (fin | rst) != 0" + cnt + " queue num " + itoa(zs.QueueNum) + " bypass\n")
+		b.WriteString("    " + family + " daddr " + dst + oif + " meta mark & " + p.FwMark + " == 0 meta l4proto tcp" + nftPortExpr("tcp", "dport", zs.TCPPorts) + " ct original packets >= 1 ct original packets <= " + itoa(zs.TCPPktOut) + cnt + zapretQueueSelector(zs) + " queue num " + itoa(config.ZapretQueueBase) + " bypass\n")
+		b.WriteString("    " + family + " daddr " + dst + oif + " meta mark & " + p.FwMark + " == 0 meta l4proto tcp" + nftPortExpr("tcp", "dport", zs.TCPPorts) + " tcp flags & (fin | rst) != 0" + cnt + zapretQueueSelector(zs) + " queue num " + itoa(config.ZapretQueueBase) + " bypass\n")
 	}
 	if protocolEnabled(zs, "udp") {
-		b.WriteString("    " + family + " daddr " + dst + oif + " meta mark & " + p.FwMark + " == 0 meta l4proto udp" + nftPortExpr("udp", "dport", zs.UDPPorts) + " ct original packets >= 1 ct original packets <= " + itoa(zs.UDPPktOut) + cnt + " queue num " + itoa(zs.QueueNum) + " bypass\n")
+		b.WriteString("    " + family + " daddr " + dst + oif + " meta mark & " + p.FwMark + " == 0 meta l4proto udp" + nftPortExpr("udp", "dport", zs.UDPPorts) + " ct original packets >= 1 ct original packets <= " + itoa(zs.UDPPktOut) + cnt + zapretQueueSelector(zs) + " queue num " + itoa(config.ZapretQueueBase) + " bypass\n")
 	}
 }
 
@@ -916,4 +882,10 @@ func nativeNFTLines(expr string, s config.Section, fwmark string) []string {
 		"    ip version 4 " + expr + base + " tproxy ip to :" + port + " accept\n",
 		"    ip6 version 6 " + expr + base + " tproxy ip6 to :" + port + " accept\n",
 	}
+}
+
+// The selector never replaces routing or fake-packet bits. Persist it for
+// reply classification; clear packet selector bits in the later base chains.
+func zapretQueueSelector(zs config.ZapretStrategy) string {
+	return fmt.Sprintf(" meta mark set meta mark & 0xff00ffff | 0x%x ct mark set ct mark & 0xff00ffff | 0x%x", zs.SelectorMark, zs.SelectorMark)
 }

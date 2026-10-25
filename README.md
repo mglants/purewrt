@@ -100,6 +100,8 @@ Three ways, pick whichever fits:
 - **Mihomo management** — browse proxy groups, switch nodes with latency test + connection draining,
   track upstream alpha releases.
 - **Zapret integration** — bundled, optional, detected at runtime and degraded gracefully when absent.
+  [Per-application WAN strategies, a local strategy library and LAN-client testing](docs/zapret.md),
+  with one shared production nfqws2 process. No mwan3 requirement.
 - **mwan3 coexistence** — detect-and-coexist multi-WAN; masked fwmark preserves mwan3 bits.
 - **Diagnostics** — domain checker, "What's Blocked Now", and a **Client Traffic** page that captures
   live flows + DNS + rejection signals and flags blocked/DPI-stalled/frozen connections with ASN/country

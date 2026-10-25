@@ -70,8 +70,7 @@ func (m Manager) ZapretStatus() ZapretStatusResult {
 	counters := zapretCounters()
 	var oldest time.Time
 
-	// Instances: one per enabled strategy referenced by an enabled zapret
-	// section. Dedup by strategy name (a strategy may be listed twice).
+	// All referenced strategies share one production queue and daemon.
 	seenStrategy := map[string]bool{}
 	for _, sec := range c.Sections {
 		if !sec.Enabled || sec.Action != "zapret" {
@@ -93,16 +92,16 @@ func (m Manager) ZapretStatus() ZapretStatusResult {
 		out.TotalPackets += pkts
 
 		for i, name := range sec.ZapretStrategies {
-			if seenStrategy[name] {
+			if seenStrategy["shared"] {
 				continue
 			}
 			zs, ok := c.ZapretStrategyByName(name)
 			if !ok {
 				continue
 			}
-			seenStrategy[name] = true
+			seenStrategy["shared"] = true
 			zs = c.NormalizeZapretStrategyAt(zs, i)
-			inst := ZapretInstanceStatus{Strategy: zs.Name, Queue: zs.QueueNum}
+			inst := ZapretInstanceStatus{Strategy: "shared", Queue: zs.QueueNum}
 			if pid, up := procs[zs.QueueNum]; up && pid > 0 {
 				inst.PID = pid
 				inst.Running = true

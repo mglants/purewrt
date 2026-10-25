@@ -96,7 +96,13 @@ func Load(path string) (Config, error) {
 	if len(c.Sections) == 0 {
 		c.Sections = Default().Sections
 	}
-	return c, s.Err()
+	if err := s.Err(); err != nil {
+		return c, err
+	}
+	if err := c.CompileZapretApplications(LoadZapretCandidates()); err != nil {
+		return c, err
+	}
+	return c, nil
 }
 
 // idName derives a display name from a section: `option name` wins when
@@ -317,38 +323,8 @@ func applySection(c *Config, x struct {
 	case "mwan3":
 		c.Mwan3.ProxyWANEnabled = b(x.opts, "proxy_wan_enabled", false)
 		c.Mwan3.ProxyWANs = list(x.opts, "proxy_wan", nil)
-	case "zapret_profile":
-		name := idName(x.opts, x.name, "zp_")
-		if name == "" {
-			name = "wan"
-		}
-		p := ZapretProfile{Name: name, Enabled: b(x.opts, "enabled", true)}
-		p.Interfaces = list(x.opts, "interface", nil)
-		p.QueueNum = i(x.opts, "queue_num", 0)
-		p.TPWSPort = i(x.opts, "tpws_port", 0)
-		p.FwMark = one(x.opts, "fwmark", "")
-		p.MaxPktOut = i(x.opts, "max_pkt_out", 0)
-		p.MaxPktIn = i(x.opts, "max_pkt_in", 0)
-		p.NFQWSBin = one(x.opts, "nfqws_bin", "")
-		p.TPWSBin = one(x.opts, "tpws_bin", "")
-		p.Params = one(x.opts, "params", "")
-		p.LuaBundleDir = one(x.opts, "lua_bundle_dir", "")
-		p.Blobs = list(x.opts, "blob", nil)
-		c.ZapretProfiles = append(c.ZapretProfiles, p)
 	case "zapret_strategy":
-		zs := ZapretStrategy{Name: idName(x.opts, x.name, "zs_"), Enabled: b(x.opts, "enabled", true)}
-		zs.Profile = one(x.opts, "profile", "wan")
-		zs.QueueNum = i(x.opts, "queue_num", 0)
-		zs.Protocols = list(x.opts, "protocols", list(x.opts, "protocol", nil))
-		zs.TCPPorts = one(x.opts, "tcp_ports", "")
-		zs.UDPPorts = one(x.opts, "udp_ports", "")
-		zs.TCPPktOut = i(x.opts, "tcp_pkt_out", 0)
-		zs.TCPPktIn = i(x.opts, "tcp_pkt_in", 0)
-		zs.UDPPktOut = i(x.opts, "udp_pkt_out", 0)
-		zs.UDPPktIn = i(x.opts, "udp_pkt_in", 0)
-		zs.Preset = one(x.opts, "preset", "")
-		zs.Params = one(x.opts, "params", "")
-		c.ZapretStrategies = append(c.ZapretStrategies, zs)
+		c.ZapretApplications = append(c.ZapretApplications, ZapretApplication{Name: idName(x.opts, x.name, "zs_"), Enabled: b(x.opts, "enabled", true), Assignments: list(x.opts, "assignment", nil)})
 	case "vpn":
 		v := VPN{Name: idName(x.opts, x.name, "vpn_"), Interface: "wg0"}
 		if v.Name == "" {

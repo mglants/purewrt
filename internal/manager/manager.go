@@ -39,6 +39,7 @@ const (
 	initMihomo     = "/etc/init.d/mihomo"
 	initEasytier   = "/etc/init.d/purewrt-easytier"
 	initPurewrtAPI = "/etc/init.d/purewrt-api"
+	initZapret     = "/etc/init.d/purewrt-zapret"
 	libexecPeerDNS = "/usr/libexec/purewrt-peerdns"
 )
 
@@ -1295,7 +1296,7 @@ func validateZapretStrategies(c config.Config) error {
 		profiles[p.Name] = true
 	}
 	strategies := map[string]config.ZapretStrategy{}
-	queues := map[int]string{}
+	selectors := map[uint32]string{}
 	for i, raw := range c.ZapretStrategies {
 		zs := c.NormalizeZapretStrategyAt(raw, i)
 		if !zs.Enabled {
@@ -1310,10 +1311,10 @@ func validateZapretStrategies(c config.Config) error {
 		if err := validatePort("zapret strategy "+zs.Name+" queue_num", zs.QueueNum, 0, 65535); err != nil {
 			return err
 		}
-		if prev := queues[zs.QueueNum]; prev != "" {
-			return fmt.Errorf("zapret strategy %q duplicates queue_num %d used by %q", zs.Name, zs.QueueNum, prev)
+		if zs.SelectorMark == 0 || zs.SelectorMark & ^config.ZapretSelectorMask != 0 || selectors[zs.SelectorMark] != "" {
+			return fmt.Errorf("zapret strategy %q has invalid or duplicate selector mark", zs.Name)
 		}
-		queues[zs.QueueNum] = zs.Name
+		selectors[zs.SelectorMark] = zs.Name
 		for _, proto := range zs.Protocols {
 			if !knownValue(strings.ToLower(strings.TrimSpace(proto)), "tcp", "udp") {
 				return fmt.Errorf("zapret strategy %q has unsupported protocol %q", zs.Name, proto)
@@ -1429,14 +1430,21 @@ func knownValue(v string, allowed ...string) bool {
 }
 
 func validateZapretProfileMarks(c config.Config) error {
-	pureMark, pureMarkOK := parseHexMark(c.Settings.FwMark)
 	pureMask, pureMaskOK := parseHexMark(c.Settings.FwMarkMask)
+	if len(c.EnabledZapretProfiles()) > 0 && pureMaskOK && pureMask&uint64(config.ZapretSelectorMask) != 0 {
+		return fmt.Errorf("PureWRT routing mask overlaps Zapret selector mask 0x%x", config.ZapretSelectorMask)
+	}
+	for _, wan := range c.Mwan3.ResolvedProxyWANs {
+		if len(c.EnabledZapretProfiles()) > 0 && wan.Mask&config.ZapretSelectorMask != 0 {
+			return fmt.Errorf("WAN %q routing mask overlaps Zapret selector mask", wan.Name)
+		}
+	}
 	for _, p := range c.EnabledZapretProfiles() {
 		zapretMark, ok := parseHexMark(p.FwMark)
-		if !ok || zapretMark == 0 {
+		if !ok || zapretMark == 0 || zapretMark&uint64(config.ZapretSelectorMask) != 0 {
 			return fmt.Errorf("zapret profile %q has invalid fwmark %q", p.Name, p.FwMark)
 		}
-		if pureMarkOK && pureMaskOK && pureMask != 0 && zapretMark&pureMask == pureMark&pureMask {
+		if pureMaskOK && zapretMark&pureMask != 0 {
 			return fmt.Errorf("zapret profile %q fwmark %s overlaps PureWRT fwmark %s/%s", p.Name, p.FwMark, c.Settings.FwMark, c.Settings.FwMarkMask)
 		}
 		// VPNs no longer carry an fwmark (routed via mihomo, not kernel marks),
@@ -1577,6 +1585,9 @@ func (m Manager) applyPrepare(force bool) (config.Config, system.BackupSet, gene
 	c, err = ResolveProxyWANs(c)
 	if err != nil {
 		return c, nil, generator.GeneratedPaths{}, generator.GenerationResult{}, func() {}, err
+	}
+	if err := validateZapretRoutingMasks(c, system.Runner{}); err != nil {
+		return c, nil, generator.GeneratedPaths{}, generator.GenerationResult{}, func() {}, applyFailure("configuration", err)
 	}
 	c = ResolveOONIUser(c)
 	log := newLog(c)
@@ -2250,6 +2261,11 @@ func (m Manager) applyPolicyRules(c config.Config, groups generator.GenerationGr
 
 func (m Manager) applyServiceRestarts(c config.Config, groups generator.GenerationGroups, r commandRunner) error {
 	log := newLog(c)
+	if groups.Zapret {
+		if err := m.restartZapret(c, r, initZapret); err != nil {
+			return err
+		}
+	}
 	if groups.OpenWrtBundle {
 		// dnsmasq's `reload` only sends SIGHUP, which re-reads /etc/hosts
 		// and leases but NOT the conf-dir where we drop the nftset
@@ -2468,6 +2484,9 @@ func (m Manager) restoreAndReload(c config.Config, backup system.BackupSet, r co
 	// nftset fragments. Use restart so the rollback genuinely restores
 	// dnsmasq state.
 	runService(initDnsmasq, "restart")
+	if err := m.restartZapret(c, r, initZapret); err != nil {
+		errs = append(errs, err.Error())
+	}
 	// Prefer hot-reload of the restored config (keeps connections) and fall
 	// back to a cold restart — same logic as the forward apply path.
 	if err := m.reloadOrRestartMihomo(c, r); err != nil {

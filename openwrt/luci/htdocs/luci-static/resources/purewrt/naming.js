@@ -16,7 +16,6 @@ var PREFIX = {
   proxy_provider: 'pp_',
   rule_provider: 'rp_',
   vpn: 'vpn_',
-  zapret_profile: 'zp_',
   zapret_strategy: 'zs_'
 };
 

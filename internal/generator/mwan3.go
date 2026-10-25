@@ -13,6 +13,9 @@ func MarkConflict(c config.Config, mwanMask string) (bool, string) {
 	}
 	pm, _ := strconv.ParseInt(strings.TrimPrefix(c.Settings.FwMarkMask, "0x"), 16, 64)
 	mm, _ := strconv.ParseInt(strings.TrimPrefix(mwanMask, "0x"), 16, 64)
+	if len(c.EnabledZapretProfiles()) > 0 && uint32(mm)&config.ZapretSelectorMask != 0 {
+		return true, fmt.Sprintf("Zapret selector mask 0x%x overlaps mwan3 mmx_mask %s", config.ZapretSelectorMask, mwanMask)
+	}
 	if pm&mm != 0 {
 		return true, fmt.Sprintf("PureWRT mask %s overlaps mwan3 mmx_mask %s", c.Settings.FwMarkMask, mwanMask)
 	}

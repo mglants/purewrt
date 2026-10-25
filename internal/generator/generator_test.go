@@ -200,7 +200,6 @@ func TestNFTRouterOutputProxyEmitsChain(t *testing.T) {
 		"chain output_mangle {",
 		"type route hook output priority mangle",
 		`socket cgroupv2 level 2 "services/mihomo" return`,
-		"meta mark & 0x40000000 != 0 return",
 		"fib daddr type { local, broadcast, anycast, multicast } return",
 		"ct direction reply return",
 		"meta l4proto != { tcp, udp } return",
@@ -1157,20 +1156,28 @@ func TestZapretNFTablesAndEnv(t *testing.T) {
 	c.ZapretStrategies = []config.ZapretStrategy{{Name: "media_tcp", Enabled: true, Profile: "wan_a", QueueNum: 200, Protocols: []string{"tcp"}, TCPPorts: "443", TCPPktOut: 15, TCPPktIn: 6, Params: "--strategy-a"}, {Name: "media_udp", Enabled: true, Profile: "wan_a", QueueNum: 201, Protocols: []string{"udp"}, UDPPorts: "443", UDPPktOut: 9, UDPPktIn: 3, Params: "--strategy-u"}}
 	c.Sections = []config.Section{{Name: "media", Enabled: true, Action: "zapret", TPROXYPort: 7894, ProxyGroup: "Media", IPv4Enabled: true, IPv6Enabled: true, UDPMode: "proxy", Priority: 90, ZapretStrategies: []string{"media_tcp", "media_udp"}}}
 	nft := string(NFTables(c))
-	if !strings.Contains(nft, "hook postrouting priority srcnat + 1") || !strings.Contains(nft, `oifname "wan_a" meta mark & 0x40000000 == 0 meta l4proto tcp tcp dport { 443 } ct original packets >= 1 ct original packets <= 15 counter name "proxy_media4" queue num 200 bypass`) || !strings.Contains(nft, `iifname "wan_a" meta l4proto tcp tcp sport { 443 } ct reply packets >= 1 ct reply packets <= 6 counter name "proxy_media4" queue num 200 bypass`) {
-		t.Fatalf("expected zapret nfqueue rule, got:\n%s", nft)
+	for _, want := range []string{
+		"hook postrouting priority srcnat + 1",
+		`oifname "wan_a" ct mark & 0xff0000 == { 0x0, 0x10000 }`,
+		`ct mark & 0xff0000 == 0x10000 iifname "wan_a" meta l4proto tcp ct reply packets >= 1 ct reply packets <= 6`,
+		`ct mark & 0xff0000 == 0x20000 iifname "wan_a" meta l4proto udp ct reply packets >= 1 ct reply packets <= 3`,
+		"meta mark set meta mark & 0xff00ffff | 0x10000",
+		"meta mark set meta mark & 0xff00ffff | 0x20000",
+		"tcp flags & (fin | rst) != 0",
+		"queue num 200 bypass",
+	} {
+		if !strings.Contains(nft, want) {
+			t.Fatalf("missing %q: %s", want, nft)
+		}
 	}
-	if !strings.Contains(nft, `meta l4proto udp udp dport { 443 } ct original packets >= 1 ct original packets <= 9 counter name "proxy_media4" queue num 201 bypass`) || !strings.Contains(nft, `meta l4proto udp udp sport { 443 } ct reply packets >= 1 ct reply packets <= 3 counter name "proxy_media4" queue num 201 bypass`) {
-		t.Fatalf("expected zapret udp nfqueue rules, got:\n%s", nft)
-	}
-	if !strings.Contains(nft, `tcp flags & (fin | rst) != 0 counter name "proxy_media4" queue num 200 bypass`) {
-		t.Fatalf("expected explicit tcp flags expression, got:\n%s", nft)
+	if strings.Contains(nft, "queue num 201") {
+		t.Fatal("multiple production queues", nft)
 	}
 	if strings.Contains(nft, "packets 1-") || strings.Contains(nft, "tcp flags fin,rst") {
 		t.Fatalf("nft must avoid ambiguous packet range or tcp flags syntax, got:\n%s", nft)
 	}
 	env := string(ZapretEnv(c))
-	if !strings.Contains(env, "PUREWRT_ZAPRET_INSTANCE_0_QUEUE=\"200\"") || !strings.Contains(env, "PUREWRT_ZAPRET_INSTANCE_1_QUEUE=\"201\"") || !strings.Contains(env, "PUREWRT_ZAPRET_INSTANCE_0_FWMARK=\"0x40000000\"") {
+	if !strings.Contains(env, "PUREWRT_ZAPRET_INSTANCE_0_QUEUE=\"200\"") || !strings.Contains(env, "PUREWRT_ZAPRET_INSTANCE_COUNT=\"1\"") || !strings.Contains(env, "PUREWRT_ZAPRET_INSTANCE_0_FWMARK=\"0x40000000\"") {
 		t.Fatalf("unexpected zapret env:\n%s", env)
 	}
 }
@@ -1188,7 +1195,7 @@ func TestZapretEnvEmitsBlobs(t *testing.T) {
 	c.ZapretStrategies = []config.ZapretStrategy{{Name: "yt", Enabled: true, Profile: "wan", QueueNum: 200, Protocols: []string{"udp"}, UDPPorts: "443", Params: "--filter-udp=443 --lua-desync=fake:blob=quic_google"}}
 	c.Sections = []config.Section{{Name: "Youtube", Enabled: true, Action: "zapret", IPv4Enabled: true, Priority: 10, ZapretStrategies: []string{"yt"}}}
 	env := string(ZapretEnv(c))
-	if !strings.Contains(env, "PUREWRT_ZAPRET_INSTANCE_0_BLOBS=\"") || !strings.Contains(env, "--blob=quic_google:@") {
+	if !strings.Contains(env, "PUREWRT_ZAPRET_INSTANCE_0_BLOBS=\"") || !strings.Contains(env, "--blob=pw_10000_quic_google:@") {
 		t.Fatalf("env missing param-derived --blob decl:\n%s", env)
 	}
 	// A strategy that references no blob (only built-ins would be fine too)
@@ -1210,7 +1217,7 @@ func TestZapretNFTablesInterfaceSet(t *testing.T) {
 	c.ZapretStrategies = []config.ZapretStrategy{{Name: "media_tcp", Enabled: true, Profile: "wan", QueueNum: 200, Protocols: []string{"tcp"}, TCPPorts: "443", TCPPktOut: 15, TCPPktIn: 6, Params: "--strategy-a"}}
 	c.Sections = []config.Section{{Name: "media", Enabled: true, Action: "zapret", IPv4Enabled: true, IPv6Enabled: true, Priority: 90, ZapretStrategies: []string{"media_tcp"}}}
 	nft := string(NFTables(c))
-	if !strings.Contains(nft, "oifname { \"pppoe-wan\", \"eth2\" } meta mark & 0x40000000 == 0 meta l4proto tcp") || !strings.Contains(nft, "iifname { \"pppoe-wan\", \"eth2\" } meta l4proto tcp") {
+	if !strings.Contains(nft, "oifname { \"pppoe-wan\", \"eth2\" } ct mark & 0xff0000 == { 0x0, 0x10000 } meta mark & 0x40000000 == 0 meta l4proto tcp") || !strings.Contains(nft, "iifname { \"pppoe-wan\", \"eth2\" } meta l4proto tcp") {
 		t.Fatalf("expected zapret interface set rules, got:\n%s", nft)
 	}
 }
@@ -1384,13 +1391,13 @@ func TestZapretAutoQueueGeneration(t *testing.T) {
 	}
 	c.Sections = []config.Section{{Name: "media", Enabled: true, Action: "zapret", IPv4Enabled: true, IPv6Enabled: true, ZapretStrategies: []string{"auto_tcp", "auto_udp"}}}
 	nft := string(NFTables(c))
-	for _, want := range []string{"queue num 200 bypass", "queue num 201 bypass"} {
+	for _, want := range []string{"queue num 200 bypass", "ct mark & 0xff0000 == { 0x0, 0x20000 }"} {
 		if !strings.Contains(nft, want) {
 			t.Fatalf("missing %q in:\n%s", want, nft)
 		}
 	}
 	env := string(ZapretEnv(c))
-	for _, want := range []string{"PUREWRT_ZAPRET_INSTANCE_0_QUEUE=\"200\"", "PUREWRT_ZAPRET_INSTANCE_1_QUEUE=\"201\""} {
+	for _, want := range []string{"PUREWRT_ZAPRET_INSTANCE_0_QUEUE=\"200\"", "PUREWRT_ZAPRET_INSTANCE_COUNT=\"1\""} {
 		if !strings.Contains(env, want) {
 			t.Fatalf("missing %q in:\n%s", want, env)
 		}

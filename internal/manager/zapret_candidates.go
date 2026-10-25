@@ -146,15 +146,24 @@ func (m Manager) ResolveBlob(file, sha256hex string) (string, error) {
 	}
 	for _, d := range config.ZapretFakeDirs {
 		p := filepath.Join(d, file)
-		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+		if st, err := os.Stat(p); err == nil && st.Mode().IsRegular() && st.Size() > 0 {
+			if sha256hex != "" {
+				data, err := os.ReadFile(p)
+				if err != nil || blobSum(data) != strings.ToLower(sha256hex) {
+					continue
+				}
+			}
 			return p, nil
 		}
 	}
 	cache := filepath.Join(config.ZapretBlobCacheDir, file)
 	if data, err := os.ReadFile(cache); err == nil {
-		if sha256hex == "" || blobSum(data) == strings.ToLower(sha256hex) {
+		if len(data) > 0 && (sha256hex == "" || blobSum(data) == strings.ToLower(sha256hex)) {
 			return cache, nil
 		}
+	}
+	if strings.HasPrefix(file, "user_") {
+		return "", fmt.Errorf("custom blob %s is missing or has an invalid checksum; upload it again", file)
 	}
 	c, err := m.Load()
 	if err != nil {

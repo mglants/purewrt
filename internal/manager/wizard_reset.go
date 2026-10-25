@@ -26,8 +26,7 @@ func (m Manager) WizardReset() error {
 	fresh := config.Default()
 
 	// Preserved section definitions.
-	fresh.ZapretProfiles = cur.ZapretProfiles
-	fresh.ZapretStrategies = cur.ZapretStrategies
+	fresh.ZapretApplications = cur.ZapretApplications
 	fresh.VPNs = cur.VPNs
 
 	// Preserved settings — guarded on non-empty so an unset field keeps its

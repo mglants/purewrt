@@ -37,6 +37,7 @@ start_service() {
 	log_msg debug "start: zapret debug arg=$ZAPRET_DEBUG"
 	[ -f /usr/lib/zapret/zapret-lib.lua ] && ZAPRET_LUA="$ZAPRET_LUA --lua-init=@/usr/lib/zapret/zapret-lib.lua"
 	[ -f /usr/lib/zapret/zapret-antidpi.lua ] && ZAPRET_LUA="$ZAPRET_LUA --lua-init=@/usr/lib/zapret/zapret-antidpi.lua"
+	[ -f /usr/lib/zapret/zapret-auto.lua ] && ZAPRET_LUA="$ZAPRET_LUA --lua-init=@/usr/lib/zapret/zapret-auto.lua"
 	i=0
 	while [ "$i" -lt "${PUREWRT_ZAPRET_INSTANCE_COUNT:-0}" ]; do
 		eval name="\$PUREWRT_ZAPRET_INSTANCE_${i}_NAME"
