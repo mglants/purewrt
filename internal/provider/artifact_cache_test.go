@@ -9,8 +9,8 @@ import (
 
 func TestCleanupArtifactsEnforcesEntryLimit(t *testing.T) {
 	dir := t.TempDir()
-	old := ArtifactPathInCache(dir, "p", "old")
-	newer := ArtifactPathInCache(dir, "p", "new")
+	old := artifactPathInCache(dir, "p", "old")
+	newer := artifactPathInCache(dir, "p", "new")
 	if err := os.MkdirAll(filepath.Dir(old), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -46,9 +46,9 @@ func TestCleanupArtifactsEnforcesEntryLimit(t *testing.T) {
 // (statistics calls CleanupArtifacts with empty limits just to count).
 func TestCleanupArtifactsPrunesNonLiveChecksums(t *testing.T) {
 	dir := t.TempDir()
-	stale := ArtifactPathInCache(dir, "p", "aaaa")
-	live := ArtifactPathInCache(dir, "p", "bbbb")
-	gone := ArtifactPathInCache(dir, "removed-provider", "cccc")
+	stale := artifactPathInCache(dir, "p", "aaaa")
+	live := artifactPathInCache(dir, "p", "bbbb")
+	gone := artifactPathInCache(dir, "removed-provider", "cccc")
 	for _, p := range []string{stale, live, gone} {
 		if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
 			t.Fatal(err)
@@ -82,7 +82,7 @@ func TestCleanupArtifactsPrunesNonLiveChecksums(t *testing.T) {
 
 func TestCleanupArtifactsKeepsProviderWithUnknownChecksum(t *testing.T) {
 	dir := t.TempDir()
-	p := ArtifactPathInCache(dir, "p", "aaaa")
+	p := artifactPathInCache(dir, "p", "aaaa")
 	if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestCleanupArtifactsKeepsProviderWithUnknownChecksum(t *testing.T) {
 
 func TestCleanupArtifactsNilLiveKeepsEverything(t *testing.T) {
 	dir := t.TempDir()
-	p := ArtifactPathInCache(dir, "p", "aaaa")
+	p := artifactPathInCache(dir, "p", "aaaa")
 	if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -120,4 +120,9 @@ func TestCleanupArtifactsNilLiveKeepsEverything(t *testing.T) {
 	if stats.Removed != 0 || stats.Entries != 1 {
 		t.Fatalf("nil Live must be measure-only, stats=%#v", stats)
 	}
+}
+
+// artifactPathInCache constructs fixture paths without expanding the production API.
+func artifactPathInCache(cacheDir, providerName, checksum string) string {
+	return filepath.Join(artifactDirFromCache(cacheDir, providerName), checksum+".rules")
 }

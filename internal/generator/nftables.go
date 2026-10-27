@@ -223,7 +223,7 @@ func NFTablesWithNative(c config.Config, native map[string][]string) []byte {
 				b.WriteString(line)
 			}
 		}
-		if s.UDPMode == "block_quic" {
+		if _, matchesQUIC := config.IntersectDestinationPorts(s.DestinationPorts, "443"); s.UDPMode == "block_quic" && s.MatchesProtocol("udp") && matchesQUIC {
 			for _, set := range nftSetRefs(s.NFTSet4()) {
 				b.WriteString("    ip daddr @" + set + counterTag(set) + " udp dport 443 reject\n")
 			}
@@ -234,16 +234,20 @@ func NFTablesWithNative(c config.Config, native map[string][]string) []byte {
 			}
 		}
 		for _, set := range nftSetRefs(s.NFTSet4()) {
-			b.WriteString("    ip daddr @" + set + " meta l4proto tcp meta mark set meta mark | " + c.Settings.FwMark + counterTag(set) + " tproxy ip to :" + itoa(s.TPROXYPort) + " accept\n")
-			if s.UDPMode != "tcp_only" {
-				b.WriteString("    ip daddr @" + set + " meta l4proto udp meta mark set meta mark | " + c.Settings.FwMark + counterTag(set) + " tproxy ip to :" + itoa(s.TPROXYPort) + " accept\n")
+			if s.MatchesProtocol("tcp") {
+				b.WriteString("    ip daddr @" + set + " meta l4proto tcp" + sectionPortExpr(s, "tcp") + " meta mark set meta mark | " + c.Settings.FwMark + counterTag(set) + " tproxy ip to :" + itoa(s.TPROXYPort) + " accept\n")
+			}
+			if s.UDPMode != "tcp_only" && s.MatchesProtocol("udp") {
+				b.WriteString("    ip daddr @" + set + " meta l4proto udp" + sectionPortExpr(s, "udp") + " meta mark set meta mark | " + c.Settings.FwMark + counterTag(set) + " tproxy ip to :" + itoa(s.TPROXYPort) + " accept\n")
 			}
 		}
 		if includeIPv6 {
 			for _, set := range nftSetRefs(s.NFTSet6()) {
-				b.WriteString("    ip6 daddr @" + set + " meta l4proto tcp meta mark set meta mark | " + c.Settings.FwMark + counterTag(set) + " tproxy ip6 to :" + itoa(s.TPROXYPort) + " accept\n")
-				if s.UDPMode != "tcp_only" {
-					b.WriteString("    ip6 daddr @" + set + " meta l4proto udp meta mark set meta mark | " + c.Settings.FwMark + counterTag(set) + " tproxy ip6 to :" + itoa(s.TPROXYPort) + " accept\n")
+				if s.MatchesProtocol("tcp") {
+					b.WriteString("    ip6 daddr @" + set + " meta l4proto tcp" + sectionPortExpr(s, "tcp") + " meta mark set meta mark | " + c.Settings.FwMark + counterTag(set) + " tproxy ip6 to :" + itoa(s.TPROXYPort) + " accept\n")
+				}
+				if s.UDPMode != "tcp_only" && s.MatchesProtocol("udp") {
+					b.WriteString("    ip6 daddr @" + set + " meta l4proto udp" + sectionPortExpr(s, "udp") + " meta mark set meta mark | " + c.Settings.FwMark + counterTag(set) + " tproxy ip6 to :" + itoa(s.TPROXYPort) + " accept\n")
 				}
 			}
 		}
@@ -317,7 +321,7 @@ func NFTablesWithNative(c config.Config, native map[string][]string) []byte {
 	}
 	b.WriteString("  }\n")
 	if c.Settings.RouterOutputProxy {
-		writeOutputChain(&b, c, includeIPv6)
+		writeOutputChain(&b, c, includeIPv6, native)
 	}
 	writeMeshLimiterChains(&b, c)
 	b.WriteString("}\n")
@@ -378,7 +382,7 @@ func writeMeshLimiterChains(b *strings.Builder, c config.Config) {
 //   - proxy sections: mark with `Settings.FwMark`. No `tproxy` action here
 //     (PREROUTING-only); the existing PREROUTING TPROXY rule fires on the
 //     re-injected packet and dispatches to the right per-section port.
-func writeOutputChain(b *strings.Builder, c config.Config, includeIPv6 bool) {
+func writeOutputChain(b *strings.Builder, c config.Config, includeIPv6 bool, nativeMaps ...map[string][]string) {
 	b.WriteString("\n  chain output_mangle {\n    type route hook output priority mangle; policy accept;\n")
 	b.WriteString(cgroupExemptionRule(c))
 	b.WriteString(easytierExemptionRule(c))
@@ -413,6 +417,13 @@ func writeOutputChain(b *strings.Builder, c config.Config, includeIPv6 bool) {
 		if !s.Enabled {
 			continue
 		}
+		if len(nativeMaps) > 0 && s.Action == "proxy" {
+			for _, expr := range nativeMaps[0][s.Name] {
+				for _, line := range nativeNFTActionLines(expr, s, c.Settings.FwMark, true) {
+					b.WriteString(line)
+				}
+			}
+		}
 		switch s.Action {
 		case "reject":
 			for _, set := range nftSetRefs(s.NFTSet4()) {
@@ -436,16 +447,20 @@ func writeOutputChain(b *strings.Builder, c config.Config, includeIPv6 bool) {
 			writeZapretClaimReturns(b, c, s, includeIPv6)
 		case "proxy", "":
 			for _, set := range nftSetRefs(s.NFTSet4()) {
-				b.WriteString("    ip daddr @" + set + " meta l4proto tcp meta mark set meta mark | " + c.Settings.FwMark + counterTag(set) + " accept\n")
-				if s.UDPMode != "tcp_only" {
-					b.WriteString("    ip daddr @" + set + " meta l4proto udp meta mark set meta mark | " + c.Settings.FwMark + counterTag(set) + " accept\n")
+				if s.MatchesProtocol("tcp") {
+					b.WriteString("    ip daddr @" + set + " meta l4proto tcp" + sectionPortExpr(s, "tcp") + " meta mark set meta mark | " + c.Settings.FwMark + counterTag(set) + " accept\n")
+				}
+				if s.UDPMode != "tcp_only" && s.MatchesProtocol("udp") {
+					b.WriteString("    ip daddr @" + set + " meta l4proto udp" + sectionPortExpr(s, "udp") + " meta mark set meta mark | " + c.Settings.FwMark + counterTag(set) + " accept\n")
 				}
 			}
 			if includeIPv6 {
 				for _, set := range nftSetRefs(s.NFTSet6()) {
-					b.WriteString("    ip6 daddr @" + set + " meta l4proto tcp meta mark set meta mark | " + c.Settings.FwMark + counterTag(set) + " accept\n")
-					if s.UDPMode != "tcp_only" {
-						b.WriteString("    ip6 daddr @" + set + " meta l4proto udp meta mark set meta mark | " + c.Settings.FwMark + counterTag(set) + " accept\n")
+					if s.MatchesProtocol("tcp") {
+						b.WriteString("    ip6 daddr @" + set + " meta l4proto tcp" + sectionPortExpr(s, "tcp") + " meta mark set meta mark | " + c.Settings.FwMark + counterTag(set) + " accept\n")
+					}
+					if s.UDPMode != "tcp_only" && s.MatchesProtocol("udp") {
+						b.WriteString("    ip6 daddr @" + set + " meta l4proto udp" + sectionPortExpr(s, "udp") + " meta mark set meta mark | " + c.Settings.FwMark + counterTag(set) + " accept\n")
 					}
 				}
 			}
@@ -509,14 +524,18 @@ func writeSectionDeviceRules(b *strings.Builder, c config.Config, s config.Secti
 	case "direct":
 		b.WriteString("    ether saddr " + set + " return\n")
 	case "proxy", "":
-		b.WriteString("    meta nfproto ipv4 ether saddr " + set + " meta l4proto tcp meta mark set meta mark | " + c.Settings.FwMark + " tproxy ip to :" + itoa(s.TPROXYPort) + " accept\n")
-		if s.UDPMode != "tcp_only" {
-			b.WriteString("    meta nfproto ipv4 ether saddr " + set + " meta l4proto udp meta mark set meta mark | " + c.Settings.FwMark + " tproxy ip to :" + itoa(s.TPROXYPort) + " accept\n")
+		if s.MatchesProtocol("tcp") {
+			b.WriteString("    meta nfproto ipv4 ether saddr " + set + " meta l4proto tcp" + sectionPortExpr(s, "tcp") + " meta mark set meta mark | " + c.Settings.FwMark + " tproxy ip to :" + itoa(s.TPROXYPort) + " accept\n")
+		}
+		if s.UDPMode != "tcp_only" && s.MatchesProtocol("udp") {
+			b.WriteString("    meta nfproto ipv4 ether saddr " + set + " meta l4proto udp" + sectionPortExpr(s, "udp") + " meta mark set meta mark | " + c.Settings.FwMark + " tproxy ip to :" + itoa(s.TPROXYPort) + " accept\n")
 		}
 		if includeIPv6 {
-			b.WriteString("    meta nfproto ipv6 ether saddr " + set + " meta l4proto tcp meta mark set meta mark | " + c.Settings.FwMark + " tproxy ip6 to :" + itoa(s.TPROXYPort) + " accept\n")
-			if s.UDPMode != "tcp_only" {
-				b.WriteString("    meta nfproto ipv6 ether saddr " + set + " meta l4proto udp meta mark set meta mark | " + c.Settings.FwMark + " tproxy ip6 to :" + itoa(s.TPROXYPort) + " accept\n")
+			if s.MatchesProtocol("tcp") {
+				b.WriteString("    meta nfproto ipv6 ether saddr " + set + " meta l4proto tcp" + sectionPortExpr(s, "tcp") + " meta mark set meta mark | " + c.Settings.FwMark + " tproxy ip6 to :" + itoa(s.TPROXYPort) + " accept\n")
+			}
+			if s.UDPMode != "tcp_only" && s.MatchesProtocol("udp") {
+				b.WriteString("    meta nfproto ipv6 ether saddr " + set + " meta l4proto udp" + sectionPortExpr(s, "udp") + " meta mark set meta mark | " + c.Settings.FwMark + " tproxy ip6 to :" + itoa(s.TPROXYPort) + " accept\n")
 			}
 		}
 	}
@@ -549,15 +568,19 @@ func writeSectionSourceRules(b *strings.Builder, c config.Config, s config.Secti
 	case "zapret":
 	case "proxy", "":
 		if v4 != "" {
-			b.WriteString("    ip saddr " + v4 + " meta l4proto tcp meta mark set meta mark | " + c.Settings.FwMark + " tproxy ip to :" + itoa(s.TPROXYPort) + " accept\n")
-			if s.UDPMode != "tcp_only" {
-				b.WriteString("    ip saddr " + v4 + " meta l4proto udp meta mark set meta mark | " + c.Settings.FwMark + " tproxy ip to :" + itoa(s.TPROXYPort) + " accept\n")
+			if s.MatchesProtocol("tcp") {
+				b.WriteString("    ip saddr " + v4 + " meta l4proto tcp" + sectionPortExpr(s, "tcp") + " meta mark set meta mark | " + c.Settings.FwMark + " tproxy ip to :" + itoa(s.TPROXYPort) + " accept\n")
+			}
+			if s.UDPMode != "tcp_only" && s.MatchesProtocol("udp") {
+				b.WriteString("    ip saddr " + v4 + " meta l4proto udp" + sectionPortExpr(s, "udp") + " meta mark set meta mark | " + c.Settings.FwMark + " tproxy ip to :" + itoa(s.TPROXYPort) + " accept\n")
 			}
 		}
 		if v6 != "" {
-			b.WriteString("    ip6 saddr " + v6 + " meta l4proto tcp meta mark set meta mark | " + c.Settings.FwMark + " tproxy ip6 to :" + itoa(s.TPROXYPort) + " accept\n")
-			if s.UDPMode != "tcp_only" {
-				b.WriteString("    ip6 saddr " + v6 + " meta l4proto udp meta mark set meta mark | " + c.Settings.FwMark + " tproxy ip6 to :" + itoa(s.TPROXYPort) + " accept\n")
+			if s.MatchesProtocol("tcp") {
+				b.WriteString("    ip6 saddr " + v6 + " meta l4proto tcp" + sectionPortExpr(s, "tcp") + " meta mark set meta mark | " + c.Settings.FwMark + " tproxy ip6 to :" + itoa(s.TPROXYPort) + " accept\n")
+			}
+			if s.UDPMode != "tcp_only" && s.MatchesProtocol("udp") {
+				b.WriteString("    ip6 saddr " + v6 + " meta l4proto udp" + sectionPortExpr(s, "udp") + " meta mark set meta mark | " + c.Settings.FwMark + " tproxy ip6 to :" + itoa(s.TPROXYPort) + " accept\n")
 			}
 		}
 	}
@@ -583,6 +606,7 @@ func writeZapretPostroutingRules(b *strings.Builder, c config.Config, s config.S
 		if !ok {
 			continue
 		}
+		zs = sectionZapretStrategy(s, zs)
 		p, ok := c.ZapretProfileByName(zs.Profile)
 		if !ok {
 			continue
@@ -716,6 +740,7 @@ func zapretSectionPortClaims(c config.Config, s config.Section) map[string]zapre
 		if !ok {
 			continue
 		}
+		zs = sectionZapretStrategy(s, zs)
 		if protocolEnabled(zs, "tcp") {
 			add("tcp", zs.TCPPorts)
 		}
@@ -870,18 +895,34 @@ func isIPv6Set(set string) bool {
 }
 
 func nativeNFTLines(expr string, s config.Section, fwmark string) []string {
+	return nativeNFTActionLines(expr, s, fwmark, false)
+}
+
+func nativeNFTActionLines(expr string, s config.Section, fwmark string, output bool) []string {
+	if s.Action != "proxy" && s.Action != "" {
+		return nil
+	}
+	for _, proto := range []string{"tcp", "udp"} {
+		if strings.Contains(expr, "meta l4proto "+proto) && (!s.MatchesProtocol(proto) || (proto == "udp" && s.Action == "proxy" && s.UDPMode == "tcp_only")) {
+			return nil
+		}
+	}
+	expr += sectionMatchExpr(s)
 	base := " meta mark set meta mark | " + fwmark
 	port := itoa(s.TPROXYPort)
+	action := func(family string) string {
+		if output {
+			return base + " accept\n"
+		}
+		return base + " tproxy " + family + " to :" + port + " accept\n"
+	}
 	if strings.Contains(expr, "ip6 ") {
-		return []string{"    " + expr + base + " tproxy ip6 to :" + port + " accept\n"}
+		return []string{"    " + expr + action("ip6")}
 	}
 	if strings.Contains(expr, "ip ") {
-		return []string{"    " + expr + base + " tproxy ip to :" + port + " accept\n"}
+		return []string{"    " + expr + action("ip")}
 	}
-	return []string{
-		"    ip version 4 " + expr + base + " tproxy ip to :" + port + " accept\n",
-		"    ip6 version 6 " + expr + base + " tproxy ip6 to :" + port + " accept\n",
-	}
+	return []string{"    ip version 4 " + expr + action("ip"), "    ip6 version 6 " + expr + action("ip6")}
 }
 
 // The selector never replaces routing or fake-packet bits. Persist it for

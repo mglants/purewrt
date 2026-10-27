@@ -46,7 +46,6 @@ function targetChoices() {
   out.push([ EXCLUDE, _('Exclude from purewrt (bypass)') ]);
   return out;
 }
-function targetLabel(t) { return t === EXCLUDE ? _('excluded (bypass)') : t; }
 
 // targetSelect — an inline dropdown for editing a row's routing target
 // (sections + Exclude). Preserves a stale target (deleted/disabled section) as
@@ -494,6 +493,61 @@ return view.extend({
     priority.description = _('Lower value has higher precedence and is emitted earlier in nftables routing rules.');
     // Source CIDRs are edited in the dedicated "IP / CIDR routing" table below,
     // not per-section here, so `source_cidr4/6` intentionally have no options.
+    var matchProtocol = s.option(form.MultiValue, 'match_protocol', _('Protocol'));
+    matchProtocol.value('any', _('Any'));
+    matchProtocol.value('tcp', _('TCP'));
+    matchProtocol.value('udp', _('UDP'));
+    matchProtocol.modalonly = true;
+    matchProtocol.depends('action', 'proxy');
+    matchProtocol.depends('action', 'zapret');
+    matchProtocol.description = _('Select TCP, UDP, or both. Any adds no restriction; unmatched traffic continues to later rules.');
+    // Keep the scalar backend format while exposing firewall-style checkboxes.
+    matchProtocol.cfgvalue = function(sectionId) {
+      var value = uci.get('purewrt', sectionId, 'match_protocol');
+      return value === 'tcp_udp' ? [ 'tcp', 'udp' ] : [ value || 'any' ];
+    };
+    matchProtocol.write = function(sectionId, value) {
+      var values = L.toArray(value);
+      if (!values.length || values.indexOf('any') !== -1)
+        uci.unset('purewrt', sectionId, 'match_protocol');
+      else
+        uci.set('purewrt', sectionId, 'match_protocol', values.indexOf('tcp') !== -1 && values.indexOf('udp') !== -1 ? 'tcp_udp' : values[0]);
+    };
+    matchProtocol.renderWidget = function(sectionId, optionIndex, cfgvalue) {
+      var widget = new ui.Dropdown(cfgvalue || [ 'any' ], this.transformChoices(), {
+        id: this.cbid(sectionId), sort: this.keylist, multiple: true,
+        optional: false, display_items: 3, dropdown_items: -1, create: false,
+        validate: this.getValidator(sectionId),
+        disabled: this.readonly != null ? this.readonly : this.map.readonly
+      });
+      // Like the firewall selector, Any and explicit protocols are exclusive.
+      widget.toggleItem = function(sb, li) {
+        var toggle = ui.Dropdown.prototype.toggleItem;
+        toggle.call(this, sb, li);
+        if (li.getAttribute('data-value') === 'any') {
+          li.parentNode.querySelectorAll('li[data-value]').forEach(function(item) {
+            if (item !== li) toggle.call(this, sb, item, false);
+          }, this);
+        } else {
+          var any = li.parentNode.querySelector('li[data-value="any"]');
+          if (any) toggle.call(this, sb, any, false);
+        }
+      };
+      return widget.render();
+    };
+    var destinationPorts = s.option(form.Value, 'destination_ports', _('Destination ports'));
+    destinationPorts.modalonly = true;
+    destinationPorts.depends('action', 'proxy');
+    destinationPorts.depends('action', 'zapret');
+    destinationPorts.placeholder = _('All ports / strategy ports for Zapret');
+    destinationPorts.description = _('Comma-separated ports or ranges, for example 443, 10000-11000. Restricts TCP/UDP matches, including client assignments. For Zapret, only ports also supported by the strategy are used.');
+    destinationPorts.validate = function(sectionId, value) {
+      if (!value || !value.trim()) return true;
+      return value.split(',').every(function(part) {
+        var m = part.trim().match(/^(\d+)\s*(?:-\s*(\d+))?$/);
+        return m && +m[1] >= 1 && +m[1] <= 65535 && (!m[2] || (+m[2] >= +m[1] && +m[2] <= 65535));
+      }) || _('Use ports from 1 to 65535, separated by commas, with optional ascending ranges.');
+    };
     var udp = s.option(form.ListValue, 'udp_mode', _('UDP mode'));
     udp.value('proxy');
     udp.value('block_quic');

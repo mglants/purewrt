@@ -33,7 +33,7 @@ var callReload = rpc.declare({ object: 'purewrt', method: 'reload' });
 // uses (default_lists_catalog → native_list_add ×N → update → reload). The
 // catalog ships a JSON array, wrapped {"catalog":[…]} for ubus.
 var callDefaultListsCatalog = rpc.declare({ object: 'purewrt', method: 'default_lists_catalog', expect: { catalog: [] } });
-var callNativeListAdd = rpc.declare({ object: 'purewrt', method: 'native_list_add', params: [ 'url', 'section', 'priority' ] });
+var callNativeListAdd = rpc.declare({ object: 'purewrt', method: 'native_list_add', params: [ 'url', 'section' ] });
 var callUpdate = rpc.declare({ object: 'purewrt', method: 'update' });
 var callUpdateRuleProvider = rpc.declare({ object: 'purewrt', method: 'update_rule_provider', params: [ 'name' ] });
 var callUpdateRuleProviderHot = rpc.declare({ object: 'purewrt', method: 'update_rule_provider_no_restart', params: [ 'name' ] });
@@ -121,7 +121,6 @@ function ruleSummary(sid, stats) {
     uci.get('purewrt', sid, 'behavior') || '-',
     uci.get('purewrt', sid, 'format') || '-',
     uci.get('purewrt', sid, 'section') || '-',
-    uci.get('purewrt', sid, 'priority') || '1000',
     st && st.error ? _('Error') : (st && st.last_success ? _('OK') : '-')
   ];
 }
@@ -203,7 +202,6 @@ function openCatalogImport(sections) {
         cb,
         E('strong', {}, entry.name || entry.file),
         counts.length ? E('span', { 'style': 'color:#888;margin-left:.4em' }, '— ' + counts.join(', ')) : E('span'),
-        (entry.priority != null && entry.priority !== '') ? E('span', { 'style': 'color:#888;margin-left:.4em' }, _('(priority %s)').format(entry.priority)) : E('span'),
         already ? E('span', { 'class': 'purewrt-pill purewrt-pill-info', 'style': 'margin-left:.4em' }, _('already imported')) : E('span'),
         E('span', { 'style': 'margin-left:auto' }, [ _('→ section '), sel ])
       ]);
@@ -227,7 +225,7 @@ function openCatalogImport(sections) {
     rows.forEach(function(r) { r.cb.addEventListener('change', refreshBtn); });
 
     var body = [
-      E('p', {}, _('Select which catalog lists to import. Each becomes a native_import rule provider bound to the chosen section (created if it doesn’t exist), using the catalog’s priority.')),
+      E('p', {}, _('Select which catalog lists to import. Each becomes a native_import rule provider bound to the chosen section (created if it doesn’t exist), with routing precedence controlled by the section.')),
       base ? E([]) : E('p', { 'class': 'alert-message warning' }, _('The Default-lists base URL is not set (Settings). Set it before importing.')),
       E('div', { 'style': 'max-height:24em;overflow-y:auto;border:1px solid #ccc;border-radius:4px;padding:.3em .6em;margin:.4em 0' },
         rows.map(function(r) { return r.node; }))
@@ -240,7 +238,7 @@ function openCatalogImport(sections) {
       importBtn.disabled = 'disabled';
       importBtn.textContent = _('Importing…');
       var adds = chosen.map(function(r) {
-        return callNativeListAdd(base + r.entry.file, r.sel.value, String(r.entry.priority != null ? r.entry.priority : ''));
+        return callNativeListAdd(base + r.entry.file, r.sel.value);
       });
       Promise.all(adds).then(callUpdate).then(callReload).then(function() {
         ui.hideModal();
@@ -480,11 +478,6 @@ return view.extend({
     var interval = s.option(form.Value, 'interval', _('Update interval'));
     interval.datatype = 'uinteger';
 
-    var priority = s.option(form.Value, 'priority', _('Conflict priority'));
-    priority.datatype = 'integer';
-    priority.placeholder = '1000';
-    priority.description = _('Lower value wins when the same exact domain/CIDR/native rule appears in multiple providers. Empty or 0 uses the default priority 1000.');
-
     var targetSection = s.option(form.ListValue, 'section', _('Routing section'));
     targetSection.rmempty = false;
     targetSection.write = function(sectionId, value) {
@@ -543,8 +536,8 @@ return view.extend({
 
     return m.render().then(function(root) {
       tableSection.render(root, {
-        columns: '5rem 0 1.5fr 1fr 1fr 1.4fr 1fr 1fr 1fr 18rem',
-        headers: [ '', '', _('Name'), _('Behavior'), _('Format'), _('Section'), _('Priority'), _('Status'), _('Enable'), '' ],
+        columns: '5rem 0 1.5fr 1fr 1fr 1.4fr 1fr 1fr 18rem',
+        headers: [ '', '', _('Name'), _('Behavior'), _('Format'), _('Section'), _('Status'), _('Enable'), '' ],
         draggable: true,
         showEnable: true,
         titleOf: sectionTitle,

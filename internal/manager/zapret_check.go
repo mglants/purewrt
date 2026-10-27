@@ -35,14 +35,6 @@ type ZapretCheckOptions struct {
 	SkipIP    string
 }
 
-func (m Manager) ZapretCheckStrategy(domain string, wanInterface ...string) (string, error) {
-	opt := ZapretCheckOptions{}
-	if len(wanInterface) > 0 {
-		opt.Interface = wanInterface[0]
-	}
-	return m.ZapretCheckStrategyWithOptions(domain, opt)
-}
-
 func (m Manager) ZapretCheckStrategyWithOptions(domain string, opt ZapretCheckOptions) (string, error) {
 	return m.zapretCheckStrategyWithOptions(domain, opt, nil)
 }

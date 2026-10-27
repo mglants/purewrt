@@ -18,7 +18,7 @@ var nativeListNameSanitize = regexp.MustCompile(`[^a-z0-9_]+`)
 // Returns the provider name. native_import imports the list verbatim on the
 // router (no parse/validate/dedup), so this is the lightweight default-list
 // path used by the wizard and the `add-native-list` CLI.
-func (m Manager) AddNativeList(url, section string, priority int) (string, error) {
+func (m Manager) AddNativeList(url, section string) (string, error) {
 	url = strings.TrimSpace(url)
 	section = strings.TrimSpace(section)
 	if url == "" || section == "" {
@@ -30,9 +30,7 @@ func (m Manager) AddNativeList(url, section string, priority int) (string, error
 	}
 	name := nativeListName(url)
 
-	// Resolve the section's action + the effective priority. An explicit
-	// catalog priority (>0) wins; otherwise inherit an existing section's
-	// priority; otherwise fall back to the UCI section default (100).
+	// Resolve the section's action.
 	sec, sectionExists := c.SectionByName(section)
 	action := "proxy"
 	if sectionExists && sec.Action != "" {
@@ -45,20 +43,9 @@ func (m Manager) AddNativeList(url, section string, priority int) (string, error
 			action = section
 		}
 	}
-	effPriority := priority
-	if effPriority <= 0 {
-		if sectionExists {
-			effPriority = sec.Priority
-		}
-		if effPriority <= 0 {
-			effPriority = 100
-		}
-	}
-
-	// Create the section if it doesn't exist yet (like subscription import),
-	// seeding the new section's precedence from the rule provider's priority.
+	// Create missing sections with the default section priority.
 	if !sectionExists {
-		c = ensureNativeSection(c, section, action, effPriority)
+		c = ensureNativeSection(c, section, action)
 	}
 
 	workdir := c.Settings.Workdir
@@ -73,7 +60,6 @@ func (m Manager) AddNativeList(url, section string, priority int) (string, error
 		URL:         url,
 		Section:     section,
 		RouteAction: action,
-		Priority:    effPriority,
 		Interval:    86400,
 		Path:        filepath.Join(workdir, "rulesets", name+".native"),
 		Category:    "default",
@@ -103,9 +89,8 @@ func (m Manager) AddNativeList(url, section string, priority int) (string, error
 // ensureNativeSection appends a complete routing section for a native list
 // when one doesn't already exist, mirroring the shape of Default()'s sections
 // so it passes apply-validation. Proxy sections get a freshly-allocated
-// TPROXY port; direct/reject sections need none. The section's Priority is
-// seeded from the rule provider's effective priority.
-func ensureNativeSection(c config.Config, name, action string, priority int) config.Config {
+// TPROXY port; direct/reject sections need none.
+func ensureNativeSection(c config.Config, name, action string) config.Config {
 	s := config.Section{
 		Name:           name,
 		Enabled:        true,
@@ -116,7 +101,7 @@ func ensureNativeSection(c config.Config, name, action string, priority int) con
 		IPv4Enabled:    true,
 		IPv6Enabled:    true,
 		UDPMode:        "proxy",
-		Priority:       priority,
+		Priority:       100,
 	}
 	if action == "proxy" {
 		s.TPROXYPort = c.NextTPROXYPort()

@@ -16,9 +16,8 @@ func ruleProviderByName(c config.Config, name string) (config.RuleProvider, bool
 	return config.RuleProvider{}, false
 }
 
-// An explicit priority must reach the rule provider, and a list mapped to an
-// existing section must not mutate that section's priority.
-func TestAddNativeListExistingSectionExplicitPriority(t *testing.T) {
+// Importing a provider must not mutate an existing section priority.
+func TestAddNativeListPreservesSectionPriority(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "purewrt.conf")
 	if err := config.Save(cfgPath, config.Default()); err != nil {
@@ -26,7 +25,7 @@ func TestAddNativeListExistingSectionExplicitPriority(t *testing.T) {
 	}
 	m := Manager{ConfigPath: cfgPath}
 
-	name, err := m.AddNativeList("https://lists.example/media.native", "media", 25)
+	name, err := m.AddNativeList("https://lists.example/media.native", "media")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,8 +34,8 @@ func TestAddNativeListExistingSectionExplicitPriority(t *testing.T) {
 		t.Fatal(err)
 	}
 	rp, ok := ruleProviderByName(got, name)
-	if !ok || rp.Priority != 25 || rp.Section != "media" || rp.RouteAction != "proxy" {
-		t.Fatalf("rule provider priority/section/action wrong: %+v", rp)
+	if !ok || rp.Section != "media" || rp.RouteAction != "proxy" {
+		t.Fatalf("rule provider section/action wrong: %+v", rp)
 	}
 	// media (a Default section) keeps its own priority — imports never
 	// re-prioritize an existing section.
@@ -46,8 +45,8 @@ func TestAddNativeListExistingSectionExplicitPriority(t *testing.T) {
 	}
 }
 
-// An omitted priority on an existing section inherits the section's priority.
-func TestAddNativeListInheritsSectionPriority(t *testing.T) {
+// Imported providers retain the requested section binding.
+func TestAddNativeListSectionBinding(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "purewrt.conf")
 	if err := config.Save(cfgPath, config.Default()); err != nil {
@@ -55,19 +54,19 @@ func TestAddNativeListInheritsSectionPriority(t *testing.T) {
 	}
 	m := Manager{ConfigPath: cfgPath}
 
-	name, err := m.AddNativeList("https://lists.example/common.native", "common", 0)
+	name, err := m.AddNativeList("https://lists.example/common.native", "common")
 	if err != nil {
 		t.Fatal(err)
 	}
 	got, _ := config.Load(cfgPath)
 	rp, _ := ruleProviderByName(got, name)
-	if rp.Priority != 60 { // common's Default priority
-		t.Fatalf("expected inherited priority 60, got %d", rp.Priority)
+	if rp.Section != "common" {
+		t.Fatalf("unexpected provider section: %s", rp.Section)
 	}
 }
 
 // A list mapped to a section that doesn't exist must create a complete proxy
-// section: enabled, action=proxy, the given priority, and a unique port.
+// section: enabled, action=proxy, the default priority, and a unique port.
 func TestAddNativeListCreatesProxySection(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "purewrt.conf")
@@ -76,7 +75,7 @@ func TestAddNativeListCreatesProxySection(t *testing.T) {
 	}
 	m := Manager{ConfigPath: cfgPath}
 
-	name, err := m.AddNativeList("https://lists.example/games.native", "games", 30)
+	name, err := m.AddNativeList("https://lists.example/games.native", "games")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +84,7 @@ func TestAddNativeListCreatesProxySection(t *testing.T) {
 	if !ok {
 		t.Fatalf("section 'games' was not created")
 	}
-	if !sec.Enabled || sec.Action != "proxy" || sec.Priority != 30 {
+	if !sec.Enabled || sec.Action != "proxy" || sec.Priority != 100 {
 		t.Fatalf("created section wrong: %+v", sec)
 	}
 	if sec.TPROXYPort <= 7895 {
@@ -98,8 +97,8 @@ func TestAddNativeListCreatesProxySection(t *testing.T) {
 		}
 	}
 	rp, _ := ruleProviderByName(got, name)
-	if rp.Priority != 30 {
-		t.Fatalf("rule provider priority wrong: %d", rp.Priority)
+	if rp.Section != "games" {
+		t.Fatalf("unexpected provider section: %s", rp.Section)
 	}
 }
 
@@ -113,7 +112,7 @@ func TestAddNativeListCreatesRejectSection(t *testing.T) {
 	}
 	m := Manager{ConfigPath: cfgPath}
 
-	if _, err := m.AddNativeList("https://lists.example/ads.native", "reject", 0); err != nil {
+	if _, err := m.AddNativeList("https://lists.example/ads.native", "reject"); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := config.Load(cfgPath)

@@ -18,23 +18,10 @@ var helper = bgJob.make({
 });
 
 return baseclass.extend({
-  // run({pollMs, totalMs, onProgress}) — all optional. onProgress is
+  // run({onProgress}) — optional progress callback. onProgress is
   // forwarded to bg_job's poll loop ({elapsedMs, output} per tick).
   run: function(options) {
     var onProgress = options && options.onProgress;
-    // Accept the legacy `{pollMs, totalMs}` overrides for backwards-compat
-    // with any caller that imported the old singleton helper. Empty/missing
-    // options just falls through to the bg_job defaults.
-    if (options && (options.pollMs || options.totalMs)) {
-      var override = bgJob.make({
-        startMethod:  'update_start',
-        statusMethod: 'update_status',
-        payloadKey:   'output',
-        pollMs:       options.pollMs  || 2000,
-        totalMs:      options.totalMs || 240000,
-      });
-      return onProgress ? override.run(onProgress) : override.run();
-    }
     return onProgress ? helper.run(onProgress) : helper.run();
   }
 });

@@ -2,90 +2,99 @@ package main
 
 import (
 	"fmt"
-	"net/netip"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/purewrt/purewrt/internal/checker"
 	"github.com/purewrt/purewrt/internal/config"
+	"github.com/purewrt/purewrt/internal/system"
 )
 
 // checkMain is the purewrt-check entry point — the binary installs as a
 // symlink to purewrt and main() dispatches here on argv[0].
 func checkMain() {
 	if len(os.Args) < 2 {
-		fmt.Println("usage: purewrt-check <domain>")
+		fmt.Fprintln(os.Stderr, "usage: purewrt-check <domain-or-IP> [tcp|udp] [port] [WAN-device]")
 		os.Exit(2)
 	}
-	domain := os.Args[1]
-	c, _ := config.Load("/etc/config/purewrt")
-	dns := checker.Resolve(domain)
-	ruleMatch := checker.MatchRuleProviders(c, domain)
-	rm := checker.MatchDomain(c, domain)
-	var sec config.Section
-	if ruleMatch.Matched {
-		rm.Section = ruleMatch.Section
-		rm.Action = ruleMatch.Action
-		if s, ok := c.SectionByName(ruleMatch.Section); ok {
-			sec = s
-			rm.Action = s.Action
-			rm.NFTSet4 = s.NFTSet4()
-			rm.TPROXYPort = s.TPROXYPort
+	query := os.Args[1]
+	flow := checker.Flow{}
+	if len(os.Args) > 2 {
+		flow.Protocol = strings.ToLower(os.Args[2])
+	}
+	if len(os.Args) > 3 && os.Args[3] != "" {
+		n, err := strconv.Atoi(os.Args[3])
+		if err != nil || n < 1 {
+			fmt.Fprintln(os.Stderr, "invalid destination port")
+			os.Exit(2)
+		}
+		flow.Port = n
+	}
+	if len(os.Args) > 4 {
+		flow.WAN = os.Args[4]
+	}
+	if err := flow.Validate(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	c, err := config.Load("/etc/config/purewrt")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	dns := checker.Resolve(query)
+	trace := checker.TraceDestination(c, query, flow)
+	var b strings.Builder
+	fmt.Fprintf(&b, "Destination: %s\nProtocol: %s; port: %s; WAN device: %s\n", query, orNA(flow.Protocol), portLabel(flow.Port), orNA(flow.WAN))
+	b.WriteString("Scope: destination rules only. Client assignments, local/DNS exemptions, existing marks/connection state and native provider expressions are not simulated.\n")
+	b.WriteString("List matches predict scope; live DNS/nftset population and selected WAN can change the result.\n\n")
+	fmt.Fprintf(&b, "DNS:\n  A: %v\n  AAAA: %v\n  error: %s\n\n", dns.A, dns.AAAA, dns.Error)
+	b.WriteString("Destination rule trace (global exclusions, then section priority):\n")
+	for _, warning := range trace.Warnings {
+		fmt.Fprintf(&b, "  Warning: %s\n", warning)
+	}
+	for _, step := range trace.Steps {
+		fmt.Fprintf(&b, "  [%s] %s (priority %d, %s), providers: %s\n    %s\n", step.Status, step.Section, step.Priority, step.Action, strings.Join(step.Providers, ", "), step.Reason)
+	}
+	if len(trace.Steps) == 0 {
+		b.WriteString("  No destination-list matches.\n")
+	}
+	fmt.Fprintf(&b, "  Result: %s", trace.Action)
+	if trace.Section != "" {
+		fmt.Fprintf(&b, " via section %s", trace.Section)
+	}
+	b.WriteString("\n  If no destination rule matches this flow, it continues direct.\n")
+	_, nftErr := (system.Runner{}).Run("nft", "list", "table", "inet", "purewrt")
+	if nftErr != nil {
+		fmt.Fprintf(&b, "\nLive destination sets unavailable: %v\n", nftErr)
+	}
+	for _, ip := range append(dns.A, dns.AAAA...) {
+		if nftErr != nil {
+			break
+		}
+		r := checker.ClassifyIPFlow(c, ip, flow)
+		fmt.Fprintf(&b, "\nLive destination sets for %s: %s\n", ip, ipRouteDesc(r))
+		for _, step := range r.Steps {
+			fmt.Fprintf(&b, "  [%s] %s (priority %d): %s\n", step.Status, step.Section, step.Priority, step.Reason)
 		}
 	}
-	nftHit := false
-	if len(dns.A) > 0 {
-		nftHit, _ = checker.NFTSetContains(rm.NFTSet4, dns.A[0])
-		if !nftHit {
-			nftHit, _ = checker.NFTSetContains("dns_"+rm.NFTSet4, dns.A[0])
+	// Do not report an actual selected route from an unresolved conditional scope.
+	if trace.Action == "proxy" {
+		if sec, ok := c.SectionByName(trace.Section); ok {
+			b.WriteString("\nCandidate proxy path:\n")
+			writeMihomo(&b, checker.MihomoForSection(c, sec))
 		}
-	}
-	// Ground-truth route by IP: the kernel routes on destination IP (nft dest
-	// sets), so an IP in a section's IP/CIDR set is routed via that section even
-	// when the domain matches no rule. Classify the first resolved A so the
-	// report reflects what actually happens, not just the domain-rule verdict.
-	var ipRoute checker.IPRoute
-	if len(dns.A) > 0 {
-		ipRoute = checker.ClassifyIP(c, dns.A[0])
 	}
 	mw := checker.Mwan3(c)
-	v6 := checker.InspectIPv6(c)
-
-	var b strings.Builder
-	fmt.Fprintf(&b, "Domain: %s\n\n", domain)
-	fmt.Fprintf(&b, "DNS:\n  resolver: dnsmasq -> mihomo DNS %s\n  A: %v\n  AAAA: %v\n  error: %s\n\n",
-		c.DNS.Listen, dns.A, dns.AAAA, dns.Error)
-	fmt.Fprintf(&b, "Rule:\n  matched provider: %s\n  matched rule: %s,%s\n  section: %s\n  action: %s\n\n",
-		ruleProvider(ruleMatch), ruleType(ruleMatch, domain), domain, rm.Section, rm.Action)
-	fmt.Fprintf(&b, "OpenWrt:\n  nftset: %s\n  tproxy port: %d\n  fwmark: %s/%s\n  route table: %s\n  first A in nftset: %v\n",
-		rm.NFTSet4, rm.TPROXYPort, rm.Mark, rm.Mask, rm.RouteTable, nftHit)
-	if len(dns.A) > 0 {
-		fmt.Fprintf(&b, "  effective route by IP: %s → %s\n", dns.A[0], ipRouteDesc(ipRoute))
-		// Divergence: the domain matched no rule (would be direct) but the IP is
-		// in a routing set — the traffic is actually routed by IP/CIDR match, not
-		// the domain verdict. Call it out so "direct" isn't misread.
-		if !ruleMatch.Matched && ipRoute.Action != "" && ipRoute.Action != "default" && ipRoute.Action != "direct" && ipRoute.Action != "bypass" {
-			fmt.Fprintf(&b, "  note: domain matches no rule (domain verdict: direct), but %s is in %s → routed via section %q (%s) by IP/CIDR match\n",
-				dns.A[0], ipRoute.Set, ipRoute.Section, ipRoute.Action)
-		}
-	}
-	b.WriteString("\n")
-	fmt.Fprintf(&b, "IPv6:\n  mode: %s\n  global address: %v\n  default route: %v\n  warnings: %v\n\n",
-		v6.Mode, v6.GlobalAddress, v6.DefaultRoute, v6.Warnings)
-	fmt.Fprintf(&b, "Mwan3:\n  installed: %v\n  direct traffic: %s\n  proxy outbound: %s\n\n",
-		mw.Installed, mw.DirectTraffic, mw.ProxyOutbound)
-
-	// Mihomo + full route only make sense for a proxy section. Direct/reject/no
-	// match never enters mihomo.
-	if sec.Action == "proxy" {
-		mh := checker.MihomoForSection(c, sec)
-		writeMihomo(&b, mh)
-		writeRoute(&b, domain, ruleMatch, sec, mh, rm.TPROXYPort)
-	} else {
-		fmt.Fprintf(&b, "Mihomo:\n  n/a — action %q does not route through mihomo\n\n", rm.Action)
-		writeRoute(&b, domain, ruleMatch, sec, checker.MihomoPath{}, rm.TPROXYPort)
-	}
+	fmt.Fprintf(&b, "\nMwan3 installed: %v\nDirect traffic: %s\nProxy outbound: %s\n", mw.Installed, mw.DirectTraffic, mw.ProxyOutbound)
 	fmt.Print(b.String())
+}
+func portLabel(port int) string {
+	if port == 0 {
+		return "unspecified"
+	}
+	return strconv.Itoa(port)
 }
 
 func writeMihomo(b *strings.Builder, mh checker.MihomoPath) {
@@ -113,46 +122,6 @@ func writeMihomo(b *strings.Builder, mh checker.MihomoPath) {
 	if mh.Note != "" {
 		fmt.Fprintf(b, "  note: %s\n", mh.Note)
 	}
-	b.WriteString("\n")
-}
-
-// writeRoute prints the end-to-end chain: domain → rule-provider → section →
-// mihomo group/node → egress, so it's obvious what carries the traffic.
-func writeRoute(b *strings.Builder, domain string, rmatch checker.RuleProviderMatch, sec config.Section, mh checker.MihomoPath, tproxyPort int) {
-	b.WriteString("Route (full chain):\n  ")
-	parts := []string{domain}
-	if rmatch.Provider != "" {
-		parts = append(parts, "rule-provider "+rmatch.Provider)
-	} else {
-		parts = append(parts, "no rule match")
-	}
-	if sec.Name != "" {
-		parts = append(parts, fmt.Sprintf("section %q (%s)", sec.Name, sec.Action))
-	} else {
-		parts = append(parts, "default route")
-	}
-	if sec.Action == "proxy" {
-		grp := mh.Group
-		if mh.GroupType != "" {
-			grp += " [" + mh.GroupType + "]"
-		}
-		parts = append(parts, "mihomo "+grp)
-		node := mh.SelectedNode
-		if node == "" {
-			if isLoadBalance(mh.GroupType) {
-				node = "any (load-balance)"
-			} else {
-				node = "unknown"
-			}
-		}
-		parts = append(parts, "node "+node)
-		parts = append(parts, fmt.Sprintf("tproxy :%d → egress", tproxyPort))
-	} else if sec.Action == "direct" || sec.Name == "" {
-		parts = append(parts, "kernel direct (WAN / mwan3)")
-	} else {
-		parts = append(parts, sec.Action)
-	}
-	b.WriteString(strings.Join(parts, " → "))
 	b.WriteString("\n")
 }
 
@@ -196,21 +165,4 @@ func ipRouteDesc(r checker.IPRoute) string {
 		return fmt.Sprintf("%s (%s)", r.Set, r.Action)
 	}
 	return fmt.Sprintf("%s → section %q (%s)", r.Set, r.Section, r.Action)
-}
-
-func ruleProvider(m checker.RuleProviderMatch) string {
-	if m.Provider == "" {
-		return "(no match — default route)"
-	}
-	return m.Provider
-}
-
-func ruleType(m checker.RuleProviderMatch, query string) string {
-	if m.Matched {
-		return string(m.Rule.Type)
-	}
-	if _, err := netip.ParseAddr(query); err == nil {
-		return "IP-CIDR (no match)"
-	}
-	return "DOMAIN-SUFFIX (no match)"
 }

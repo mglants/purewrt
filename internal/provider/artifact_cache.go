@@ -53,10 +53,6 @@ func ArtifactPath(workdir, providerName, checksum string) string {
 	return filepath.Join(artifactDir(workdir, providerName), checksum+".rules")
 }
 
-func ArtifactPathInCache(cacheDir, providerName, checksum string) string {
-	return filepath.Join(artifactDirFromCache(cacheDir, providerName), checksum+".rules")
-}
-
 func EnsureArtifact(workdir string, rpName, format, checksum string, data []byte) (ArtifactMetadata, error) {
 	path := ArtifactPath(workdir, rpName, checksum)
 	if meta, err := ReadArtifactMetadata(path); err == nil && meta.Version == rules.ArtifactVersion && meta.Checksum == checksum {

@@ -202,8 +202,6 @@ func applySection(c *Config, x struct {
 		c.Settings.MihomoAllowLAN = b(x.opts, "mihomo_allow_lan", c.Settings.MihomoAllowLAN)
 		c.Settings.ExternalController = one(x.opts, "external_controller", c.Settings.ExternalController)
 		c.Settings.Secret = one(x.opts, "secret", c.Settings.Secret)
-		c.Settings.DNSBackend = one(x.opts, "dns_backend", c.Settings.DNSBackend)
-		c.Settings.FirewallBackend = one(x.opts, "firewall_backend", c.Settings.FirewallBackend)
 		c.Settings.FwMark = one(x.opts, "fwmark", c.Settings.FwMark)
 		c.Settings.FwMarkMask = one(x.opts, "fwmark_mask", c.Settings.FwMarkMask)
 		c.Settings.RouteTable = one(x.opts, "route_table", c.Settings.RouteTable)
@@ -212,8 +210,6 @@ func applySection(c *Config, x struct {
 		c.Settings.FakeIP = b(x.opts, "fake_ip", c.Settings.FakeIP)
 		c.Settings.Sniffer = b(x.opts, "sniffer", c.Settings.Sniffer)
 		c.Settings.DNSListen = one(x.opts, "dns_listen", c.Settings.DNSListen)
-		c.Settings.AutoReload = b(x.opts, "auto_reload", c.Settings.AutoReload)
-		c.Settings.SafeApply = b(x.opts, "safe_apply", c.Settings.SafeApply)
 		c.Settings.RollbackOnFail = b(x.opts, "rollback_on_fail", c.Settings.RollbackOnFail)
 		c.Settings.ApplyBackupMaxBytes = i64(x.opts, "apply_backup_max_bytes", c.Settings.ApplyBackupMaxBytes)
 		c.Settings.MihomoChannel = one(x.opts, "mihomo_channel", c.Settings.MihomoChannel)
@@ -246,7 +242,6 @@ func applySection(c *Config, x struct {
 		c.Settings.AutoUpdateEnabled = b(x.opts, "auto_update_enabled", c.Settings.AutoUpdateEnabled)
 		c.Settings.AutoUpdateCron = one(x.opts, "auto_update_cron", c.Settings.AutoUpdateCron)
 		c.Settings.ReloadAfterUpdate = b(x.opts, "reload_after_update", c.Settings.ReloadAfterUpdate)
-		c.Settings.BackupRetention = i(x.opts, "backup_retention", c.Settings.BackupRetention)
 		c.Settings.BackgroundUpdates = b(x.opts, "background_updates", c.Settings.BackgroundUpdates)
 		c.Settings.BootUpdateDelay = i(x.opts, "boot_update_delay", c.Settings.BootUpdateDelay)
 		c.Settings.UpdateNice = i(x.opts, "update_nice", c.Settings.UpdateNice)
@@ -264,7 +259,6 @@ func applySection(c *Config, x struct {
 		c.Settings.ArtifactCacheMode = one(x.opts, "artifact_cache_mode", c.Settings.ArtifactCacheMode)
 		c.Settings.ArtifactCacheMaxBytes = i64(x.opts, "artifact_cache_max_bytes", c.Settings.ArtifactCacheMaxBytes)
 		c.Settings.ArtifactCacheMaxEntries = i(x.opts, "artifact_cache_max_entries", c.Settings.ArtifactCacheMaxEntries)
-		c.Settings.RuleDedupMode = one(x.opts, "rule_dedup_mode", c.Settings.RuleDedupMode)
 		c.Settings.LogLevel = one(x.opts, "log_level", c.Settings.LogLevel)
 		c.Settings.LogFormat = one(x.opts, "log_format", c.Settings.LogFormat)
 		c.Settings.APIListen = list(x.opts, "api_listen", c.Settings.APIListen)
@@ -307,7 +301,6 @@ func applySection(c *Config, x struct {
 		c.DNS.BlockDoQ = b(x.opts, "block_doq", c.DNS.BlockDoQ)
 		c.DNS.DoH3BlockIPs4 = list(x.opts, "doh3_block_ip4", c.DNS.DoH3BlockIPs4)
 		c.DNS.DoH3BlockIPs6 = list(x.opts, "doh3_block_ip6", c.DNS.DoH3BlockIPs6)
-		c.DNS.DoHPolicy = one(x.opts, "doh_policy", c.DNS.DoHPolicy)
 		c.DNS.Listen = one(x.opts, "listen", c.DNS.Listen)
 		c.DNS.FakeIP = b(x.opts, "fake_ip", c.DNS.FakeIP)
 		c.DNS.EnhancedMode = one(x.opts, "enhanced_mode", c.DNS.EnhancedMode)
@@ -360,7 +353,7 @@ func applySection(c *Config, x struct {
 		}
 	case "section":
 		name := idName(x.opts, x.name, "sec_")
-		c.Sections = append(c.Sections, Section{Name: name, Enabled: b(x.opts, "enabled", true), Action: one(x.opts, "action", "proxy"), TPROXYPort: i(x.opts, "tproxy_port", 7893), ProxyGroup: one(x.opts, "proxy_group", TitleASCII(name)), ProxyGroupType: one(x.opts, "proxy_group_type", "url-test"), ProxyFilter: one(x.opts, "proxy_filter", ""), ProxyExcludeFilter: one(x.opts, "proxy_exclude_filter", ""), ProxyStrategy: one(x.opts, "proxy_strategy", "sticky-sessions"), ProxyHealthCheckURL: one(x.opts, "proxy_health_check_url", ""), ProxyHealthCheckInterval: i(x.opts, "proxy_health_check_interval", 0), UserOverriddenProxyGroup: b(x.opts, "user_overridden_proxy_group", false), IPv4Enabled: b(x.opts, "ipv4_enabled", true), IPv6Enabled: b(x.opts, "ipv6_enabled", true), UDPMode: one(x.opts, "udp_mode", "proxy"), Priority: i(x.opts, "priority", 100), VPNs: list(x.opts, "vpns", nil), ZapretStrategies: list(x.opts, "zapret_strategy", nil), SourceCIDR4: list(x.opts, "source_cidr4", nil), SourceCIDR6: list(x.opts, "source_cidr6", nil)})
+		c.Sections = append(c.Sections, Section{Name: name, Enabled: b(x.opts, "enabled", true), Action: one(x.opts, "action", "proxy"), TPROXYPort: i(x.opts, "tproxy_port", 7893), ProxyGroup: one(x.opts, "proxy_group", TitleASCII(name)), ProxyGroupType: one(x.opts, "proxy_group_type", "url-test"), ProxyFilter: one(x.opts, "proxy_filter", ""), ProxyExcludeFilter: one(x.opts, "proxy_exclude_filter", ""), ProxyStrategy: one(x.opts, "proxy_strategy", "sticky-sessions"), ProxyHealthCheckURL: one(x.opts, "proxy_health_check_url", ""), ProxyHealthCheckInterval: i(x.opts, "proxy_health_check_interval", 0), UserOverriddenProxyGroup: b(x.opts, "user_overridden_proxy_group", false), IPv4Enabled: b(x.opts, "ipv4_enabled", true), IPv6Enabled: b(x.opts, "ipv6_enabled", true), UDPMode: one(x.opts, "udp_mode", "proxy"), MatchProtocol: one(x.opts, "match_protocol", ""), DestinationPorts: one(x.opts, "destination_ports", ""), Priority: i(x.opts, "priority", 100), VPNs: list(x.opts, "vpns", nil), ZapretStrategies: list(x.opts, "zapret_strategy", nil), SourceCIDR4: list(x.opts, "source_cidr4", nil), SourceCIDR6: list(x.opts, "source_cidr6", nil)})
 	case "subscription":
 		c.Subscriptions = append(c.Subscriptions, Subscription{Name: idName(x.opts, x.name, "sub_"), Enabled: b(x.opts, "enabled", true), URL: one(x.opts, "url", ""), Mode: one(x.opts, "mode", "auto"), PresetIfNoRules: one(x.opts, "preset_if_no_rules", "minimal"), ImportRulesOnLowResource: b(x.opts, "import_rules_on_low_resource", false), AutoApply: b(x.opts, "auto_apply", false), Interval: i(x.opts, "interval", 86400), HWID: one(x.opts, "hwid", ""), DeviceName: one(x.opts, "device_name", ""), UserAgent: one(x.opts, "user_agent", ""), Headers: list(x.opts, "header", nil), Mirrors: list(x.opts, "mirror", nil), PinSHA256: one(x.opts, "pin_sha256", ""), SuppressHWID: b(x.opts, "suppress_hwid", false)})
 	case "proxy_provider":
@@ -369,7 +362,7 @@ func applySection(c *Config, x struct {
 	case "rule_provider":
 		name := idName(x.opts, x.name, "rp_")
 		format := one(x.opts, "format", "text")
-		c.RuleProviders = append(c.RuleProviders, RuleProvider{Name: name, Enabled: b(x.opts, "enabled", true), Behavior: one(x.opts, "behavior", "domain"), Format: format, ParseMode: one(x.opts, "parse_mode", "auto"), URL: one(x.opts, "url", ""), Interval: i(x.opts, "interval", 86400), Path: one(x.opts, "path", ruleProviderPath(c.Settings.Workdir, name, format)), Section: one(x.opts, "section", "common"), Category: one(x.opts, "category", ""), SourceKind: one(x.opts, "source_kind", ""), RouteAction: one(x.opts, "route_action", ""), Priority: i(x.opts, "priority", 0), SourceSubscription: one(x.opts, "source_subscription", ""), DetectedCategory: one(x.opts, "detected_category", ""), UserOverriddenSection: b(x.opts, "user_overridden_section", false), UserOverriddenAction: b(x.opts, "user_overridden_action", false), UserAgent: one(x.opts, "user_agent", ""), Headers: list(x.opts, "header", nil), Mirrors: list(x.opts, "mirror", nil), PinSHA256: one(x.opts, "pin_sha256", ""), LastError: one(x.opts, "last_error", ""), GeoTarget: one(x.opts, "geo_target", "")})
+		c.RuleProviders = append(c.RuleProviders, RuleProvider{Name: name, Enabled: b(x.opts, "enabled", true), Behavior: one(x.opts, "behavior", "domain"), Format: format, ParseMode: one(x.opts, "parse_mode", "auto"), URL: one(x.opts, "url", ""), Interval: i(x.opts, "interval", 86400), Path: one(x.opts, "path", ruleProviderPath(c.Settings.Workdir, name, format)), Section: one(x.opts, "section", "common"), Category: one(x.opts, "category", ""), SourceKind: one(x.opts, "source_kind", ""), RouteAction: one(x.opts, "route_action", ""), SourceSubscription: one(x.opts, "source_subscription", ""), DetectedCategory: one(x.opts, "detected_category", ""), UserOverriddenSection: b(x.opts, "user_overridden_section", false), UserOverriddenAction: b(x.opts, "user_overridden_action", false), UserAgent: one(x.opts, "user_agent", ""), Headers: list(x.opts, "header", nil), Mirrors: list(x.opts, "mirror", nil), PinSHA256: one(x.opts, "pin_sha256", ""), LastError: one(x.opts, "last_error", ""), GeoTarget: one(x.opts, "geo_target", "")})
 	case "bypass":
 		c.Bypass.Name = one(x.opts, "name", x.name)
 		c.Bypass.CIDR4 = list(x.opts, "cidr4", nil)

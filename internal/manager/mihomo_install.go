@@ -18,18 +18,19 @@ package manager
 //     UCI override (see MihomoRevertToPackage below).
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/purewrt/purewrt/internal/config"
 	"github.com/purewrt/purewrt/internal/mihomoapi"
 )
 
-// MihomoChannelResolve maps the channel name to the API URL. Empty
-// channel falls back to the configured default (alpha) — matches the
-// historic behaviour of MihomoCheckUpdate.
+// mihomoChannelAPI maps an already-resolved channel to its release API.
 func mihomoChannelAPI(c config.Config, channel string) (string, error) {
 	switch channel {
 	case "", "alpha":
@@ -49,15 +50,17 @@ func mihomoChannelAPI(c config.Config, channel string) (string, error) {
 	}
 }
 
-// MihomoCheckUpdateChannel is the channel-aware variant of
-// MihomoCheckUpdate. Kept as a separate method (rather than changing
-// the existing signature) so other callers — particularly the original
-// rpcd `mihomo_check_update` method that the diagnostics page used to
-// expose — keep working unmodified. The Mihomo tab uses this one.
+// MihomoCheckUpdateChannel checks availability without modifying configuration.
 func (m Manager) MihomoCheckUpdateChannel(channel string) (mihomoapi.UpdateInfo, error) {
 	c, err := m.Load()
 	if err != nil {
 		return mihomoapi.UpdateInfo{}, err
+	}
+	if channel == "" {
+		channel = c.Settings.MihomoChannel
+	}
+	if channel == "" {
+		channel = "alpha"
 	}
 	api, err := mihomoChannelAPI(c, channel)
 	if err != nil {
@@ -66,10 +69,11 @@ func (m Manager) MihomoCheckUpdateChannel(channel string) (mihomoapi.UpdateInfo,
 	// Same download tactics as providers: bootstrap DoH client, optional
 	// update-via-proxy, single retry through the local mihomo proxy.
 	// GitHub's API is the most-blocked endpoint PureWRT talks to.
+	currentVersion := installedMihomoVersion(c)
 	primary, fallback := updaterClients(c, 30*time.Second)
-	info, err := (mihomoapi.Updater{APIURL: api, HTTPClient: primary}).Check(c.Settings.MihomoVersion, c.Settings.MihomoArch)
+	info, err := (mihomoapi.Updater{APIURL: api, HTTPClient: primary}).Check(currentVersion, c.Settings.MihomoArch)
 	if err != nil && fallback != nil {
-		info, err = (mihomoapi.Updater{APIURL: api, HTTPClient: fallback}).Check(c.Settings.MihomoVersion, c.Settings.MihomoArch)
+		info, err = (mihomoapi.Updater{APIURL: api, HTTPClient: fallback}).Check(currentVersion, c.Settings.MihomoArch)
 	}
 	if err != nil {
 		return info, err
@@ -124,7 +128,7 @@ func (m Manager) MihomoAutoUpdate() (result MihomoAutoUpdateResult, retErr error
 	if channel == "" {
 		channel = "alpha"
 	}
-	res := MihomoAutoUpdateResult{Channel: channel, CurrentVersion: c.Settings.MihomoVersion}
+	res := MihomoAutoUpdateResult{Channel: channel, CurrentVersion: installedMihomoVersion(c)}
 	if !c.Settings.MihomoAutoUpdateEnabled {
 		res.Action = "disabled"
 		return res, nil
@@ -353,4 +357,30 @@ func waitForMihomoReady(c config.Config, timeout time.Duration) bool {
 		time.Sleep(250 * time.Millisecond)
 	}
 	return false
+}
+
+// Read the configured executable, not release metadata left by older checkers.
+// An unknown version remains unknown; it must not suppress an available update.
+func installedMihomoVersion(c config.Config) string {
+	bin := c.Settings.MihomoBin
+	if bin == "" {
+		bin = "/usr/bin/mihomo"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, bin, "-v").Output()
+	if err != nil {
+		return ""
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) < 2 || fields[0] != "Mihomo" {
+		return ""
+	}
+	if fields[1] == "Meta" {
+		if len(fields) < 3 {
+			return ""
+		}
+		return fields[2]
+	}
+	return fields[1]
 }

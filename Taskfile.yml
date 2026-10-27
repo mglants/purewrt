@@ -101,6 +101,7 @@ tasks:
       - rsync -a --delete --exclude '.git' --exclude '.build' --exclude '.tmp' --exclude 'result' --exclude 'dist' --exclude 'openwrt/purewrt' --exclude 'openwrt/luci-app-purewrt' --exclude 'openwrt/mihomo-alpha' --exclude 'openwrt/zapret' --exclude 'openwrt/ooniprobe' ./ '{{.PACKAGE_DIR}}/purewrt/'
       - cp openwrt/purewrt/Makefile '{{.PACKAGE_DIR}}/purewrt/Makefile'
       - cp openwrt/luci-app-purewrt/Makefile '{{.PACKAGE_DIR}}/luci-app-purewrt/Makefile'
+      - cp VERSION '{{.PACKAGE_DIR}}/luci-app-purewrt/VERSION'
       - rsync -a --delete openwrt/luci/ '{{.PACKAGE_DIR}}/luci-app-purewrt/luci/'
       - rsync -a --delete openwrt/mihomo-alpha/ '{{.PACKAGE_DIR}}/mihomo-alpha/'
       - rsync -a --delete openwrt/zapret/ '{{.PACKAGE_DIR}}/zapret/'

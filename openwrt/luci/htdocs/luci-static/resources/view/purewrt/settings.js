@@ -127,14 +127,8 @@ return view.extend({
     var apply = m.section(form.NamedSection, 'settings', 'main', _('Apply behavior'),
       _('How "purewrt apply" stages and recovers from failures.'));
     apply.anonymous = true;
-    addRow(apply, form.Flag, 'auto_reload', _('Auto-reload'), { default: '1',
-      description: _('After UCI is saved via this UI, automatically apply the new config. Disable to require an explicit `purewrt apply` from the CLI.') });
-    addRow(apply, form.Flag, 'safe_apply', _('Safe apply'), { default: '1',
-      description: _('Validate the staged config (mihomo -t, nft -c) before swapping the live state in. Disabling skips the dry-run — faster but you can break routing if generation produces a bad nft file.') });
     addRow(apply, form.Flag, 'rollback_on_fail', _('Rollback on failure'), { default: '1',
       description: _('If apply fails mid-flight (nft -f rejects, mihomo doesn\'t come up), restore the previous on-disk state.') });
-    addRow(apply, form.Value, 'backup_retention', _('Backup retention'), { datatype: 'uinteger', default: '3',
-      description: _('How many pre-apply backups to keep on disk. 0 disables backups entirely.') });
     addRow(apply, form.Value, 'apply_backup_max_bytes', _('Backup max size (bytes)'), { datatype: 'uinteger', default: '0',
       description: _('Skip backup snapshotting for files larger than this. 0 = no limit.') });
 
@@ -166,7 +160,7 @@ return view.extend({
       description: _('Per-run download/upload size for the scheduled probe. Smaller bounds quota; ~2 MiB default. Each tick moves ~this down + half up.') });
     ncBytes.depends('net_check_enabled', '1');
 
-    var pgEnabled = addRow(netcheck, form.Flag, 'proxy_guard_enabled', _('Adaptive proxy guard'), { default: '1',
+    addRow(netcheck, form.Flag, 'proxy_guard_enabled', _('Adaptive proxy guard'), { default: '1',
       description: _('Detect throttled or unstable mihomo members and temporarily exclude them from new connections. Enabled by default. Bounded throughput probes consume some data quota.') });
     var pgCron = addRow(netcheck, form.Value, 'proxy_guard_cron', _('Guard schedule (cron)'), { default: '*/5 * * * *',
       validate: fmt.validateCron });
@@ -264,14 +258,6 @@ return view.extend({
       { datatype: 'uinteger', default: '16777216' });
     addRow(cache, form.Value, 'artifact_cache_max_entries', _('Artifact cache max entries'),
       { datatype: 'uinteger', default: '50000' });
-
-    // ---- Rule processing ----
-    var rules = m.section(form.NamedSection, 'settings', 'main', _('Rule processing'));
-    rules.anonymous = true;
-    addRow(rules, form.ListValue, 'rule_dedup_mode', _('Rule dedup mode'), {
-      values: [['auto', 'auto (profile-aware)'], ['off', 'off'], ['section', 'section (first-wins by section)'], ['full', 'full (first-wins overall)']],
-      default: 'auto',
-      description: _('How aggressively to deduplicate overlapping rules across providers. "full" gives the cleanest nftset state at the cost of more CPU during generation.') });
 
     // ---- Bootstrap DoH (advanced) ----
     var doh = m.section(form.NamedSection, 'settings', 'main', _('Bootstrap DoH (advanced)'),

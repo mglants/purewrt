@@ -179,10 +179,6 @@ func (c Client) GroupDelayTest(group, testURL string, timeoutMs int) (map[string
 	return out, nil
 }
 
-func (c Client) HealthCheckProvider(name string) error {
-	return c.Get("/providers/proxies/"+name+"/healthcheck", &struct{}{})
-}
-
 // RuleProviderRefresh asks mihomo to reload one rule provider from its
 // configured source URL/file in place — no restart, no full config
 // reload. Mihomo exposes this as PUT /providers/rules/{name}; equivalent

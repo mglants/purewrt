@@ -200,17 +200,11 @@ rules:
 	if got := providers["ai"]; got.Section != "ai" || got.RouteAction != "proxy" {
 		t.Fatalf("ai mapped incorrectly: %+v", got)
 	}
-	if got := providers["ai"]; got.Priority != 60 {
-		t.Fatalf("ai priority = %d, want subscription rule order priority 60", got.Priority)
-	}
 	if got := providers["blocked_itdog_domains"]; got.Section != "common" || got.RouteAction != "proxy" {
 		t.Fatalf("blocked provider mapped incorrectly: %+v", got)
 	}
 	if got := providers["cloudflare_ips"]; got.Section != "common" || got.RouteAction != "proxy" {
 		t.Fatalf("logical rule provider target mapped incorrectly: %+v", got)
-	}
-	if got := providers["cloudflare_ips"]; got.Priority != 40 {
-		t.Fatalf("cloudflare priority = %d, want logical rule order priority 40", got.Priority)
 	}
 	if got := providers["custom_provider"]; got.Section != "messengers" || got.RouteAction != "proxy" {
 		t.Fatalf("custom provider mapped incorrectly: %+v", got)

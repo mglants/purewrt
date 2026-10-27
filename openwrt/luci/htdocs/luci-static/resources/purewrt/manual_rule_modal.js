@@ -161,7 +161,7 @@ function deleteFile(name) {
 // writeUCIFor creates or updates the UCI rule_provider section for a
 // manual provider. Idempotent — when editing, the same section is
 // updated in place (matched by `name` field, not `.name` SID).
-function writeUCIFor(name, section, priority, enabled) {
+function writeUCIFor(name, section, enabled) {
   var existing = (uci.sections('purewrt', 'rule_provider') || []).filter(function(s) {
     return s.name === name;
   })[0];
@@ -181,8 +181,6 @@ function writeUCIFor(name, section, priority, enabled) {
   uci.unset('purewrt', sid, 'url');
   if (section)
     uci.set('purewrt', sid, 'section', section);
-  if (priority)
-    uci.set('purewrt', sid, 'priority', String(priority));
   uci.set('purewrt', sid, 'user_overridden_section', '1');
   return sid;
 }
@@ -233,11 +231,6 @@ function renderManualForm(opts, existing, body) {
     sectionSel.appendChild(E('option', attrs, n));
   });
 
-  var prioInput = E('input', {
-    'class': 'cbi-input-text',
-    'value': (existing && existing.priority) || '',
-    'placeholder': '1000'
-  });
   var textarea = E('textarea', {
     'class': 'cbi-input-textarea',
     'rows': 16,
@@ -265,7 +258,6 @@ function renderManualForm(opts, existing, body) {
       ? _('Rule provider name is fixed once created. Delete and recreate to rename.')
       : _('Lowercase, letters/digits/dot/hyphen/underscore. Becomes the file name under /etc/purewrt/rulesets/.')),
     row(_('Section'), sectionSel, _('Routing section the matched traffic goes through. Empty means the provider is loaded into mihomo but isn\'t wired into any nftset.')),
-    row(_('Conflict priority'), prioInput, _('Lower value wins on conflicts with other providers. Empty = 1000 (default).')),
     row(_('Rules'), textarea, _('One entry per line: IP, CIDR, or FQDN. Full mihomo rule expressions also accepted (DOMAIN-SUFFIX,…). Comments start with <code>#</code>.'))
   ]);
 
@@ -279,10 +271,9 @@ function renderManualForm(opts, existing, body) {
         return;
       }
       var section = sectionSel.value || '';
-      var prio = (prioInput.value || '').trim();
       var bodyOut = textarea.value || '';
       writeBody(name, bodyOut).then(function() {
-        writeUCIFor(name, section, prio, true);
+        writeUCIFor(name, section, true);
         return uci.save();
       }).then(function() {
         return uci.apply();

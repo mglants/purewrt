@@ -60,42 +60,42 @@ func (e *mrsDomainSetEntry) toMatch(suffix string) RuleProviderMatch {
 	}
 }
 
-// RuleProviderIndex is a lazy, priority-ordered domain match index over the
-// enabled rule providers. Providers are sorted by Priority up front but
-// parsed on demand — Match parses the next-highest-priority provider only
+// RuleProviderIndex is a lazy, name-ordered domain match index over the
+// enabled rule providers. Providers are sorted by name up front but
+// parsed on demand — Match parses the next provider only
 // when the partial index built so far doesn't claim the domain, and stops
 // the moment it finds a hit.
 //
 // Why lazy: blocked-refilter-domains alone has ~81 k entries and ~572 KB
 // of zstd-compressed binary that has to be decoded and reified into Go
 // strings (and then sorted, by upstream's ParseMRS default). For
-// purewrt-check with chatgpt.com — which matches the tiny priority-30
+// purewrt-check with chatgpt.com — which matches the tiny
 // `ai` MRS — we used to eagerly parse every provider anyway, paying the
 // full multi-second cost for nothing. Lazy parsing keeps the small
 // per-call overhead for hits in early providers, and only pays the big
-// cost when no higher-priority provider claims the domain.
+// cost when no earlier provider claims the domain.
 //
-// Priority handling: a key already present in the map is never overwritten
-// as later (lower-priority) providers are parsed in, so mihomo's
-// "first match wins" semantics are preserved without per-entry priorities.
+// Duplicate keys retain the first provider by name. This identifies list
+// membership; packet routing precedence is controlled by sections and predicates.
 //
 // Concurrency: Match mutates internal state and is not safe for concurrent
 // callers. Build a separate index per goroutine if you need parallelism.
 // cidrRuleEntry holds one IP-CIDR rule from a rule provider with the
 // provider's match metadata. Used for the IP-lookup path — when the user
 // (or purewrt-check) passes an IPv4/IPv6 instead of a domain, we walk
-// these in priority order looking for containment.
+// these in name order looking for containment.
 type cidrRuleEntry struct {
 	pfx  netip.Prefix
 	info matchInfo
 }
 
 type RuleProviderIndex struct {
-	pending      []config.RuleProvider // remaining unparsed, sorted asc by priority
+	Warnings     []string
+	pending      []config.RuleProvider // remaining unparsed, sorted by name
 	cfg          config.Config
 	domainExact  map[string]matchInfo
 	domainSuffix map[string]matchInfo
-	domainSets   []mrsDomainSetEntry // MRS-format domain providers, priority-ordered
+	domainSets   []mrsDomainSetEntry // MRS-format domain providers, name-ordered
 	keywords     []keywordEntry
 	// cidrs collects every IP-CIDR rule from providers we've parsed so far.
 	// Walked linearly by MatchIP — fine for ~hundreds-of-thousands of
@@ -106,7 +106,7 @@ type RuleProviderIndex struct {
 	fallback RuleProviderMatch
 }
 
-// NewRuleProviderIndex prepares the priority-ordered list of providers but
+// NewRuleProviderIndex prepares the name-ordered list of providers but
 // does not read or parse any of them — that happens lazily inside Match.
 func NewRuleProviderIndex(c config.Config) *RuleProviderIndex {
 	enabled := make([]config.RuleProvider, 0, len(c.RuleProviders))
@@ -117,7 +117,7 @@ func NewRuleProviderIndex(c config.Config) *RuleProviderIndex {
 		enabled = append(enabled, rp)
 	}
 	sort.SliceStable(enabled, func(i, j int) bool {
-		return enabled[i].Priority < enabled[j].Priority
+		return enabled[i].Name < enabled[j].Name
 	})
 	return &RuleProviderIndex{
 		pending:      enabled,
@@ -129,7 +129,7 @@ func NewRuleProviderIndex(c config.Config) *RuleProviderIndex {
 		// goes out WAN via the default route — "direct", not "proxy". Set
 		// Matched=false (zero value) so callers know this is the no-match
 		// branch and can decide whether to keep their own metadata.
-		fallback:     RuleProviderMatch{Section: "default", Action: "direct"},
+		fallback: RuleProviderMatch{Section: "default", Action: "direct"},
 	}
 }
 
@@ -156,11 +156,11 @@ func (idx *RuleProviderIndex) lookup(domain string) (RuleProviderMatch, bool) {
 			return info.toMatch(), true
 		}
 	}
-	// MRS DomainSets are walked in priority order. They're checked after
+	// MRS DomainSets are walked in name order. They're checked after
 	// the hash-map fast path because text-format providers usually carry
 	// hand-curated exceptions that should override binary lists at the
-	// same priority slot; lazy parsing in parseNext guarantees a true
-	// priority-ordered match across MRS+text mixes.
+	// same name slot; lazy parsing in parseNext guarantees a true
+	// name-ordered match across MRS+text mixes.
 	for i := range idx.domainSets {
 		if suffix, ok := idx.domainSets[i].set.Lookup(domain); ok {
 			return idx.domainSets[i].toMatch(suffix), true
@@ -183,6 +183,7 @@ func (idx *RuleProviderIndex) parseNext() bool {
 	}
 	data, err := os.ReadFile(rp.Path)
 	if err != nil {
+		idx.Warnings = append(idx.Warnings, "provider "+rp.Name+": "+err.Error())
 		return true
 	}
 	if strings.EqualFold(rp.Format, "mrs") {
@@ -195,12 +196,16 @@ func (idx *RuleProviderIndex) parseNext() bool {
 			return true
 		}
 		if !errors.Is(err, rules.ErrNotDomainBehavior) {
+			idx.Warnings = append(idx.Warnings, "provider "+rp.Name+": "+err.Error())
 			return true
 		}
 		// IPCIDR MRS file — pull the prefixes out via the full ParseMRS
 		// (which materialises rules into rules.Rule entries) and fold
 		// them into the cidrs slice for IP-lookup queries.
 		parsedMRS, err := rules.ParseMRS(rp.Name, data)
+		if err != nil {
+			idx.Warnings = append(idx.Warnings, "provider "+rp.Name+": "+err.Error())
+		}
 		if err == nil {
 			info := matchInfo{provider: rp.Name, section: rp.Section, action: action}
 			for _, r := range parsedMRS.Rules {
@@ -217,7 +222,12 @@ func (idx *RuleProviderIndex) parseNext() bool {
 		return true
 	}
 	parsed := rules.ParseText(rp.Name, data)
+	nativeWarning := false
 	for _, r := range parsed.Rules {
+		if r.Type == rules.Native && !nativeWarning {
+			idx.Warnings = append(idx.Warnings, "provider "+rp.Name+" contains native expressions not simulated by this destination check")
+			nativeWarning = true
+		}
 		info := matchInfo{provider: rp.Name, section: rp.Section, action: action, rule: r}
 		switch r.Type {
 		case rules.Domain:
@@ -239,9 +249,9 @@ func (idx *RuleProviderIndex) parseNext() bool {
 	return true
 }
 
-// Match returns the highest-priority rule that claims domain, or the
+// Match returns the first matching rule that claims domain, or the
 // fallback common+proxy default. Lazily parses pending providers in
-// priority order until it finds a hit (or runs out of providers).
+// name order until it finds a hit (or runs out of providers).
 func (idx *RuleProviderIndex) Match(domain string) RuleProviderMatch {
 	d := rules.NormalizeDomain(domain)
 	if m, ok := idx.lookup(d); ok {
@@ -262,11 +272,11 @@ func (idx *RuleProviderIndex) Match(domain string) RuleProviderMatch {
 	return idx.fallback
 }
 
-// MatchIP returns the highest-priority rule provider that lists ip in its
+// MatchIP returns the first matching rule provider that lists ip in its
 // IPCIDR set, or the fallback when none claim it. Forces all pending
 // providers to be parsed before checking — CIDR matches don't admit a
 // short-circuit (we can't tell from the partial index whether a
-// higher-priority unparsed provider would cover the IP), so this is more
+// earlier unparsed provider would cover the IP), so this is more
 // expensive than Match for domains. Still cheap enough for a one-shot
 // user query.
 func (idx *RuleProviderIndex) MatchIP(addr netip.Addr) RuleProviderMatch {
@@ -293,7 +303,7 @@ func (idx *RuleProviderIndex) MatchIP(addr netip.Addr) RuleProviderMatch {
 // one-shot tools like purewrt-check; batch callers should build the
 // index once with NewRuleProviderIndex.
 //
-// Iteration order is priority-sorted (lower number first) to match mihomo;
+// Iteration order is name-sorted for deterministic diagnostics;
 // MRS format is dispatched to ParseMRS instead of ParseText so binary
 // rulesets like category-ai-!cn match the same domains they would inside
 // mihomo's own engine.

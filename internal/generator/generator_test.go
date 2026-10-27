@@ -512,7 +512,7 @@ func TestStagedGeneratedPathsPromoteToLive(t *testing.T) {
 	if _, err := os.Stat(live.MihomoConfig); !os.IsNotExist(err) {
 		t.Fatalf("live path should not exist before promotion, err=%v", err)
 	}
-	if err := PromoteGeneratedPaths(staged, live); err != nil {
+	if err := PromoteGeneratedPathsForGroups(staged, live, GenerationGroups{}.All()); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{live.MihomoConfig, live.NFTFile, live.NFTSetsFile, live.ZapretEnv} {
@@ -915,14 +915,14 @@ func TestMihomoProxyGroupOptions(t *testing.T) {
 	}
 }
 
-func TestNativeImportZeroParseNoDedup(t *testing.T) {
+func TestNativeImportSectionDedup(t *testing.T) {
 	dir := t.TempDir()
 	rpPath := filepath.Join(dir, "common.native")
 	// Marker format: bare domains (incl. a deliberate duplicate), @cidr, bare
-	// CIDRs (v4+v6). native_import must emit verbatim — no dedup, no parse.
+	// CIDRs (v4+v6). native_import must deduplicate inside the section without reparsing.
 	body := "# purewrt-native v1\tcommon\tbuild=1\n" +
 		"youtube.com\n" +
-		"youtube.com\n" + // duplicate — must NOT be dropped (claimed-map bypassed)
+		"youtube.com\n" + // duplicate — dropped within the same section
 		"blocked.ru\n" +
 		"@cidr\n" +
 		"203.0.113.0/24\n" +
@@ -932,7 +932,6 @@ func TestNativeImportZeroParseNoDedup(t *testing.T) {
 	}
 	c := config.Default()
 	c.Settings.Workdir = dir
-	c.Settings.RuleDedupMode = "full" // even under full dedup, native_import skips it
 	c.Sections = []config.Section{{Name: "common", Enabled: true, Action: "proxy", IPv4Enabled: true, IPv6Enabled: true}}
 	c.RuleProviders = []config.RuleProvider{{Name: "native_common", Enabled: true, Format: "text", ParseMode: "native_import", Path: rpPath, Section: "common"}}
 
@@ -941,8 +940,8 @@ func TestNativeImportZeroParseNoDedup(t *testing.T) {
 		t.Fatal(err)
 	}
 	d := dns.String()
-	if strings.Count(d, "nftset=/youtube.com/4#inet#purewrt#dns_proxy_common4") != 2 {
-		t.Fatalf("duplicate domain must be emitted verbatim (no dedup):\n%s", d)
+	if strings.Count(d, "nftset=/youtube.com/4#inet#purewrt#dns_proxy_common4") != 1 {
+		t.Fatalf("duplicate domain must be emitted once within the section:\n%s", d)
 	}
 	if !strings.Contains(d, "nftset=/blocked.ru/4#inet#purewrt#dns_proxy_common4") {
 		t.Fatalf("missing domain directive:\n%s", d)
@@ -1256,7 +1255,7 @@ func TestStreamRuleOutputsIncludesBypassCIDRs(t *testing.T) {
 	}
 }
 
-func TestRuleProviderPriorityClaimsDuplicateDomain(t *testing.T) {
+func TestDirectProviderKeepsCrossSectionDomains(t *testing.T) {
 	dir := t.TempDir()
 	directPath := filepath.Join(dir, "direct.list")
 	proxyPath := filepath.Join(dir, "proxy.list")
@@ -1268,11 +1267,10 @@ func TestRuleProviderPriorityClaimsDuplicateDomain(t *testing.T) {
 	}
 	c := config.Default()
 	c.Settings.Workdir = dir
-	c.Settings.RuleDedupMode = "full"
 	c.Sections = append(c.Sections, config.Section{Name: "direct", Enabled: true, Action: "direct", IPv4Enabled: true, IPv6Enabled: true, Priority: 1000})
 	c.RuleProviders = []config.RuleProvider{
-		{Name: "proxy", Enabled: true, Format: "text", Path: proxyPath, Section: "media", Priority: 100},
-		{Name: "direct", Enabled: true, Format: "text", Path: directPath, Section: "direct", RouteAction: "direct", Priority: 10},
+		{Name: "proxy", Enabled: true, Format: "text", Path: proxyPath, Section: "media"},
+		{Name: "direct", Enabled: true, Format: "text", Path: directPath, Section: "direct", RouteAction: "direct"},
 	}
 	var dns bytes.Buffer
 	if err := streamRuleOutputs(c, generationSinks{dns: &dns}); err != nil {
@@ -1280,17 +1278,17 @@ func TestRuleProviderPriorityClaimsDuplicateDomain(t *testing.T) {
 	}
 	out := dns.String()
 	if !strings.Contains(out, "nftset=/example.com/4#inet#purewrt#dns_direct4") {
-		t.Fatalf("expected high-priority direct provider to claim example.com:\n%s", out)
+		t.Fatalf("expected direct provider to include example.com:\n%s", out)
 	}
-	if strings.Contains(out, "nftset=/example.com/4#inet#purewrt#dns_proxy_media4") {
-		t.Fatalf("lower-priority media provider must not receive claimed duplicate:\n%s", out)
+	if !strings.Contains(out, "nftset=/example.com/4#inet#purewrt#dns_proxy_media4") {
+		t.Fatalf("media provider must retain the destination for fallthrough:\n%s", out)
 	}
 	if !strings.Contains(out, "nftset=/media.example/4#inet#purewrt#dns_proxy_media4") {
 		t.Fatalf("non-duplicate media rule must remain:\n%s", out)
 	}
 }
 
-func TestLowResourceNoDedupAllowsDuplicateDomains(t *testing.T) {
+func TestLowResourceDeduplicatesWithinSection(t *testing.T) {
 	dir := t.TempDir()
 	firstPath := filepath.Join(dir, "first.list")
 	secondPath := filepath.Join(dir, "second.list")
@@ -1303,17 +1301,16 @@ func TestLowResourceNoDedupAllowsDuplicateDomains(t *testing.T) {
 	c := config.Default()
 	c.Settings.Workdir = dir
 	c.Settings.ResourceProfile = "low"
-	c.Settings.RuleDedupMode = "auto"
 	c.RuleProviders = []config.RuleProvider{
-		{Name: "first", Enabled: true, Format: "text", Path: firstPath, Section: "common", Priority: 10},
-		{Name: "second", Enabled: true, Format: "text", Path: secondPath, Section: "common", Priority: 20},
+		{Name: "first", Enabled: true, Format: "text", Path: firstPath, Section: "common"},
+		{Name: "second", Enabled: true, Format: "text", Path: secondPath, Section: "common"},
 	}
 	var dns bytes.Buffer
 	if err := streamRuleOutputs(c, generationSinks{dns: &dns}); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Count(dns.String(), "nftset=/example.com/4#inet#purewrt#dns_proxy_common4"); got != 2 {
-		t.Fatalf("low-resource auto should not dedupe duplicate domains, got count=%d:\n%s", got, dns.String())
+	if got := strings.Count(dns.String(), "nftset=/example.com/4#inet#purewrt#dns_proxy_common4"); got != 1 {
+		t.Fatalf("low-resource must dedupe duplicate domains, got count=%d:\n%s", got, dns.String())
 	}
 }
 
@@ -1330,10 +1327,9 @@ func TestStandardSectionDedupAllowsCrossSectionDuplicate(t *testing.T) {
 	c := config.Default()
 	c.Settings.Workdir = dir
 	c.Settings.ResourceProfile = "standard"
-	c.Settings.RuleDedupMode = "auto"
 	c.RuleProviders = []config.RuleProvider{
-		{Name: "media", Enabled: true, Format: "text", Path: mediaPath, Section: "media", Priority: 10},
-		{Name: "common", Enabled: true, Format: "text", Path: commonPath, Section: "common", Priority: 20},
+		{Name: "media", Enabled: true, Format: "text", Path: mediaPath, Section: "media"},
+		{Name: "common", Enabled: true, Format: "text", Path: commonPath, Section: "common"},
 	}
 	var dns bytes.Buffer
 	if err := streamRuleOutputs(c, generationSinks{dns: &dns}); err != nil {

@@ -7,13 +7,10 @@ import (
 	"github.com/purewrt/purewrt/internal/config"
 )
 
-// IPRoute is the GROUND-TRUTH route for a destination IP — decided by which
-// nftables prerouting dest set the IP falls in, mirroring the generator's
-// precedence (see internal/generator/nftables.go prerouting chain). This is
-// what the kernel actually does, independent of domain rules: an IP can be
-// routed via a section's IP/CIDR set even when the domain matches no rule (so
-// the domain-rule verdict would say "direct").
+// IPRoute is a destination-set routing candidate, excluding client assignments,
+// existing marks, native expressions and connection state.
 type IPRoute struct {
+	Steps   []RoutingStep
 	Set     string // matched set (proxy_common4, direct4, bypass4, …); "" when no set matched
 	Section string // section name, or "bypass"/"reject"/"direct", or "" (default route)
 	Action  string // proxy | direct | reject | bypass | default
@@ -32,6 +29,10 @@ var ipSetContains = func(set, ip string) bool {
 // (dns_) variants of each set are both checked. Returns Action "default" when
 // the IP is in no set (kernel-direct catch-all) or the address is unparseable.
 func ClassifyIP(c config.Config, ip string) IPRoute {
+	return ClassifyIPFlow(c, ip, Flow{})
+}
+
+func ClassifyIPFlow(c config.Config, ip string, flow Flow) IPRoute {
 	addr, err := netip.ParseAddr(ip)
 	if err != nil {
 		return IPRoute{Action: "default"}
@@ -45,7 +46,7 @@ func ClassifyIP(c config.Config, ip string) IPRoute {
 		return setContains(base, ip) || setContains("dns_"+base, ip)
 	}
 	// 1. Excluded / bypass (returned early in prerouting → routes direct).
-	if inEither("bypass"+suf) {
+	if inEither("bypass" + suf) {
 		return IPRoute{Set: "bypass" + suf, Section: "bypass", Action: "bypass"}
 	}
 	if setContains("proxy_server_bypass"+suf, ip) {
@@ -62,8 +63,9 @@ func ClassifyIP(c config.Config, ip string) IPRoute {
 	//    generator emits them (first match wins).
 	secs := append([]config.Section(nil), c.Sections...)
 	sort.SliceStable(secs, func(i, j int) bool { return secs[i].Priority < secs[j].Priority })
+	var steps []RoutingStep
 	for _, s := range secs {
-		if !s.Enabled {
+		if !s.Enabled || (addr.Is6() && !c.IPv6Routed()) {
 			continue
 		}
 		set := s.NFTSet4()
@@ -74,8 +76,19 @@ func ClassifyIP(c config.Config, ip string) IPRoute {
 			continue
 		}
 		if inEither(set) {
-			return IPRoute{Set: set, Section: s.Name, Action: s.Action}
+			status, reason := SectionFlowScope(c, s, flow)
+			steps = append(steps, RoutingStep{Section: s.Name, Priority: s.Priority, Action: s.Action, Status: status, Reason: reason})
+			if status == "skip" {
+				continue
+			}
+			action := s.Action
+			if status == "conditional" {
+				action = "conditional"
+			} else if status == "reject" || status == "direct" {
+				action = status
+			}
+			return IPRoute{Set: set, Section: s.Name, Action: action, Steps: steps}
 		}
 	}
-	return IPRoute{Action: "default"}
+	return IPRoute{Action: "default", Steps: steps}
 }

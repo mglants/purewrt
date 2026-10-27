@@ -170,13 +170,12 @@ func TestFullDedupExemptsZapretSectionProviders(t *testing.T) {
 	}
 	c := config.Default()
 	c.Settings.Workdir = dir
-	c.Settings.RuleDedupMode = "full"
 	c.Sections = append(c.Sections, config.Section{Name: "zap", Enabled: true, Action: "zapret", IPv4Enabled: true})
 	c.RuleProviders = []config.RuleProvider{
 		// Zapret provider first: under plain full dedup it would claim
 		// example.com and starve the proxy set.
-		{Name: "zap", Enabled: true, Format: "text", Path: zapPath, Section: "zap", Priority: 10},
-		{Name: "proxy", Enabled: true, Format: "text", Path: proxyPath, Section: "common", Priority: 100},
+		{Name: "zap", Enabled: true, Format: "text", Path: zapPath, Section: "zap"},
+		{Name: "proxy", Enabled: true, Format: "text", Path: proxyPath, Section: "common"},
 	}
 	var dns bytes.Buffer
 	if err := streamRuleOutputs(c, generationSinks{dns: &dns}); err != nil {

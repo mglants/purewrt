@@ -125,6 +125,8 @@ function confidenceBadge(c) {
 function verdictHint(verdict) {
   if (!verdict || verdict === 'ok') return '';
   switch (verdict) {
+    case 'udp_timeout':      return _('No valid STUN reply. The endpoint or network path may be unavailable; this alone does not prove blocking.');
+    case 'udp_fail':         return _('UDP probe failed — see Reason for the network or endpoint error.');
     case 'dns':              return _('Domain doesn\'t resolve via system DNS (dnsmasq → mihomo) — NXDOMAIN, a downed authoritative, or a DNS-level block.');
     case 'tcp_rst':          return _('TCP reset mid-connection — IP-level filter. Route this host through a proxy section.');
     case 'tcp_refused':      return _('Connection refused — destination not listening. Confirm host:port is correct.');
@@ -245,6 +247,7 @@ return view.extend({
     var bannerHolder = E('div', {}, verdictBanner('', ''));
     var whiteTable = makeResultsTable();
     var blackTable = makeResultsTable();
+    var udpTable = makeResultsTable();
     var whiteSummary = E('p', { 'class': 'purewrt-text-muted', 'style': 'margin:0' }, '');
     var blackSummary = E('p', { 'class': 'purewrt-text-muted', 'style': 'margin:0' }, '');
     var lastRunAt = E('span', { 'class': 'purewrt-text-muted', 'style': 'font-size:0.85em' }, '');
@@ -254,6 +257,10 @@ return view.extend({
     }
 
     function renderReport(report) {
+      var ud = (report && report.udp) || [];
+      var newUDP = renderResults(ud, 'udp');
+      udpTable.body.parentNode.replaceChild(newUDP, udpTable.body);
+      udpTable.body = newUDP;
       var wh = (report && report.whitelist) || [];
       var bl = (report && report.blacklist) || [];
       var verdict = (report && report.verdict) || '';
@@ -349,6 +356,11 @@ return view.extend({
         E('h3', _('Blacklist (suspected blocked)')),
         blackSummary,
         blackTable.table
+      ]),
+      E('div', { 'class': 'cbi-section' }, [
+        E('h3', _('UDP connectivity (STUN)')),
+        E('p', { 'class': 'purewrt-text-muted' }, _('Checks Cloudflare and Nextcloud using the current router routing, which may use a proxy. A valid reply confirms this UDP endpoint is reachable; a timeout does not prove blocking or describe all UDP traffic. These results do not affect the website blocking verdict.')),
+        udpTable.table
       ]),
       tcp1620Section()
     ]);

@@ -19,7 +19,7 @@ var callReload = rpc.declare({ object: 'purewrt', method: 'reload' });
 var callWizardReset = rpc.declare({ object: 'purewrt', method: 'wizard_reset' });
 var callZapretInstalled = rpc.declare({ object: 'purewrt', method: 'zapret_installed', expect: { installed: false } });
 var callDefaultListsCatalog = rpc.declare({ object: 'purewrt', method: 'default_lists_catalog', expect: { catalog: [] } });
-var callNativeListAdd = rpc.declare({ object: 'purewrt', method: 'native_list_add', params: [ 'url', 'section', 'priority' ] });
+var callNativeListAdd = rpc.declare({ object: 'purewrt', method: 'native_list_add', params: [ 'url', 'section' ] });
 var callUpdate = rpc.declare({ object: 'purewrt', method: 'update' });
 
 // Initial state. The wizard always starts at step 1 unless the caller
@@ -1241,9 +1241,7 @@ function runApply() {
         return st && st.enabled;
       }).map(function(e) {
         var st = state.listMap[e.name];
-        // Pass the catalog's per-list priority when present; empty ⇒ the
-        // manager falls back to the section's (or default) priority.
-        return callNativeListAdd(base + e.file, st.section, String(e.priority || ''));
+        return callNativeListAdd(base + e.file, st.section);
       });
       var chain = Promise.resolve();
       if (state.proxyUrl) chain = chain.then(function() { return callImport(state.proxyUrl, 'proxy_only'); });

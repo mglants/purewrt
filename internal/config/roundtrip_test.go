@@ -11,10 +11,6 @@ import (
 func TestConfigRoundTripPreservesKeyFields(t *testing.T) {
 	c := Default()
 	c.Settings.ConfigVersion = 7
-	c.Settings.DNSBackend = "dnsmasq"
-	c.Settings.FirewallBackend = "nftables"
-	c.Settings.AutoReload = false
-	c.Settings.SafeApply = false
 	c.Settings.RollbackOnFail = false
 	c.Settings.ApplyBackupMaxBytes = 654321
 	c.Settings.LogLevel = "debug"
@@ -24,7 +20,6 @@ func TestConfigRoundTripPreservesKeyFields(t *testing.T) {
 	c.Settings.ArtifactCacheMode = "off"
 	c.Settings.ArtifactCacheMaxBytes = 1234567
 	c.Settings.ArtifactCacheMaxEntries = 1234
-	c.Settings.RuleDedupMode = "section"
 	c.Settings.MihomoGeodataEnabled = true
 	c.Settings.RouterOutputProxy = true
 	c.Settings.CgroupV2Path = "services/purewrt-test/inst"
@@ -46,7 +41,6 @@ func TestConfigRoundTripPreservesKeyFields(t *testing.T) {
 	c.Settings.ProxyGuardActiveProbeInterval = 2345
 	c.Settings.ProxyGuardFleetProbeInterval = 12345
 	c.Settings.ProxyGuardQuarantineSeconds = 4567
-	c.DNS.DoHPolicy = "direct"
 	c.DNS.FakeIP = true
 	c.DNS.FallbackUpstreams = []string{"https://common.dot.dns.yandex.net/dns-query#DIRECT"}
 	c.DNS.FallbackDomains = []string{"+.ru", "+.su", "+.xn--p1ai"}
@@ -55,6 +49,8 @@ func TestConfigRoundTripPreservesKeyFields(t *testing.T) {
 	c.ProxyProviders = []ProxyProvider{{Name: "pp", Enabled: true, Type: "http", URL: "https://example.com/pp.yaml", Interval: 456, Path: "/tmp/pp.yaml", HealthCheck: true, HealthCheckURL: "https://example.com/204", HealthCheckInterval: 30, HWID: "pp-hwid", DeviceName: "pp-device", UserAgent: "pp-agent", Headers: []string{"X-PP: yes"}}}
 	c.RuleProviders = []RuleProvider{{Name: "rp", Enabled: true, Behavior: "domain", Format: "text", ParseMode: "native_import", URL: "https://example.com/rp.txt", Interval: 789, Path: "/tmp/rp.txt", Section: "common", UserAgent: "rp-agent", Headers: []string{"X-RP: yes"}}}
 	c.Devices = []Device{{Name: "pixel-7", MAC: "aa:bb:cc:dd:ee:ff", Section: "media", Enabled: true}, {Name: "tv", MAC: "11:22:33:44:55:66", Section: "", Enabled: false}, {Name: "printer", MAC: "de:ad:be:ef:00:01", Exclude: true, Enabled: true}}
+	c.Sections[0].MatchProtocol = "udp"
+	c.Sections[0].DestinationPorts = "7770,10000-11000"
 	c.Sections[0].SourceCIDR4 = []string{"10.13.14.0/24"}
 	c.Sections[0].SourceCIDR6 = []string{"fd00::1/128"}
 	c.Sections[0].ProxyGroupType = "load-balance"

@@ -34,9 +34,9 @@ func TestCleanupArtifactCachePrunesStaleAndOrphanedArtifacts(t *testing.T) {
 	}
 
 	cacheDir := c.CacheDir()
-	live := provider.ArtifactPathInCache(cacheDir, "p", liveSum)
-	stale := provider.ArtifactPathInCache(cacheDir, "p", "deadbeef")
-	orphan := provider.ArtifactPathInCache(cacheDir, "removed", "cafe")
+	live := filepath.Join(cacheDir, "rules", "p", liveSum+".rules")
+	stale := filepath.Join(cacheDir, "rules", "p", "deadbeef"+".rules")
+	orphan := filepath.Join(cacheDir, "rules", "removed", "cafe"+".rules")
 	for _, p := range []string{live, stale, orphan} {
 		if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
 			t.Fatal(err)

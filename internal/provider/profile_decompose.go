@@ -48,7 +48,6 @@ func DecomposeYAMLProfile(rawURL, subName string, data []byte) (ProfileDecomposi
 			d.SectionGroups[i].Priority = prio
 		}
 	}
-	rulePriority := ruleProviderPrioritiesFromRules(prof.Rules)
 	keys := make([]string, 0, len(prof.RuleProviders))
 	for k := range prof.RuleProviders {
 		keys = append(keys, k)
@@ -72,10 +71,7 @@ func DecomposeYAMLProfile(rawURL, subName string, data []byte) (ProfileDecomposi
 			targetRouteAction = routeActionForSection(targetSection)
 		}
 		cls := ClassifyRuleProvider(name, stringVal(raw, "url", ""), stringVal(raw, "behavior", "domain"), stringVal(raw, "format", "text"), nil)
-		rp := config.RuleProvider{Name: rpName, Enabled: true, Behavior: stringVal(raw, "behavior", "domain"), Format: stringVal(raw, "format", "text"), Interval: intVal(raw, "interval", 86400), Section: section, Category: cls.Category, SourceKind: cls.SourceKind, RouteAction: cls.RouteAction, Priority: cls.Priority, SourceSubscription: base, DetectedCategory: cls.Category}
-		if prio := rulePriority[name]; prio > 0 {
-			rp.Priority = prio
-		}
+		rp := config.RuleProvider{Name: rpName, Enabled: true, Behavior: stringVal(raw, "behavior", "domain"), Format: stringVal(raw, "format", "text"), Interval: intVal(raw, "interval", 86400), Section: section, Category: cls.Category, SourceKind: cls.SourceKind, RouteAction: cls.RouteAction, SourceSubscription: base, DetectedCategory: cls.Category}
 		if targetSection == "" && cls.Section != "" {
 			rp.Section = SafeUCIName(cls.Section)
 		}
@@ -143,18 +139,6 @@ func extractSectionGroupHints(prof rules.ClashProfile) []config.Section {
 		}
 		out = append(out, config.Section{Name: SafeUCIName(section), Action: "proxy", ProxyGroup: proxyGroup, ProxyGroupType: groupType, ProxyFilter: filter, ProxyExcludeFilter: excludeFilter, ProxyStrategy: strategy, ProxyHealthCheckURL: healthURL, ProxyHealthCheckInterval: healthInterval})
 		seen[section] = true
-	}
-	return out
-}
-
-func ruleProviderPrioritiesFromRules(rulesIn []string) map[string]int {
-	out := map[string]int{}
-	for idx, line := range rulesIn {
-		provider, _, ok := ruleSetTarget(line)
-		if !ok || provider == "" || out[provider] != 0 {
-			continue
-		}
-		out[provider] = (idx + 1) * 10
 	}
 	return out
 }

@@ -117,17 +117,6 @@ func ensureMaps(s *State) {
 	}
 }
 
-func (s State) QuarantinedNames() []string {
-	var out []string
-	for name, node := range s.Nodes {
-		if node != nil && node.State == Quarantined {
-			out = append(out, name)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
 // RoutingSignature excludes measurements and timestamps. It changes only
 // when the generated mihomo membership should change.
 func (s State) RoutingSignature() string {

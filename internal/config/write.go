@@ -162,9 +162,6 @@ func UpsertRuleProvider(c Config, p RuleProvider) Config {
 				p.RouteAction = old.RouteAction
 				p.UserOverriddenAction = true
 			}
-			if old.Priority != 0 {
-				p.Priority = old.Priority
-			}
 			if !old.Enabled {
 				p.Enabled = false
 			}
@@ -325,8 +322,6 @@ func writeMain(b *bytes.Buffer, s Settings) {
 	optb(b, "mihomo_allow_lan", s.MihomoAllowLAN)
 	opt(b, "external_controller", s.ExternalController)
 	opt(b, "secret", s.Secret)
-	opt(b, "dns_backend", s.DNSBackend)
-	opt(b, "firewall_backend", s.FirewallBackend)
 	opt(b, "fwmark", s.FwMark)
 	opt(b, "fwmark_mask", s.FwMarkMask)
 	opt(b, "route_table", s.RouteTable)
@@ -335,8 +330,6 @@ func writeMain(b *bytes.Buffer, s Settings) {
 	optb(b, "fake_ip", s.FakeIP)
 	optb(b, "sniffer", s.Sniffer)
 	opt(b, "dns_listen", s.DNSListen)
-	optb(b, "auto_reload", s.AutoReload)
-	optb(b, "safe_apply", s.SafeApply)
 	optb(b, "rollback_on_fail", s.RollbackOnFail)
 	opti64(b, "apply_backup_max_bytes", s.ApplyBackupMaxBytes)
 	opt(b, "mihomo_channel", s.MihomoChannel)
@@ -369,7 +362,6 @@ func writeMain(b *bytes.Buffer, s Settings) {
 	optb(b, "auto_update_enabled", s.AutoUpdateEnabled)
 	opt(b, "auto_update_cron", s.AutoUpdateCron)
 	optb(b, "reload_after_update", s.ReloadAfterUpdate)
-	opti(b, "backup_retention", s.BackupRetention)
 	optb(b, "background_updates", s.BackgroundUpdates)
 	opti(b, "boot_update_delay", s.BootUpdateDelay)
 	opti(b, "update_nice", s.UpdateNice)
@@ -387,7 +379,6 @@ func writeMain(b *bytes.Buffer, s Settings) {
 	opt(b, "artifact_cache_mode", s.ArtifactCacheMode)
 	opti64(b, "artifact_cache_max_bytes", s.ArtifactCacheMaxBytes)
 	opti(b, "artifact_cache_max_entries", s.ArtifactCacheMaxEntries)
-	opt(b, "rule_dedup_mode", s.RuleDedupMode)
 	opt(b, "log_level", s.LogLevel)
 	optNonEmpty(b, "log_format", s.LogFormat)
 	listv(b, "api_listen", s.APIListen)
@@ -433,7 +424,6 @@ func writeDNS(b *bytes.Buffer, d DNS) {
 	optb(b, "block_doq", d.BlockDoQ)
 	listv(b, "doh3_block_ip4", d.DoH3BlockIPs4)
 	listv(b, "doh3_block_ip6", d.DoH3BlockIPs6)
-	opt(b, "doh_policy", d.DoHPolicy)
 	opt(b, "listen", d.Listen)
 	optb(b, "fake_ip", d.FakeIP)
 	opt(b, "enhanced_mode", d.EnhancedMode)
@@ -512,6 +502,8 @@ func writeSection(b *bytes.Buffer, s Section, seen map[string]bool) {
 	optb(b, "ipv4_enabled", s.IPv4Enabled)
 	optb(b, "ipv6_enabled", s.IPv6Enabled)
 	opt(b, "udp_mode", s.UDPMode)
+	opt(b, "match_protocol", s.MatchProtocol)
+	opt(b, "destination_ports", s.DestinationPorts)
 	opti(b, "priority", s.Priority)
 	listv(b, "vpns", s.VPNs)
 	if s.ZapretApplicationNames != nil {
@@ -579,7 +571,6 @@ func writeRuleProvider(b *bytes.Buffer, p RuleProvider, seen map[string]bool) {
 	opt(b, "category", p.Category)
 	opt(b, "source_kind", p.SourceKind)
 	opt(b, "route_action", p.RouteAction)
-	opti(b, "priority", p.Priority)
 	opt(b, "source_subscription", p.SourceSubscription)
 	opt(b, "detected_category", p.DetectedCategory)
 	optb(b, "user_overridden_section", p.UserOverriddenSection)

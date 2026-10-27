@@ -10,14 +10,14 @@ import (
 )
 
 func TestZapretCheckStrategyRejectsUnsafeDomain(t *testing.T) {
-	_, err := (Manager{}).ZapretCheckStrategy("example.org; reboot")
+	_, err := (Manager{}).ZapretCheckStrategyWithOptions("example.org; reboot", ZapretCheckOptions{})
 	if err == nil {
 		t.Fatal("expected unsafe domain error")
 	}
 }
 
 func TestZapretCheckStrategyRejectsUnsafeInterface(t *testing.T) {
-	_, err := (Manager{}).ZapretCheckStrategy("example.org", "wan; reboot")
+	_, err := (Manager{}).ZapretCheckStrategyWithOptions("example.org", ZapretCheckOptions{Interface: "wan; reboot"})
 	if err == nil {
 		t.Fatal("expected unsafe interface error")
 	}

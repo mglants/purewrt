@@ -87,7 +87,7 @@ func PlanImportWithOptions(c config.Config, rawURL, name, mode, preset string, a
 			if cls.Section != "" {
 				section = SafeUCIName(cls.Section)
 			}
-			p.RuleProviders = append(p.RuleProviders, config.RuleProvider{Name: rpName, Enabled: true, Behavior: guessBehavior(a), Format: guessFormat(a), URL: rawURL, Interval: 86400, Path: filepath.Join(config.DefaultWorkdir, "rulesets", rpName+".txt"), Section: section, Category: cls.Category, SourceKind: cls.SourceKind, RouteAction: cls.RouteAction, Priority: cls.Priority, SourceSubscription: p.SubscriptionName, DetectedCategory: cls.Category})
+			p.RuleProviders = append(p.RuleProviders, config.RuleProvider{Name: rpName, Enabled: true, Behavior: guessBehavior(a), Format: guessFormat(a), URL: rawURL, Interval: 86400, Path: filepath.Join(config.DefaultWorkdir, "rulesets", rpName+".txt"), Section: section, Category: cls.Category, SourceKind: cls.SourceKind, RouteAction: cls.RouteAction, SourceSubscription: p.SubscriptionName, DetectedCategory: cls.Category})
 		} else if preset == "minimal" {
 			p.Warnings = append(p.Warnings, "No routing rules found; Minimal preset keeps only user/manual rules")
 		} else if preset == "balanced" {

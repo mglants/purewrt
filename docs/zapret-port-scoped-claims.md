@@ -1,6 +1,11 @@
 # Zapret port-scoped claims — design
 
-Date: 2026-07-10. Status: approved.
+Date: 2026-07-10. Status: historical design.
+
+Current behavior is documented in [Section protocol and port filters](section-port-filters.md).
+Cross-section deduplication and its Zapret exemption have been removed; section
+priority now determines destination-pass ordering. Optional section filters narrow
+the strategy port claims.
 
 ## Problem
 

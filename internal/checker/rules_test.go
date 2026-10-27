@@ -29,7 +29,7 @@ func TestRuleProviderIndex_MRSDomainSet(t *testing.T) {
 			{Name: "common", Enabled: true, Action: "proxy"},
 		},
 		RuleProviders: []config.RuleProvider{
-			{Name: "youtube", Enabled: true, Format: "mrs", Path: path, Section: "common", Priority: 1},
+			{Name: "youtube", Enabled: true, Format: "mrs", Path: path, Section: "common"},
 		},
 	}
 
@@ -62,10 +62,8 @@ func TestRuleProviderIndex_MRSDomainSet(t *testing.T) {
 	}
 }
 
-// TestRuleProviderIndex_MRSPriorityOverText guarantees that a higher-priority
-// (lower-priority-number) MRS provider claims the domain before a text
-// provider at a later priority would have a chance to.
-func TestRuleProviderIndex_MRSPriorityOverText(t *testing.T) {
+// Name ordering applies consistently across MRS and text providers.
+func TestRuleProviderIndex_MRSNameOrderOverText(t *testing.T) {
 	src, err := os.ReadFile("../../testdata/mrs/youtube.mrs")
 	if err != nil {
 		t.Skipf("mrs fixture not available: %v", err)
@@ -86,13 +84,13 @@ func TestRuleProviderIndex_MRSPriorityOverText(t *testing.T) {
 			{Name: "direct", Enabled: true, Action: "direct"},
 		},
 		RuleProviders: []config.RuleProvider{
-			{Name: "youtube", Enabled: true, Format: "mrs", Path: mrsPath, Section: "common", Priority: 1},
-			{Name: "extra", Enabled: true, Format: "text", Path: textPath, Section: "direct", Priority: 5},
+			{Name: "a_youtube", Enabled: true, Format: "mrs", Path: mrsPath, Section: "common"},
+			{Name: "extra", Enabled: true, Format: "text", Path: textPath, Section: "direct"},
 		},
 	}
 
 	m := NewRuleProviderIndex(cfg).Match("www.youtube.com")
-	if !m.Matched || m.Provider != "youtube" || m.Section != "common" {
-		t.Fatalf("priority-1 MRS should claim www.youtube.com, got %+v", m)
+	if !m.Matched || m.Provider != "a_youtube" || m.Section != "common" {
+		t.Fatalf("First-by-name MRS should match www.youtube.com, got %+v", m)
 	}
 }

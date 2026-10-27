@@ -241,3 +241,29 @@ func TestZapretMarksRejectAnyProxyMaskBit(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+func TestValidateSectionPortFilters(t *testing.T) {
+	for _, tc := range []struct {
+		proto, ports string
+		valid        bool
+	}{
+		{"udp", "10000-11000", true}, {"tcp_udp", "443,10000-11000", true},
+		{"icmp", "", false}, {"udp", "0", false}, {"udp", "11000-10000", false},
+		{"tcp", "443; accept", false},
+	} {
+		c := config.Default()
+		c.Sections[0].MatchProtocol = tc.proto
+		c.Sections[0].DestinationPorts = tc.ports
+		err := validateConfigHardening(c)
+		if (err == nil) != tc.valid {
+			t.Errorf("%+v: %v", tc, err)
+		}
+	}
+	c := config.Default()
+	c.Sections[0].Action = "direct"
+	c.Sections[0].MatchProtocol = "udp"
+	c.Sections[0].DestinationPorts = "10000-11000"
+	if err := validateConfigHardening(c); err != nil {
+		t.Fatalf("stale match fields after action change should be harmless: %v", err)
+	}
+}

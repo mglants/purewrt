@@ -369,11 +369,6 @@ func (m Manager) Update() error {
 	return err
 }
 
-func (m Manager) UpdateWithOptions(force bool) error {
-	_, err := m.UpdateDetailedWithOptions(force)
-	return err
-}
-
 func (m Manager) UpdateRuleProvider(name string) (result UpdateResult, retErr error) {
 	started := time.Now()
 	c, err := m.Load()
@@ -1211,7 +1206,10 @@ func validateConfigHardening(c config.Config) error {
 		if !knownValue(s.Action, "proxy", "direct", "reject", "zapret") {
 			return fmt.Errorf("section %q has unsupported action %q", s.Name, s.Action)
 		}
-		if s.UDPMode != "" && !knownValue(s.UDPMode, "proxy", "direct", "reject", "block_quic", "block", "off") {
+		if err := s.ValidateMatch(); err != nil {
+			return fmt.Errorf("section %q: %w", s.Name, err)
+		}
+		if s.UDPMode != "" && !knownValue(s.UDPMode, "tcp_only", "proxy", "direct", "reject", "block_quic", "block", "off") {
 			return fmt.Errorf("section %q has unsupported udp_mode %q", s.Name, s.UDPMode)
 		}
 		if s.Enabled && s.Action == "proxy" {

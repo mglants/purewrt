@@ -62,7 +62,6 @@ var SOURCES = [
   { key: 'easytier', title: 'Friend Mesh',    hint: 'easytier overlay daemon — rendezvous dials, hole punching, peer links', requiresMesh: true }
 ];
 
-var DEFAULT_TAIL_LINES   = 200;
 var MAX_RENDERED_LINES   = 1000;
 var POLL_MS              = 3000;
 var SCROLL_PIN_PX        = 24;  // px tolerance for "still at bottom" tail-follow

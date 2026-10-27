@@ -210,9 +210,13 @@ func (rep *NetCheckReport) checkRouting(c config.Config, domain string) {
 		rep.addLayer("routing", "fail", "nft table inet purewrt absent: "+err.Error())
 		return
 	}
-	match := checker.MatchRuleProviders(c, domain)
-	if !match.Matched || match.Action != "proxy" {
-		rep.addLayer("routing", "ok", "table present (probe domain is catch-all, no per-domain set)")
+	match := checker.TraceDestination(c, domain, checker.Flow{Protocol: "tcp", Port: 443})
+	if match.Action == "conditional" {
+		rep.addLayer("routing", "warn", "destination routing is conditional; check WAN and strategy scope")
+		return
+	}
+	if match.Section == "" || match.Action != "proxy" {
+		rep.addLayer("routing", "ok", "table present (TCP/443 probe does not select a proxy destination section)")
 		return
 	}
 	sec, ok := sectionByName(c, match.Section)

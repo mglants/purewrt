@@ -140,22 +140,23 @@ type ruleProviderFPEntry struct {
 	Path        string `json:"path"`
 	Checksum    string `json:"checksum"`
 	Section     string `json:"section"`
-	Priority    int    `json:"priority"`
 	RouteAction string `json:"route_action"`
 }
 
 type openWrtSectionFPEntry struct {
-	Name        string
-	Enabled     bool
-	Action      string
-	TPROXYPort  int
-	IPv4Enabled bool
-	IPv6Enabled bool
-	UDPMode     string
-	Priority    int
-	VPNs        []string
-	SourceCIDR4 []string
-	SourceCIDR6 []string
+	Name             string
+	Enabled          bool
+	Action           string
+	TPROXYPort       int
+	IPv4Enabled      bool
+	IPv6Enabled      bool
+	UDPMode          string
+	MatchProtocol    string
+	DestinationPorts string
+	Priority         int
+	VPNs             []string
+	SourceCIDR4      []string
+	SourceCIDR6      []string
 }
 
 // fingerprintPath returns where the generation fingerprint lives. We keep
@@ -196,7 +197,7 @@ func currentGenerationFingerprint(c config.Config) (generationFingerprint, error
 				checksumBytes += st.Size()
 			}
 		}
-		in.RuleProvider = append(in.RuleProvider, ruleProviderFPEntry{Name: rp.Name, Enabled: rp.Enabled, Format: rp.Format, Path: rp.Path, Checksum: provider.ArtifactChecksum(rp.Path), Section: rp.Section, Priority: rp.Priority, RouteAction: rp.RouteAction})
+		in.RuleProvider = append(in.RuleProvider, ruleProviderFPEntry{Name: rp.Name, Enabled: rp.Enabled, Format: rp.Format, Path: rp.Path, Checksum: provider.ArtifactChecksum(rp.Path), Section: rp.Section, RouteAction: rp.RouteAction})
 	}
 	log.Debug("generate: fingerprint checksums providers=%d bytes=%d took=%v", len(c.RuleProviders), checksumBytes, time.Since(checksumStart))
 	b, err := json.Marshal(in)
@@ -208,13 +209,13 @@ func currentGenerationFingerprint(c config.Config) (generationFingerprint, error
 	if err != nil {
 		return generationFingerprint{}, err
 	}
-	return generationFingerprint{Version: 4, Hash: fmt.Sprintf("%x", h[:]), Groups: groups, GeneratedAt: time.Now().UTC(), Inputs: in}, nil
+	return generationFingerprint{Version: 5, Hash: fmt.Sprintf("%x", h[:]), Groups: groups, GeneratedAt: time.Now().UTC(), Inputs: in}, nil
 }
 
 func generationGroupHashes(c config.Config, in generationFingerprintInput) (map[string]string, error) {
 	openWrtSections := make([]openWrtSectionFPEntry, 0, len(c.Sections))
 	for _, s := range c.Sections {
-		openWrtSections = append(openWrtSections, openWrtSectionFPEntry{Name: s.Name, Enabled: s.Enabled, Action: s.Action, TPROXYPort: s.TPROXYPort, IPv4Enabled: s.IPv4Enabled, IPv6Enabled: s.IPv6Enabled, UDPMode: s.UDPMode, Priority: s.Priority, VPNs: s.VPNs, SourceCIDR4: s.SourceCIDR4, SourceCIDR6: s.SourceCIDR6})
+		openWrtSections = append(openWrtSections, openWrtSectionFPEntry{Name: s.Name, Enabled: s.Enabled, Action: s.Action, TPROXYPort: s.TPROXYPort, IPv4Enabled: s.IPv4Enabled, IPv6Enabled: s.IPv6Enabled, UDPMode: s.UDPMode, MatchProtocol: s.MatchProtocol, DestinationPorts: s.DestinationPorts, Priority: s.Priority, VPNs: s.VPNs, SourceCIDR4: s.SourceCIDR4, SourceCIDR6: s.SourceCIDR6})
 	}
 	proxyProviders := c.ProxyProviders
 	groups := map[string]any{

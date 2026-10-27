@@ -81,36 +81,37 @@ func ParseTarget(raw string) CanaryProbe {
 // Verdict vocabulary:
 //   - "ok"            : full DNS→TCP→TLS→HTTP path completed cleanly
 //   - "dns"           : the system resolver (dnsmasq → mihomo, i.e. the same
-//                        path LAN clients use) returns no address — NXDOMAIN,
-//                        a downed authoritative, or a DNS-level block
+//     path LAN clients use) returns no address — NXDOMAIN,
+//     a downed authoritative, or a DNS-level block
 //   - "tcp_rst"       : TCP handshake answered with RST
 //   - "tcp_refused"   : RST or "connection refused" before handshake
 //   - "tcp_timeout"   : TCP layer timed out
 //   - "tcp_no_route"  : no route to host (interface/route table)
 //   - "tcp_fail"      : other TCP error
 //   - "tls_rst"       : TCP succeeded but TLS handshake was reset — classic
-//                        SNI-DPI signature (TSPU watches ClientHello)
+//     SNI-DPI signature (TSPU watches ClientHello)
 //   - "tls_remote_error" : server-side alert during handshake
 //   - "tls_timeout"   : TLS handshake stalled
 //   - "tls_fail"      : other TLS error
 //   - "http_error"    : connection died during the request
 //   - "http_redirect" : plain-HTTP probe answered with a redirect that is
-//                        NOT a same-host https upgrade (those are followed
-//                        automatically) — a legit domain move or an ISP
-//                        block-page bounce; probe the Location to tell
+//     NOT a same-host https upgrade (those are followed
+//     automatically) — a legit domain move or an ISP
+//     block-page bounce; probe the Location to tell
 //   - "http_451"      : explicit "Unavailable For Legal Reasons"
 //   - "http_stub"     : status 200 with a known ISP stub-page marker in the
-//                        body ("заблокирован Роскомнадзор", etc.) — covers
-//                        the polite-block case where ISPs serve a fake page
+//     body ("заблокирован Роскомнадзор", etc.) — covers
+//     the polite-block case where ISPs serve a fake page
 //   - "http_<code>"   : any other 4xx/5xx
 //   - "config"        : probe input was malformed (bad host:port)
 //
 // Confidence semantics (added 2026-05 to align with rkn-block-checker):
 //   - "high"   : a clean path or an unambiguous censorship fingerprint
-//                (explicit HTTP 451, ISP stub-page marker in the body)
+//     (explicit HTTP 451, ISP stub-page marker in the body)
 //   - "medium" : pattern matches a censorship technique but one signal alone
-//                can't rule out server-side flakiness (TLS reset, TCP RST)
+//     can't rule out server-side flakiness (TLS reset, TCP RST)
 //   - "low"    : ambiguous (timeouts, generic errors)
+//
 // Verdict is the per-target classification produced by the canary probe.
 // Named string so typos in callers are at least caught by `go vet`'s
 // fieldalignment-style checks and so a future refactor can grep `Verdict\b`
@@ -148,21 +149,20 @@ const (
 )
 
 type CanaryResult struct {
-	Target      string        `json:"target"`
-	Verdict     Verdict       `json:"verdict"`
-	Confidence  Confidence    `json:"confidence,omitempty"`
-	Reason      string        `json:"reason,omitempty"`
-	Notes       []string      `json:"notes,omitempty"`
+	Target     string     `json:"target"`
+	Verdict    Verdict    `json:"verdict"`
+	Confidence Confidence `json:"confidence,omitempty"`
+	Reason     string     `json:"reason,omitempty"`
+	Notes      []string   `json:"notes,omitempty"`
 	// Latency is kept as a Duration for Go callers; the wire field is
 	// integer milliseconds. A bare `json:"latency_ms"` tag on the Duration
 	// would serialize nanoseconds under a _ms name — LuCI then shows
 	// "3200442570 ms" for a 3.2 s probe.
-	Latency     time.Duration `json:"-"`
-	LatencyMS   int64         `json:"latency_ms"`
-	ResolvedA   []string      `json:"resolved_a,omitempty"` // legacy: == SysIPs (kept for old JS callers)
-	SysIPs      []string      `json:"sys_ips,omitempty"`
-	StatusCode  int           `json:"status_code,omitempty"`
-	StubMarker  string        `json:"stub_marker,omitempty"`
+	Latency    time.Duration `json:"-"`
+	LatencyMS  int64         `json:"latency_ms"`
+	SysIPs     []string      `json:"sys_ips,omitempty"`
+	StatusCode int           `json:"status_code,omitempty"`
+	StubMarker string        `json:"stub_marker,omitempty"`
 }
 
 // canaryUserAgent is sent on every canary HTTP request. Chosen empirically —
@@ -334,7 +334,6 @@ func runCanary(ctx context.Context, p CanaryProbe) (r CanaryResult) {
 	// a definitive NXDOMAIN stops retrying immediately.
 	sysIPs, dnsTimedOut := resolveSystemIPv4(ctx, host)
 	r.SysIPs = sysIPs
-	r.ResolvedA = r.SysIPs // legacy alias
 
 	if len(r.SysIPs) == 0 {
 		r.Verdict, r.Confidence = "dns", "low"
@@ -709,6 +708,7 @@ func isTimeout(err error) bool {
 // gets a single "your network is in a blocked zone (high confidence)" line
 // rather than having to interpret per-target details.
 type BlockingReport struct {
+	UDP       []CanaryResult `json:"udp"`
 	Whitelist []CanaryResult `json:"whitelist"`
 	Blacklist []CanaryResult `json:"blacklist"`
 	Verdict   string         `json:"verdict"` // "blocked_zone_high", "blocked_zone_medium", "no_blocking_detected", "inconclusive"
@@ -728,6 +728,7 @@ func BlockingReportRun(ctx context.Context, whitelist, blacklist []CanaryProbe) 
 		Whitelist: BlockingHeuristics(ctx, whitelist),
 		Blacklist: BlockingHeuristics(ctx, blacklist),
 	}
+	rep.UDP = udpBlockingCanaries(ctx)
 	rep.Verdict, rep.Reason = computeOverallVerdict(rep.Whitelist, rep.Blacklist)
 	return rep
 }
@@ -820,6 +821,8 @@ func FormatBlockingReport(rep BlockingReport) string {
 	b.WriteString(FormatBlockingResults(rep.Whitelist))
 	b.WriteString("\nBlacklist (suspected blocked)\n")
 	b.WriteString(FormatBlockingResults(rep.Blacklist))
+	b.WriteString("\nUDP STUN (current router routing; timeout does not prove blocking)\n")
+	b.WriteString(FormatBlockingResults(rep.UDP))
 	return b.String()
 }
 

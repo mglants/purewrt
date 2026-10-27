@@ -107,8 +107,6 @@ func zapretInstances(c config.Config) []zapretInstance {
 
 func shellEscape(s string) string { return strings.ReplaceAll(s, "\"", "\\\"") }
 
-func shellQuote(s string) string { return strings.ReplaceAll(s, " ", "_") }
-
 // ZapretUpstreamConfig previews the shared daemon's profiles, selectors and
 // namespaced blobs. The service launches the equivalent parameters from env.
 func ZapretUpstreamConfig(c config.Config) []byte {
@@ -377,14 +375,4 @@ func shellSafeName(s string) string {
 		return "profile"
 	}
 	return string(out)
-}
-
-func filterEmpty(in []string) []string {
-	out := make([]string, 0, len(in))
-	for _, s := range in {
-		if strings.TrimSpace(s) != "" {
-			out = append(out, s)
-		}
-	}
-	return out
 }

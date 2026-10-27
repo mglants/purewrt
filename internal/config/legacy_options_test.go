@@ -8,7 +8,7 @@ import (
 )
 
 // TestLegacyOptionsIgnoredAndDropped guards the removal of the dead
-// dns_mode / quic_policy knobs: configs on existing routers may still
+// configuration knobs: configs on existing routers may still
 // carry them, so Load must ignore them silently and the next Save must
 // not write them back.
 func TestLegacyOptionsIgnoredAndDropped(t *testing.T) {
@@ -18,7 +18,14 @@ func TestLegacyOptionsIgnoredAndDropped(t *testing.T) {
 	option enabled '1'
 	option dns_mode 'fake-ip-filter'
 	option quic_policy 'block'
+	option auto_reload '0'
+	option safe_apply '0'
+	option backup_retention '99'
+	option dns_backend 'removed'
+	option firewall_backend 'removed'
 	option log_level 'debug'
+config dns 'dns'
+	option doh_policy 'direct'
 `
 	if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
 		t.Fatal(err)
@@ -37,7 +44,7 @@ func TestLegacyOptionsIgnoredAndDropped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, dead := range []string{"dns_mode", "quic_policy"} {
+	for _, dead := range []string{"dns_mode", "quic_policy", "auto_reload", "safe_apply", "backup_retention", "dns_backend", "firewall_backend", "doh_policy"} {
 		if strings.Contains(string(out), dead) {
 			t.Fatalf("serialized config must not contain removed option %q", dead)
 		}

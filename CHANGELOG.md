@@ -4,6 +4,50 @@ All notable changes to PureWRT are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are the `purewrt`
 package version.
 
+## [0.10.0] - 2026-10-28
+
+### Added
+- Optional protocol and destination-port filters for Proxy and Zapret sections.
+  Traffic outside a section's scope continues to later matching rules, then
+  direct routing when none match. LuCI supports selecting TCP and UDP together.
+- Destination routing diagnostics with protocol, port and WAN inputs, showing
+  matching, skipped, conditional and shadowed sections and live nftset matches.
+- UDP STUN checks for Cloudflare and Nextcloud in What's blocked. Results follow
+  current router routing, validate server replies and show the public endpoint.
+  UDP failures remain separate from the website blocking verdict.
+
+### Changed
+- Preserve overlapping destinations across sections so port-specific routing can
+  fall through. Deduplication remains within each section.
+- Remove rule-provider priority from configuration, imports, generation and LuCI.
+  Section priority controls routing; provider names provide stable output order.
+- Remove unused backend settings and obsolete helper code.
+
+### Fixed
+- Intersect section filters with Zapret strategy protocols and ports consistently
+  in terminal claims and NFQUEUE rules, including router-originated traffic.
+- Read the installed Mihomo version from its executable instead of stale UCI
+  metadata. Update checks honor the configured channel and do not modify config.
+- Copy the release version into the LuCI package when syncing the local SDK.
+
+### Upgrade notes
+- Sections without protocol/port filters retain unrestricted matching. Direct
+  and Reject destination lists remain global exclusions, without port filters.
+- The removed `rule_dedup_mode` and provider `priority` options are ignored and
+  omitted on save. Configurations using cross-section dedup now resolve overlap
+  through runtime section precedence; overlapping lists may consume more memory.
+  Generated rules are rebuilt after upgrading.
+- Zapret claims use the union of assigned strategies' ports, narrowed by section
+  filters. On a WAN without a matching strategy, claimed traffic remains direct;
+  it does not fall through to a lower proxy section.
+- Legacy `mihomo-download` and `mihomo-update` commands are read-only release-check
+  aliases. Use `mihomo-install-release` to install an update.
+- STUN checks currently use IPv4 and current routing, which may include a proxy.
+  A timeout does not prove blocking, and success does not establish reachability
+  of other UDP endpoints or game traffic.
+- See [section filters](docs/section-port-filters.md) and
+  [routing diagnostics](docs/routing-diagnostics.md).
+
 ## [0.9.0] - 2026-10-25
 
 ### Added

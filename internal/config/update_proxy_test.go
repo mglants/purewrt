@@ -10,7 +10,7 @@ import (
 func TestUpdateProxyURLLoadAndSave(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "purewrt")
-	data := "config main 'settings'\n    option update_via_proxy '1'\n    option update_proxy_url 'http://127.0.0.1:7890'\n    option dashboard_enabled '1'\n    option dashboard_listen '0.0.0.0:9090'\n    option dashboard_path '/etc/purewrt/dashboard'\n    option dashboard_url 'https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip'\n    option dashboard_name 'metacubexd'\n    option backup_retention '5'\n    option background_updates '1'\n    option boot_update_delay '120'\n    option update_nice '18'\n    option update_ionice_class '2'\n    option update_ionice_level '6'\n"
+	data := "config main 'settings'\n    option update_via_proxy '1'\n    option update_proxy_url 'http://127.0.0.1:7890'\n    option dashboard_enabled '1'\n    option dashboard_listen '0.0.0.0:9090'\n    option dashboard_path '/etc/purewrt/dashboard'\n    option dashboard_url 'https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip'\n    option dashboard_name 'metacubexd'\n    option background_updates '1'\n    option boot_update_delay '120'\n    option update_nice '18'\n    option update_ionice_class '2'\n    option update_ionice_level '6'\n"
 	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -29,9 +29,6 @@ func TestUpdateProxyURLLoadAndSave(t *testing.T) {
 	}
 	if !c.Settings.BackgroundUpdates || c.Settings.BootUpdateDelay != 120 || c.Settings.UpdateNice != 18 || c.Settings.UpdateIONiceClass != 2 || c.Settings.UpdateIONiceLevel != 6 {
 		t.Fatalf("unexpected background update settings: %+v", c.Settings)
-	}
-	if c.Settings.BackupRetention != 5 {
-		t.Fatalf("unexpected backup retention: %+v", c.Settings)
 	}
 	out := filepath.Join(dir, "purewrt.out")
 	if err := Save(out, c); err != nil {
@@ -52,9 +49,6 @@ func TestUpdateProxyURLLoadAndSave(t *testing.T) {
 	}
 	if !strings.Contains(string(written), "option background_updates '1'") || !strings.Contains(string(written), "option boot_update_delay '120'") || !strings.Contains(string(written), "option update_nice '18'") || !strings.Contains(string(written), "option update_ionice_class '2'") || !strings.Contains(string(written), "option update_ionice_level '6'") {
 		t.Fatalf("saved config missing background update settings:\n%s", string(written))
-	}
-	if !strings.Contains(string(written), "option backup_retention '5'") {
-		t.Fatalf("saved config missing backup retention:\n%s", string(written))
 	}
 }
 

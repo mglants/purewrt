@@ -365,26 +365,23 @@ var commands = []command{
 			fmt.Println("override saved")
 		}},
 	{name: "add-native-list", group: "Subscriptions & providers",
-		args: "<url> <section> [--no-apply] [--priority=N]",
+		args: "<url> <section> [--no-apply]",
 		desc: "Register a pre-built nftset list as a native provider",
 		run: func(m manager.Manager) {
-			// add-native-list <url> <section> [--no-apply] [--priority=N]: register
+			// add-native-list <url> <section> [--no-apply]: register
 			// a pre-built nftset-builder list as a native_import provider, creating
 			// the section if missing. --no-apply only persists (the wizard batches
 			// many, then applies once); otherwise fetch + apply for standalone CLI
-			// use. --priority=N sets the rule provider + new-section precedence.
+			// use. New sections use the default routing priority.
 			need(4)
 			noApply := false
-			priority := 0
 			for _, a := range os.Args[4:] {
 				switch {
 				case a == "--no-apply":
 					noApply = true
-				case strings.HasPrefix(a, "--priority="):
-					priority, _ = strconv.Atoi(strings.TrimPrefix(a, "--priority="))
 				}
 			}
-			name, err := m.AddNativeList(os.Args[2], os.Args[3], priority)
+			name, err := m.AddNativeList(os.Args[2], os.Args[3])
 			fatal(err)
 			if noApply {
 				printJSON(map[string]string{"name": name})
@@ -513,11 +510,11 @@ var commands = []command{
 		}},
 	{name: "mihomo-download", aliases: []string{"mihomo-update"}, group: "Mihomo & proxies",
 		args: "",
-		desc: "Report availability of a mihomo-alpha package update",
+		desc: "Deprecated: check release availability without installing (use mihomo-install-release to install)",
 		run: func(m manager.Manager) {
-			info, err := m.MihomoPackageUpdate()
+			info, err := m.MihomoCheckUpdateChannel("")
 			fatal(err)
-			fmt.Printf("mihomo-alpha package update available: %s (%s). Rebuild/install the bundled mihomo-alpha package; binary overwrite is disabled.\n", info.Version, info.AssetName)
+			printJSON(info)
 		}},
 	{name: "mihomo-install-release", group: "Mihomo & proxies",
 		args: "<alpha|stable>",

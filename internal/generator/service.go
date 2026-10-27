@@ -75,10 +75,6 @@ func StagedGeneratedPaths(c config.Config, stageDir string) GeneratedPaths {
 	}
 }
 
-func PromoteGeneratedPaths(staged, live GeneratedPaths) error {
-	return PromoteGeneratedPathsForGroups(staged, live, GenerationGroups{}.All())
-}
-
 func PromoteGeneratedPathsForGroups(staged, live GeneratedPaths, groups GenerationGroups) error {
 	for _, f := range []struct {
 		from string

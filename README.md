@@ -116,7 +116,7 @@ Three ways, pick whichever fits:
 | Binary / app    | Role                                                          |
 |-----------------|---------------------------------------------------------------|
 | `purewrt`       | The CLI manager — import, update, generate, apply, diagnose.  |
-| `purewrt-check` | Domain classifier (which section/route a hostname resolves to). |
+| `purewrt-check` | Destination-rule trace with optional protocol, port and WAN device. |
 | `purewrt-api`   | Optional local API daemon.                                    |
 | LuCI app        | `luci-app-purewrt` — the web UI (tabs above are LuCI views).  |
 
@@ -237,7 +237,7 @@ subscription.
 ```sh
 purewrt analyze <url>        # inspect a subscription without importing
 purewrt import <url>         # import a subscription / provider
-purewrt add-native-list <url> <section> [--priority=N]
+purewrt add-native-list <url> <section>
 purewrt update               # fetch subscriptions + rule providers
 purewrt generate             # render artifacts to /etc/purewrt/generated
 purewrt apply                # generate + install + reload services (self-healing)
@@ -247,7 +247,7 @@ purewrt validate             # validate config
 purewrt client-traffic <IP>  # live flow / DNS / rejection capture for a client
 purewrt doctor               # check the dev/runtime toolchain
 purewrt disable              # remove PureWRT routing + DNS changes
-purewrt-check chatgpt.com    # classify a domain
+purewrt-check chatgpt.com tcp 443    # trace destination-rule priority and scope
 ```
 
 ---

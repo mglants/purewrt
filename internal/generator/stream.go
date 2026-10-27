@@ -28,49 +28,6 @@ type streamStats struct {
 	cidr6   int
 }
 
-type ruleDedupMode string
-
-const (
-	ruleDedupOff     ruleDedupMode = "off"
-	ruleDedupSection ruleDedupMode = "section"
-	ruleDedupFull    ruleDedupMode = "full"
-)
-
-func effectiveRuleDedupMode(c config.Config) ruleDedupMode {
-	switch strings.ToLower(strings.TrimSpace(c.Settings.RuleDedupMode)) {
-	case "off", "none", "0", "false":
-		return ruleDedupOff
-	case "section", "set":
-		return ruleDedupSection
-	case "full", "on", "true", "1":
-		return ruleDedupFull
-	}
-	switch c.ResourceProfile() {
-	case "low":
-		return ruleDedupOff
-	case "high":
-		return ruleDedupFull
-	default:
-		return ruleDedupSection
-	}
-}
-
-// claimedForSection returns the full-dedup claim map, or nil for zapret
-// sections: zapret claims only strategy-covered ports at the nft level, so
-// its hosts must also stay in proxy sets for non-covered traffic to fall
-// through. Zapret providers neither claim nor honor claims
-// (docs/zapret-port-scoped-claims.md).
-func claimedForSection(sec config.Section, claimed map[string]struct{}) map[string]struct{} {
-	if sec.Action == "zapret" {
-		return nil
-	}
-	return claimed
-}
-
-func (m ruleDedupMode) section() bool { return m == ruleDedupSection || m == ruleDedupFull }
-
-func (m ruleDedupMode) full() bool { return m == ruleDedupFull }
-
 func streamRuleOutputs(c config.Config, sinks generationSinks) error {
 	log := logging.New(c.Settings.LogLevel)
 	defer log.DebugTimer("generate: stream rule outputs")()
@@ -156,19 +113,12 @@ func streamRuleOutputs(c config.Config, sinks generationSinks) error {
 			}
 		}
 	}
-	dedupMode := effectiveRuleDedupMode(c)
-	log.Debug("generate: rule dedup mode=%s", dedupMode)
-	var domainSeen, cidr4Seen, cidr6Seen, nativeSeen map[string]map[string]struct{}
-	var claimed map[string]struct{}
-	if dedupMode.section() {
-		domainSeen = map[string]map[string]struct{}{}
-		cidr4Seen = map[string]map[string]struct{}{}
-		cidr6Seen = map[string]map[string]struct{}{}
-		nativeSeen = map[string]map[string]struct{}{}
-	}
-	if dedupMode.full() {
-		claimed = map[string]struct{}{}
-	}
+	// Deduplicate only within a section. Overlapping destinations must remain
+	// available to later sections whose protocol/port predicates differ.
+	domainSeen := map[string]map[string]struct{}{}
+	cidr4Seen := map[string]map[string]struct{}{}
+	cidr6Seen := map[string]map[string]struct{}{}
+	nativeSeen := map[string]map[string]struct{}{}
 	totalProviders, totalDomains, totalCIDR4, totalCIDR6, totalNative, totalDup := 0, 0, 0, 0, 0, 0
 	for _, rp := range orderedRuleProviders(c.RuleProviders) {
 		// Per-provider timing wrapper. The IIFE lets us `defer` a single
@@ -199,10 +149,6 @@ func streamRuleOutputs(c config.Config, sinks generationSinks) error {
 				log.Debug("generate: rule-provider %s skipped missing section=%s", rp.Name, rp.Section)
 				return nil
 			}
-			// Shadow the claim map per provider: zapret sections are exempt
-			// from full dedup (both directions) — covers the MRS streamDedup
-			// and the materialized loop below.
-			claimed := claimedForSection(sec, claimed)
 			data, err := os.ReadFile(rp.Path)
 			if err != nil {
 				path = "read-failed"
@@ -223,13 +169,13 @@ func streamRuleOutputs(c config.Config, sinks generationSinks) error {
 			bytes = int64(len(data))
 			log.Debug("generate: rule-provider %s read path=%s", rp.Name, rp.Path)
 			if strings.EqualFold(rp.Format, "mrs") {
-				// MRS streaming is now correct under all dedup modes — the
-				// section/full seen-sets are threaded into the walk handlers
+				// MRS streaming uses section-local deduplication — the
+				// section-local seen-sets are threaded into the walk handlers
 				// so we can skip the materialising artifact-cache path even
 				// when dedup is enabled. This is the difference between an
 				// 80 k-entry provider taking 18 s (cache hit → iterate
 				// []NeutralRule) and ~50 ms (single trie walk, no alloc).
-				dedup := &streamDedup{domainSeen: domainSeen, cidr4Seen: cidr4Seen, cidr6Seen: cidr6Seen, claimed: claimed}
+				dedup := &streamDedup{domainSeen: domainSeen, cidr4Seen: cidr4Seen, cidr6Seen: cidr6Seen}
 				stats, err := streamMRSData(c, sec, data, sinks, dedup)
 				if err != nil {
 					log.Warn("generate: rule-provider %s streaming MRS failed: %v", rp.Name, err)
@@ -245,11 +191,11 @@ func streamRuleOutputs(c config.Config, sinks generationSinks) error {
 			}
 			if strings.EqualFold(rp.ParseMode, "native_import") {
 				// Pre-built list in nftset-builder's marker format: import
-				// verbatim — no parse, no validation, no dedup. The builder
+				// without reparsing or validation. The builder
 				// already normalized/deduped/collapsed/CDN-carved, so the
-				// router trusts the data and just wraps it into this
-				// section's dnsmasq directives + nft set elements.
-				stats, err := streamNativeImportData(c, sec, data, sinks)
+				// router deduplicates it within this section and wraps it into
+				// its dnsmasq directives + nft set elements.
+				stats, err := streamNativeImportData(c, sec, data, sinks, &streamDedup{domainSeen: domainSeen, cidr4Seen: cidr4Seen, cidr6Seen: cidr6Seen})
 				if err != nil {
 					return err
 				}
@@ -295,14 +241,6 @@ func streamRuleOutputs(c config.Config, sinks generationSinks) error {
 			for _, nr := range artifact {
 				if (!c.Settings.IPv6 || c.LowResource()) && nr.Type == "cidr6" {
 					continue
-				}
-				claimKey := neutralRuleClaimKey(nr)
-				if claimKey != "" && claimed != nil {
-					if _, ok := claimed[claimKey]; ok {
-						dup++
-						continue
-					}
-					claimed[claimKey] = struct{}{}
 				}
 				switch nr.Type {
 				case "domain":
@@ -377,50 +315,14 @@ func sectionForRuleProvider(c config.Config, rp config.RuleProvider) (config.Sec
 	return config.Section{}, false
 }
 
-// orderedRuleProviders fixes the provider iteration order: priority
-// ascending, then name. This order is LOAD-BEARING for full-mode rule dedup —
-// the first provider to emit a value claims it (via the `claimed` map), so a
-// rule appearing in two providers routes with the LOWER-priority-number
-// (earlier) one. Changing this sort silently changes routing for every
-// duplicated rule.
+// orderedRuleProviders provides deterministic output ordering. Routing precedence
+// is determined by section priority and packet predicates, not provider ownership.
 func orderedRuleProviders(in []config.RuleProvider) []config.RuleProvider {
 	out := append([]config.RuleProvider(nil), in...)
 	sort.SliceStable(out, func(i, j int) bool {
-		pi := normalizedRulePriority(out[i])
-		pj := normalizedRulePriority(out[j])
-		if pi == pj {
-			return out[i].Name < out[j].Name
-		}
-		return pi < pj
+		return out[i].Name < out[j].Name
 	})
 	return out
-}
-
-func normalizedRulePriority(rp config.RuleProvider) int {
-	if rp.Priority != 0 {
-		return rp.Priority
-	}
-	switch rp.RouteAction {
-	case "direct":
-		return 10
-	case "reject":
-		return 20
-	default:
-		return 1000
-	}
-}
-
-func neutralRuleClaimKey(r rules.NeutralRule) string {
-	v := strings.TrimSpace(r.Value)
-	if v == "" {
-		return ""
-	}
-	switch r.Type {
-	case "domain", "cidr4", "cidr6", "native":
-		return r.Type + ":" + v
-	default:
-		return ""
-	}
 }
 
 func seenFor(m map[string]map[string]struct{}, key string) map[string]struct{} {
@@ -460,12 +362,13 @@ const nativeImportCIDRMarker = "@cidr"
 
 // streamNativeImportData imports a pre-built native list verbatim: lines
 // before the "@cidr" marker are bare domains, lines after are bare CIDRs.
-// It does NO parsing/validation/dedup — the builder already produced clean,
-// deduped, collapsed, CDN-carved data. Domains are wrapped into this
+// It does no parsing or validation — the builder already produced clean,
+// collapsed, CDN-carved data. Section-local dedup also handles multiple providers.
+// Domains are wrapped into this
 // section's dnsmasq nftset directives (prefix precomputed once), CIDRs into
 // nft set elements; v6 is skipped when IPv6 is off. This is the only native
 // path on the router.
-func streamNativeImportData(c config.Config, sec config.Section, data []byte, sinks generationSinks) (streamStats, error) {
+func streamNativeImportData(c config.Config, sec config.Section, data []byte, sinks generationSinks, dedup *streamDedup) (streamStats, error) {
 	var stats streamStats
 	dns := dnsSinkForSection(sinks, sec.Name)
 	pfx := DNSMasqDomainPrefixes(c, sec)
@@ -483,7 +386,7 @@ func streamNativeImportData(c config.Config, sec config.Section, data []byte, si
 			continue
 		}
 		if !inCIDR {
-			if dns != nil {
+			if dns != nil && shouldEmitSeen(line, seenFor(dedup.domainSeen, sec.Name)) {
 				if err := WriteDNSMasqDomainPrefixed(dns, pfx, line); err != nil {
 					return stats, err
 				}
@@ -495,13 +398,16 @@ func streamNativeImportData(c config.Config, sec config.Section, data []byte, si
 			continue
 		}
 		if strings.IndexByte(line, ':') >= 0 {
-			if !emitV6 {
+			if !emitV6 || !shouldEmitSeen(line, seenFor(dedup.cidr6Seen, sec.NFTSet6())) {
 				continue
 			}
 			if err := WriteNFTSetElement(sinks.nftset, sec.NFTSet6(), line); err != nil {
 				return stats, err
 			}
 			stats.cidr6++
+			continue
+		}
+		if !shouldEmitSeen(line, seenFor(dedup.cidr4Seen, sec.NFTSet4())) {
 			continue
 		}
 		if err := WriteNFTSetElement(sinks.nftset, sec.NFTSet4(), line); err != nil {
@@ -513,22 +419,16 @@ func streamNativeImportData(c config.Config, sec config.Section, data []byte, si
 }
 
 // streamDedup carries the same dedup state the slow-path uses, so the MRS
-// streaming path can be used regardless of dedup mode. All fields are
+// streaming path preserves the same per-section semantics. All fields are
 // optional; nil maps mean "don't dedup for this dimension".
 type streamDedup struct {
 	domainSeen map[string]map[string]struct{} // section -> seen
 	cidr4Seen  map[string]map[string]struct{} // nft set name -> seen
 	cidr6Seen  map[string]map[string]struct{}
-	claimed    map[string]struct{} // full-mode global claim (`type:value` keys)
 }
 
 // streamMRSData walks the MRS bitmap-trie without materialising and emits
-// directly to dnsmasq + nft sinks. Per-section seen-sets and full-mode
-// `claimed` are honoured so this fast path is correct under every dedup
-// mode — the old `dedupMode == ruleDedupOff` gate was an over-cautious
-// guard that forced 80 k-entry providers down a 18-second cache-hit path
-// emitting from a materialised []NeutralRule. With dedup wired in here,
-// streaming handles the same 80 k entries in ~50 ms.
+// directly to dnsmasq + nft sinks, deduplicating only within each section.
 //
 // nft set name (s4/s6) is computed once per call instead of per-element —
 // `sec.NFTSet4()`/`NFTSet6()` re-build a string from `s.Action + s.Name`
@@ -571,16 +471,6 @@ func streamMRSData(c config.Config, sec config.Section, data []byte, sinks gener
 				}
 				domainSeen[string(domain)] = struct{}{}
 			}
-			if dedup != nil && dedup.claimed != nil {
-				// Full-mode global dedup still pays an alloc here for the
-				// "domain:" prefix concat. Acceptable: full mode isn't the
-				// default and the section-seen path above already filtered.
-				key := "domain:" + string(domain)
-				if _, ok := dedup.claimed[key]; ok {
-					return nil
-				}
-				dedup.claimed[key] = struct{}{}
-			}
 			if err := WriteDNSMasqDomainPrefixedBytes(dns, pfx, domain); err != nil {
 				return err
 			}
@@ -598,17 +488,6 @@ func streamMRSData(c config.Config, sec config.Section, data []byte, sinks gener
 					return nil
 				}
 				set = s6
-			}
-			if dedup != nil && dedup.claimed != nil {
-				typ := "cidr4"
-				if isV6 {
-					typ = "cidr6"
-				}
-				key := typ + ":" + cidr
-				if _, ok := dedup.claimed[key]; ok {
-					return nil
-				}
-				dedup.claimed[key] = struct{}{}
 			}
 			if dedup != nil {
 				seen := dedup.cidr4Seen

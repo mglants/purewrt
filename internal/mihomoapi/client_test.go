@@ -48,11 +48,10 @@ func TestClientGetNon2xx(t *testing.T) {
 	}
 }
 
-func TestClientPutAndHelpers(t *testing.T) {
+func TestClientSelectProxy(t *testing.T) {
 	t.Parallel()
 
 	seenSelect := false
-	seenHealth := false
 	srv := mihomoTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/proxies/GLOBAL":
@@ -67,9 +66,6 @@ func TestClientPutAndHelpers(t *testing.T) {
 			if body["name"] != "Node" || r.Header.Get("Content-Type") != "application/json" {
 				t.Fatalf("body=%v content-type=%q", body, r.Header.Get("Content-Type"))
 			}
-		case "/providers/proxies/p1/healthcheck":
-			seenHealth = true
-			_, _ = w.Write([]byte(`{}`))
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -80,11 +76,8 @@ func TestClientPutAndHelpers(t *testing.T) {
 	if err := c.SelectProxy("GLOBAL", "Node"); err != nil {
 		t.Fatalf("SelectProxy: %v", err)
 	}
-	if err := c.HealthCheckProvider("p1"); err != nil {
-		t.Fatalf("HealthCheckProvider: %v", err)
-	}
-	if !seenSelect || !seenHealth {
-		t.Fatalf("seenSelect=%v seenHealth=%v", seenSelect, seenHealth)
+	if !seenSelect {
+		t.Fatal("proxy selection was not requested")
 	}
 }
 

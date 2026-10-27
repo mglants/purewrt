@@ -39,12 +39,12 @@ func TestFormatGuessersAreYAMLFree(t *testing.T) {
 func TestSourceKindOnlyMRSAndText(t *testing.T) {
 	t.Parallel()
 	cases := map[[2]string]string{
-		{"mrs", ""}:                "mrs",
-		{"text", ""}:               "text",
-		{"", "https://x/foo.mrs"}:  "mrs",
-		{"", "https://x/foo.txt"}:  "unknown",
-		{"yaml", ""}:               "unknown", // was "clash_yaml", now dead
-		{"cidr", ""}:               "unknown", // was "text", now dead
+		{"mrs", ""}:               "mrs",
+		{"text", ""}:              "text",
+		{"", "https://x/foo.mrs"}: "mrs",
+		{"", "https://x/foo.txt"}: "unknown",
+		{"yaml", ""}:              "unknown", // was "clash_yaml", now dead
+		{"cidr", ""}:              "unknown", // was "text", now dead
 	}
 	for k, want := range cases {
 		if got := sourceKind(k[0], k[1]); got != want {
@@ -58,19 +58,18 @@ func TestClassifyRuleProvider(t *testing.T) {
 		name        string
 		wantAction  string
 		wantSection string
-		wantPrio    int
 	}{
-		{name: "geosite-ru", wantAction: "direct", wantSection: "direct", wantPrio: 1},
-		{name: "geoip-private", wantAction: "direct", wantSection: "direct", wantPrio: 1},
-		{name: "reject-ads", wantAction: "reject", wantSection: "reject", wantPrio: 2},
-		{name: "youtube", wantAction: "proxy", wantSection: "media", wantPrio: 10},
-		{name: "openai", wantAction: "proxy", wantSection: "ai", wantPrio: 20},
-		{name: "telegram", wantAction: "proxy", wantSection: "common", wantPrio: 60},
+		{name: "geosite-ru", wantAction: "direct", wantSection: "direct"},
+		{name: "geoip-private", wantAction: "direct", wantSection: "direct"},
+		{name: "reject-ads", wantAction: "reject", wantSection: "reject"},
+		{name: "youtube", wantAction: "proxy", wantSection: "media"},
+		{name: "openai", wantAction: "proxy", wantSection: "ai"},
+		{name: "telegram", wantAction: "proxy", wantSection: "common"},
 	}
 	for _, tt := range tests {
 		got := ClassifyRuleProvider(tt.name, "", "domain", "mrs", nil)
-		if got.RouteAction != tt.wantAction || got.Section != tt.wantSection || got.Priority != tt.wantPrio {
-			t.Fatalf("%s classified as action=%s section=%s priority=%d, want action=%s section=%s priority=%d", tt.name, got.RouteAction, got.Section, got.Priority, tt.wantAction, tt.wantSection, tt.wantPrio)
+		if got.RouteAction != tt.wantAction || got.Section != tt.wantSection {
+			t.Fatalf("%s classified as action=%s section=%s, want action=%s section=%s", tt.name, got.RouteAction, got.Section, tt.wantAction, tt.wantSection)
 		}
 	}
 }
