@@ -131,6 +131,9 @@ jobs:
             Merge once the package build CI is green.
 
   ooniprobe:
+    # v3.31 requires Go 1.27; the OpenWrt 25.12 SDK currently has Go 1.26.
+    # Re-enable after upgrading the SDK toolchain and verifying the build.
+    if: ${{ false }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

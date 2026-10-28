@@ -24,6 +24,9 @@ package version.
 - Remove unused backend settings and obsolete helper code.
 
 ### Fixed
+- Pin the optional OONI Probe package to 3.30.0 for the OpenWrt 25.12 Go
+  toolchain; 3.31.0 requires Go 1.27. Automatic OONI bumps are paused until
+  the SDK provides a compatible compiler.
 - Intersect section filters with Zapret strategy protocols and ports consistently
   in terminal claims and NFQUEUE rules, including router-originated traffic.
 - Read the installed Mihomo version from its executable instead of stale UCI

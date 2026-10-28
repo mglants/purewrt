@@ -94,7 +94,7 @@ jobs:
           git status --porcelain | head -40
       - name: Compute package list
         # ooniprobe is gated two ways:
-        #   - Go 1.24: builds only on the 25.12 SDK (24.10 ships Go 1.23).
+        #   - Go 1.26: pinned ooniprobe 3.30 builds only on the 25.12 SDK.
         #   - CGO on 32-bit MIPS: ooniprobe needs CGO (its syslog log-handler is
         #     //go:build cgo), which pulls runtime/cgo, whose gcc_mipsx.S won't
         #     assemble under the mips_24kc/mipsel_24kc toolchain ("invalid

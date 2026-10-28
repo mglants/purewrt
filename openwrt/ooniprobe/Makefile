@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=ooniprobe
-PKG_VERSION:=3.31.0
+PKG_VERSION:=3.30.0
 PKG_RELEASE:=1
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
@@ -10,7 +10,7 @@ PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/ooni/probe-cli.git
 PKG_SOURCE_VERSION:=v$(PKG_VERSION)
 # Recompute on version bump with: .github/scripts/pin-mirror-hash.sh ooniprobe
-PKG_MIRROR_HASH:=6ac3feb0321ea6a5f75f6225ce8e08b259ca084939ba21b6f3f257a238b7d2ac
+PKG_MIRROR_HASH:=4932b528d196dbd0efc37d3b3602768188b7c9b17712931e88b483df658aee9a
 
 PKG_LICENSE:=GPL-3.0-or-later
 PKG_LICENSE_FILES:=LICENSE.md
@@ -26,9 +26,9 @@ GO_PKG_TAGS:=nouserauth
 GO_PKG_BUILD_PKG:=$(GO_PKG)/cmd/ooniprobe
 GO_PKG_INSTALL_BIN_PATH:=/usr/bin
 
-# probe-cli requires Go 1.24 — it cannot build on the OpenWrt 24.10 SDK
-# (Go 1.23). The CI matrix only adds this package to the 25.12 leg; this
-# constraint is documented in docs and the build wiring.
+# probe-cli 3.30 requires Go 1.26 and builds on the 25.12 SDK. Version 3.31
+# requires Go 1.27, which that SDK does not provide; keep the version pinned
+# until the SDK toolchain is upgraded and the package build is verified.
 
 include $(INCLUDE_DIR)/package.mk
 include $(TOPDIR)/feeds/packages/lang/golang/golang-package.mk
@@ -45,7 +45,7 @@ define Package/ooniprobe/description
   OONI Probe (ooniprobe) measures internet censorship. Packaged for PureWRT as
   an optional companion: its backend/API traffic rides mihomo's mixed-port (via
   the --proxy flag) while measurements go direct. Runs via cron as a dedicated
-  non-root user. Requires OpenWrt 25.12+ (Go 1.24).
+  non-root user. Requires OpenWrt 25.12+ (Go 1.26).
 endef
 
 define Package/ooniprobe/install
