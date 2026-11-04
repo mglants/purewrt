@@ -4,6 +4,13 @@ All notable changes to PureWRT are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are the `purewrt`
 package version.
 
+## [0.10.1] - 2026-11-05
+
+### Fixed
+- Resolve selected mwan3 interfaces and routing marks before subscription and
+  provider updates regenerate configuration. Unresolvable WANs still fail closed
+  without replacing the generated configuration.
+
 ## [0.10.0] - 2026-10-28
 
 ### Added

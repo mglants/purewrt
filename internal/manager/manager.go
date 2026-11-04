@@ -168,7 +168,7 @@ func (m Manager) Import(url, name, mode, preset string) (provider.ImportPlan, er
 		return plan, err
 	}
 	if c.Settings.Enabled || hasEnabledProxyProviders(c) {
-		if err := generator.WriteAllToWithOptions(c, generator.DefaultGeneratedPaths(c), generator.WriteOptions{SkipFingerprint: true}); err != nil {
+		if err := writeProviderOutputs(c, generator.WriteOptions{SkipFingerprint: true}, system.Runner{}); err != nil {
 			return plan, err
 		}
 	}
@@ -364,6 +364,17 @@ func (m Manager) CacheClean() error {
 	return os.RemoveAll(filepath.Join(workdir, "cache", "rules"))
 }
 
+// writeProviderOutputs resolves live WAN routing before provider-triggered generation.
+// Do not generate unmarked egress if a selected WAN cannot be resolved.
+func writeProviderOutputs(c config.Config, opts generator.WriteOptions, runner commandRunner) error {
+	resolved, err := resolveProxyWANs(c, runner)
+	if err != nil {
+		return err
+	}
+	resolved = ResolveOONIUser(resolved)
+	return generator.WriteAllToWithOptions(resolved, generator.DefaultGeneratedPaths(resolved), opts)
+}
+
 func (m Manager) Update() error {
 	_, err := m.UpdateDetailedWithOptions(false)
 	return err
@@ -414,7 +425,7 @@ func (m Manager) UpdateRuleProvider(name string) (result UpdateResult, retErr er
 	}
 	if changed || hasEnabledProxyProviders(c) {
 		log.Info("update-rule-provider: %s regenerating outputs changed=%v", name, changed)
-		if err := generator.WriteAllToWithOptions(c, generator.DefaultGeneratedPaths(c), generator.WriteOptions{SkipFingerprint: true}); err != nil {
+		if err := writeProviderOutputs(c, generator.WriteOptions{SkipFingerprint: true}, system.Runner{}); err != nil {
 			return UpdateResult{}, err
 		}
 	}
@@ -490,7 +501,7 @@ func (m Manager) UpdateProxyProvider(name string) (result UpdateResult, retErr e
 	}
 	if changed || hasEnabledProxyProviders(c) {
 		log.Info("update-proxy-provider: %s regenerating outputs changed=%v", name, changed)
-		if err := generator.WriteAllToWithOptions(c, generator.DefaultGeneratedPaths(c), generator.WriteOptions{SkipFingerprint: true}); err != nil {
+		if err := writeProviderOutputs(c, generator.WriteOptions{SkipFingerprint: true}, system.Runner{}); err != nil {
 			return UpdateResult{}, err
 		}
 	}
@@ -648,7 +659,7 @@ func (m Manager) UpdateDetailedWithOptions(force bool) (result UpdateResult, ret
 	failures = append(failures, rpFailures...)
 	if changed || hasEnabledProxyProviders(c) {
 		log.Info("update: regenerating outputs changed=%v", changed)
-		if err := generator.WriteAllToWithOptions(c, generator.DefaultGeneratedPaths(c), generator.WriteOptions{Force: force, SkipFingerprint: true}); err != nil {
+		if err := writeProviderOutputs(c, generator.WriteOptions{Force: force, SkipFingerprint: true}, system.Runner{}); err != nil {
 			return UpdateResult{}, err
 		}
 	}

@@ -2,6 +2,9 @@ package manager
 
 import (
 	"github.com/purewrt/purewrt/internal/config"
+	"github.com/purewrt/purewrt/internal/generator"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -86,5 +89,40 @@ func TestProxyWANChecksConfiguredZapretMarks(t *testing.T) {
 	c.ZapretProfiles[0].FwMark = "0x20000000"
 	if _, e := resolveProxyWANs(c, r); e != nil {
 		t.Fatal(e)
+	}
+}
+
+func TestProviderGenerationResolvesWANsAndFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PUREWRT_UCI_DIR", filepath.Join(dir, "uci"))
+	c, runner := wanFixture()
+	c.Settings.Workdir = filepath.Join(dir, "work")
+	c.Settings.GeneratedDir = filepath.Join(dir, "runtime", "generated")
+	c.Settings.RuntimeDir = filepath.Join(dir, "runtime")
+	c.Settings.MihomoConfig = filepath.Join(dir, "generated", "mihomo.yaml")
+	c.Settings.CacheMode = "off"
+	c.Settings.ArtifactCacheMode = "off"
+	c.Settings.CacheDir = filepath.Join(dir, "cache")
+	c.ProxyProviders = []config.ProxyProvider{{Name: "sample", Enabled: true, Path: filepath.Join(dir, "provider.yaml")}}
+	if err := writeProviderOutputs(c, generator.WriteOptions{SkipFingerprint: true}, runner); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(c.Settings.MihomoConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"routing-mark: 256", "routing-mark: 512", "interface-name: eth1", "interface-name: pppoe-wanb"} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("generated configuration lacks %q", want)
+		}
+	}
+	before := string(data)
+	runner["ip -4 rule show"] = ""
+	if err := writeProviderOutputs(c, generator.WriteOptions{SkipFingerprint: true}, runner); err == nil {
+		t.Fatal("expected missing WAN routing to fail")
+	}
+	data, err = os.ReadFile(c.Settings.MihomoConfig)
+	if err != nil || string(data) != before {
+		t.Fatal("failed WAN resolution changed generated config")
 	}
 }
