@@ -104,7 +104,7 @@ func NFTablesWithNative(c config.Config, native map[string][]string) []byte {
 		sets = append(sets, "bypass6", "proxy_server_bypass6", "direct6", "reject6")
 	}
 	for _, s := range c.Sections {
-		if s.Action == "proxy" || s.Action == "zapret" {
+		if s.Enabled && (s.Action == "proxy" || s.Action == "zapret") {
 			sets = append(sets, s.NFTSet4())
 			if includeIPv6 {
 				sets = append(sets, s.NFTSet6())
@@ -828,7 +828,7 @@ func nftPayloadSets(c config.Config) []string {
 		sets = append(sets, "bypass6", "proxy_server_bypass6", "direct6", "reject6")
 	}
 	for _, s := range c.Sections {
-		if s.Action == "proxy" || s.Action == "zapret" {
+		if s.Enabled && (s.Action == "proxy" || s.Action == "zapret") {
 			sets = append(sets, s.NFTSet4())
 			if includeIPv6 {
 				sets = append(sets, s.NFTSet6())

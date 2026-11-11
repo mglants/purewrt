@@ -447,6 +447,9 @@ func dnsmasqFragmentSections(c config.Config, fragments map[string]*bytes.Buffer
 	out := make([]config.Section, 0, len(fragments))
 	for name := range fragments {
 		if sec, ok := c.SectionByName(name); ok {
+			if !sec.Enabled {
+				continue
+			}
 			out = append(out, sec)
 			continue
 		}

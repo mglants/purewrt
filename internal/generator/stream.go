@@ -45,7 +45,7 @@ func streamRuleOutputs(c config.Config, sinks generationSinks) error {
 	if sinks.dnsBySection != nil {
 		sectionEstimate := map[string]int64{}
 		for _, rp := range c.RuleProviders {
-			if !rp.Enabled || rp.Path == "" {
+			if _, ok := sectionForRuleProvider(c, rp); !ok || !rp.Enabled || rp.Path == "" {
 				continue
 			}
 			info, err := os.Stat(rp.Path)
@@ -304,7 +304,8 @@ func dnsSinkForSection(sinks generationSinks, section string) io.Writer {
 func sectionForRuleProvider(c config.Config, rp config.RuleProvider) (config.Section, bool) {
 	sec, ok := c.SectionByName(rp.Section)
 	if ok {
-		return sec, true
+		// An explicit disabled section must not fall through to a virtual action.
+		return sec, sec.Enabled
 	}
 	if rp.RouteAction == "direct" || rp.Section == "direct" {
 		return config.Section{Name: "direct", Action: "direct", IPv4Enabled: true, IPv6Enabled: true}, true

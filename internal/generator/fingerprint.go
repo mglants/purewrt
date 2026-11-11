@@ -209,7 +209,7 @@ func currentGenerationFingerprint(c config.Config) (generationFingerprint, error
 	if err != nil {
 		return generationFingerprint{}, err
 	}
-	return generationFingerprint{Version: 5, Hash: fmt.Sprintf("%x", h[:]), Groups: groups, GeneratedAt: time.Now().UTC(), Inputs: in}, nil
+	return generationFingerprint{Version: 6, Hash: fmt.Sprintf("%x", h[:]), Groups: groups, GeneratedAt: time.Now().UTC(), Inputs: in}, nil
 }
 
 func generationGroupHashes(c config.Config, in generationFingerprintInput) (map[string]string, error) {

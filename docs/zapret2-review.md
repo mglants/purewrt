@@ -196,15 +196,12 @@ reserved priority route each disjoint mark through the same temporary table;
 fake packets retain notrack and production-Zapret/proxy exemptions. The
 regression test models nfqws's any-bit check with an additional WAN mark.
 
-Live Android validation (2026-10-24): after separating the marks, the user
-confirmed browser access, Discord login/chat, and voice with TCP candidate
-`online_combo_google` plus UDP candidate `online_voice_zero` from the router's
-local candidate catalog. The WAN capture showed generated fake/split TCP
-packets followed by server data; voice success was user-confirmed. This is a
-single-client/WAN result, not a universal preset guarantee. The temporary
-session was stopped afterward; both priority-101 routing rules and the test
-nftables table were removed, leaving the production queue running. No
-production strategy was saved. Earlier failed rotations with overlapping
+Client validation after separating the marks confirmed browser access,
+application login/chat, and voice with paired TCP and UDP candidates. A WAN
+capture showed generated fake/split TCP packets followed by server data.
+This is a single-client/WAN result, not a universal preset guarantee.
+Temporary routing rules, the test table and processes were removed afterward.
+No persistent strategy was saved. Earlier failed rotations with overlapping
 marks are not valid evidence against those strategies.
 
 During an active session, **Switch strategy** (CLI: `purewrt zapret-client-switch
@@ -262,7 +259,7 @@ Zapret configuration now consists of applications, each with a library strategy
 reference per WAN device. The old user-configured profiles, custom inline
 routing strategies and per-entry queue settings are removed; there is no
 compatibility loader or automatic migration. Routers not using Zapret need no
-entries. The existing test router was migrated explicitly.
+entries. Existing configurations require explicit migration.
 
 ```uci
 config zapret_strategy 'zs_discord'
@@ -326,7 +323,7 @@ a no-action baseline profile and the saved Discord TCP/UDP candidate, selected
 by separate mark values. On both WANs the baseline timed out after five seconds;
 the Discord TCP strategy returned HTTP 200 twice per WAN (about 75 KB per
 response). TLS completion took 79–95 ms. Debug logs confirmed selection of
-`discord_working` and execution of `hostfakesplit`; interface captures and
+the test profile and execution of `hostfakesplit`; interface captures and
 bidirectional queue counters confirmed traffic on both WANs. Each temporary
 process used approximately 2 MiB RSS after the probes.
 
@@ -403,7 +400,7 @@ and fixed two apply/routing gaps: changed Zapret env now restarts its service
 priority rather than configuration order.
 
 A temporary Discord routing section exercised generated production rules and
-queue 200 alongside the existing YouTube application. Six Discord HTTPS
+queue 200 alongside another application. Six Discord HTTPS
 requests passed across primary, secondary failover and primary restoration,
 with the same shared PID throughout. Ten additional requests passed in two
 concurrent WAN loops. Queue and userspace drop counts remained zero; shared

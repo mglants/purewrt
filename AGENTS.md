@@ -376,3 +376,14 @@ An isolated IPv4 capture verified all three WANs with the flags; IPv6 has
 not been packet-tested. This does not depend on mwan3. Blockcheck receives
 the flags through upstream `PKTWS_EXTRA_PRE`; `NFQWS2` selects its executable
 (`PKTWSD` is an upstream process label, not the executable override).
+
+## Documentation privacy
+
+Documentation must not contain private or user-identifying information.
+This includes router/client addresses, public IPs observed in user traffic,
+hostnames, device identifiers, credentials, subscription URLs, personal paths,
+and identifying production configuration or incident details. Use generic
+roles, placeholders, or reserved documentation addresses for examples; keep
+only the technical findings needed to explain behavior. Review new and edited
+documentation for private information before saving or sharing it. Do not
+copy raw production output into documentation.

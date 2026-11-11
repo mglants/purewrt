@@ -44,8 +44,7 @@ backend".
 | Per-section / per-domain selection | Coarse | Full (sections, DNS, mixed pools) |
 | Mix VPN + subscription nodes | No | Yes, one pool |
 
-**Decision: mihomo is the default.** Rationale for this product (censorship-bypass router, wan1/LTE
-uplinks ~50–300 Mbps):
+**Decision: mihomo is the default.** Rationale for deployments where WAN throughput is below the userspace relay ceiling:
 
 - The userspace overhead is **moot** — mihomo's relay ceiling sits above the real WAN speed, so the link is
   the bottleneck, not mihomo.

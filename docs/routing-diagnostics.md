@@ -4,8 +4,8 @@ LuCI's Site Checker and `purewrt-check` accept a domain or IP, optional
 protocol (`tcp` or `udp`), destination port, and outgoing WAN device:
 
 ```sh
-purewrt-check discord.com tcp 443 br-lan.3
-purewrt-check 216.244.8.84 udp 10600 br-lan.3000
+purewrt-check example.com tcp 443 <wan-device>
+purewrt-check 192.0.2.20 udp 10600 <wan-device>
 ```
 
 The list trace evaluates global Reject/Direct exclusions first, then enabled

@@ -4,6 +4,13 @@ All notable changes to PureWRT are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are the `purewrt`
 package version.
 
+## [0.10.2] - 2026-11-12
+
+### Fixed
+- Exclude disabled sections from rule-provider output, dnsmasq fragments and
+  nftables sets, preventing stale DNS classification from shadowing enabled
+  sections. Regenerate existing output on upgrade.
+
 ## [0.10.1] - 2026-11-05
 
 ### Fixed

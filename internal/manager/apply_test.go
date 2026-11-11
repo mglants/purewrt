@@ -257,6 +257,7 @@ func TestApplyMihomoFallsBackToRestartWhenReloadErrors(t *testing.T) {
 func TestApplyPreservesDynamicDNSSetMembers(t *testing.T) {
 	dir := t.TempDir()
 	c, staged, backup := applyTestConfig(t, dir)
+	c.Sections = append(c.Sections, config.Section{Name: "ghost", Enabled: false, Action: "zapret", IPv4Enabled: true})
 	live := applyTestLivePaths(dir)
 	r := &fakeRunner{respond: func(call string) (string, bool) {
 		if strings.Contains(call, "list set inet purewrt dns_bypass4") {

@@ -4,9 +4,9 @@
 
 ## Retest: both WANs work (2026-10-23)
 
-Isolated tests on `192.0.2.1`, with Mihomo `alpha-dc4d4fcb` (2026-07-17),
-confirmed working proxy egress through both WAN A (`eth1`, mark `256`)
-and WAN B (`eth2`, mark `512`). LTE was online but not tested.
+Isolated tests with Mihomo `alpha-dc4d4fcb` (2026-07-17),
+confirmed working proxy egress through two selected WANs.
+Other uplinks were not tested. Interface and mark values below are examples.
 The older conclusions below are historical, not current implementation constraints.
 The difference from the June failures has not been isolated to a specific fix.
 
@@ -39,8 +39,8 @@ the actual proxy path; a direct WAN health check alone cannot detect node/DPI
 failures. Existing streams cannot be assumed to migrate between WANs.
 
 All temporary test configuration, credentials, counters and the test core were
-removed. Production Mihomo remained PID 4395, DNS still resolved, and the WANs
-remained online. No permanent multi-WAN feature was enabled.
+removed. The existing Mihomo process remained running, DNS still resolved, and the
+selected WANs remained online. No permanent multi-WAN feature was enabled.
 
 ## Historical attempt (2026-06)
 
@@ -255,7 +255,7 @@ An isolated nft drop affected only the test core's WAN A traffic. With test-only
 256 KiB requests succeeded through the surviving path. After removing the drop
 and waiting six seconds, requests used both paths again. These accelerated
 health settings were not installed as production defaults. All temporary test
-state was removed; production Mihomo remained running as PID 4395.
+state was removed; the existing Mihomo process remained running.
 
 The unused `mmx_mask_auto`, `purewrt_mark`, `rule_priority`, and duplicated
 `purewrt_mask`/`mwan3_mask` controls have been removed. Diagnostics use the active
@@ -271,18 +271,16 @@ installed mwan3 rules are not deleted by this change.
 
 ### Production deployment validation (2026-10-23)
 
-Installed the binary, Settings/Providers LuCI views and updated read ACL on
-`192.0.2.1`, then enabled WAN A and WAN B with an on-router rollback backup.
-Apply hot-reloaded Mihomo; its PID remained 4395. Each WAN exposed 29 independent
-nodes (25 reported healthy at verification), and DNSProxy contained 58 members.
-Two 1 MiB gRPC sample transfers per WAN all succeeded: WAN A 273/131 ms, WAN B
-291/128 ms. Domestic and international lookups through dnsmasq succeeded.
+Deployment included the binary, Settings/Providers LuCI views and updated read
+ACL, with a rollback backup. Apply hot-reloaded Mihomo without replacing its
+process. Independent provider members were available on each selected WAN,
+and bounded transfers succeeded on both. DNS lookups through dnsmasq succeeded.
 
 The live check uncovered that this Mihomo build omits provider nodes from
 `/proxies` while returning their names in group membership. The API client now
 fills missing members from `/providers/proxies`, retaining each node's provider,
 health and delay history. A regression test covers two independent WAN members.
-The deployed guard dry-run successfully tracked 29 nodes for each WAN without
+The guard dry-run successfully tracked independent members on each WAN without
 writing state or changing quarantines. LuCI file checksums matched the build;
 its cache stamp was bumped. Existing LuCI sessions need a fresh login for the
 new mwan3 read permission.

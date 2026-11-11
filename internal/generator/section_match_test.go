@@ -203,3 +203,68 @@ func TestMRSSectionLocalDedup(t *testing.T) {
 		})
 	}
 }
+
+// Disabling the higher-priority owner must expose the overlapping enabled
+// provider, and promotion must delete the previously generated fragment.
+func TestDisabledProviderSectionFallsBack(t *testing.T) {
+	for _, mode := range []string{"", "native_import"} {
+		t.Run(mode, func(t *testing.T) {
+			c := config.Default()
+			c.Settings.ResourceProfile = "high"
+			c.Settings.Workdir = t.TempDir()
+			c.Sections = []config.Section{
+				{Name: "Youtube", Enabled: true, Action: "zapret", Priority: 5, IPv4Enabled: true, IPv6Enabled: true},
+				{Name: "media", Enabled: true, Action: "proxy", Priority: 10, IPv4Enabled: true, IPv6Enabled: true, TPROXYPort: 7894},
+			}
+			path := filepath.Join(t.TempDir(), "rules")
+			data := "youtube.com\ngooglevideo.com\n"
+			if mode == "" {
+				data += "203.0.113.0/24\n"
+			} else {
+				data += "@cidr\n203.0.113.0/24\n"
+			}
+			if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+				t.Fatal(err)
+			}
+			for _, sec := range c.Sections {
+				c.RuleProviders = append(c.RuleProviders, config.RuleProvider{Name: sec.Name, Section: sec.Name, Enabled: true, Format: "text", ParseMode: mode, Path: path})
+			}
+			dir := t.TempDir()
+			paths := GeneratedPaths{DNSMasqFragmentDir: dir}
+			for _, enabled := range []bool{true, false, true} {
+				c.Sections[0].Enabled = enabled
+				fragments := map[string]*bytes.Buffer{}
+				var sets bytes.Buffer
+				if err := streamRuleOutputs(c, generationSinks{dnsBySection: fragments, nftset: &sets}); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := WriteDNSMasqFragments(c, paths, fragments); err != nil {
+					t.Fatal(err)
+				}
+				_, err := os.Stat(DNSMasqFragmentPath(dir, c.Sections[0]))
+				if enabled && err != nil || !enabled && !os.IsNotExist(err) {
+					t.Fatalf("disabled fragment retained or enabled missing: %v", err)
+				}
+				media, err := os.ReadFile(DNSMasqFragmentPath(dir, c.Sections[1]))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !strings.Contains(string(media), "nftset=/googlevideo.com/4#inet#purewrt#dns_proxy_media4") {
+					t.Fatalf("fallback missing: %s", media)
+				}
+				nft := string(NFTables(c))
+				if strings.Contains(nft, "set dns_proxy_Youtube4 {") != enabled {
+					t.Fatal("disabled set declaration")
+				}
+				if strings.Contains(sets.String(), "add element inet purewrt proxy_Youtube4 ") != enabled {
+					t.Fatalf("disabled CIDR output: %s", sets.String())
+				}
+				for _, name := range DynamicDNSSetNames(c) {
+					if !enabled && strings.Contains(name, "Youtube") {
+						t.Fatal("disabled set eligible for restore")
+					}
+				}
+			}
+		})
+	}
+}
