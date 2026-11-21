@@ -105,3 +105,33 @@ func TestApplyAttemptBoundedAndWriteFailure(t *testing.T) {
 		t.Fatal("status write failure hidden")
 	}
 }
+
+func TestFinishApplyAttemptRecordsAndPropagatesPanic(t *testing.T) {
+	c := config.Default()
+	c.Settings.RuntimeDir = t.TempDir()
+	started := time.Now().UTC()
+	if err := recordApplyAttempt(c, started.Add(-time.Minute), nil); err != nil {
+		t.Fatal(err)
+	}
+	panicValue := errors.New("generation panicked")
+	var retErr error
+	got := func() (recovered any) {
+		defer func() { recovered = recover() }()
+		defer finishApplyAttempt(&c, started, &retErr)
+		panic(panicValue)
+	}()
+	if got != panicValue {
+		t.Fatalf("recovered %v, want original panic %v", got, panicValue)
+	}
+	data, err := os.ReadFile(applyHealthPath(c))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var attempt ApplyAttempt
+	if err := json.Unmarshal(data, &attempt); err != nil {
+		t.Fatal(err)
+	}
+	if attempt.Success || attempt.Stage != "panic" || attempt.Error != "panic: "+panicValue.Error() || !attempt.Time.Equal(started) {
+		t.Fatalf("unexpected recorded attempt: %+v", attempt)
+	}
+}

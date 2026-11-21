@@ -38,6 +38,30 @@ func applyFailure(stage string, err error) error { return &applyStageFailure{sta
 func applyHealthPath(c config.Config) string {
 	return filepath.Join(c.RuntimeDir(), "apply-health.json")
 }
+
+func finishApplyAttempt(c *config.Config, started time.Time, retErr *error) {
+	panicValue := recover()
+	attemptErr := *retErr
+	if panicValue != nil {
+		attemptErr = applyFailure("panic", fmt.Errorf("%v", panicValue))
+	}
+	if attemptErr != nil {
+		newLog(*c).Error("apply: failed: %v", attemptErr)
+		logApplyFailure("apply failed: " + attemptErr.Error())
+	}
+	if err := recordApplyAttempt(*c, started, attemptErr); err != nil {
+		newLog(*c).Error("apply: could not save status: %v", err)
+		logApplyFailure("could not save apply status: " + err.Error())
+		_ = os.Remove(applyHealthPath(*c))
+		if *retErr != nil {
+			*retErr = errors.Join(*retErr, fmt.Errorf("save apply status: %w", err))
+		}
+	}
+	if panicValue != nil {
+		panic(panicValue)
+	}
+}
+
 func recordApplyAttempt(c config.Config, started time.Time, err error) error {
 	a := ApplyAttempt{Time: started.UTC(), Success: err == nil, Stage: "complete"}
 	if err != nil {

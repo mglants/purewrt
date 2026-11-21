@@ -4,6 +4,12 @@ All notable changes to PureWRT are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are the `purewrt`
 package version.
 
+## [0.10.4] - 2026-11-21
+
+### Fixed
+- Record panics during apply as failed attempts in Diagnostics and preserve
+  the panic stack trace in the logs.
+
 ## [0.10.3] - 2026-11-21
 
 ### Fixed

@@ -1493,25 +1493,11 @@ func (m Manager) Apply() error {
 func (m Manager) ApplyWithOptions(force bool) (retErr error) {
 	applyStart := time.Now()
 	var c config.Config
-	defer func() {
-		if m.DryRun {
-			return
-		}
-		if retErr != nil {
-			newLog(c).Error("apply: failed: %v", retErr)
-			logApplyFailure("apply failed: " + retErr.Error())
-		}
-		if e := recordApplyAttempt(c, applyStart, retErr); e != nil {
-			newLog(c).Error("apply: could not save status: %v", e)
-			logApplyFailure("could not save apply status: " + e.Error())
-			_ = os.Remove(applyHealthPath(c))
-			if retErr != nil {
-				retErr = errors.Join(retErr, fmt.Errorf("save apply status: %w", e))
-			}
-		}
-	}()
+	if !m.DryRun {
+		defer finishApplyAttempt(&c, applyStart, &retErr)
+	}
 	metrics.ApplyLastAttempt.Set(float64(applyStart.Unix()))
-	c, backup, staged, gen, cleanup, err := m.applyPrepare(force)
+	backup, staged, gen, cleanup, err := m.applyPrepare(&c, force)
 	if err != nil {
 		metrics.ApplyLastRunSuccess.Set(0)
 		metrics.ApplyDurationSeconds.Observe(time.Since(applyStart).Seconds())
@@ -1586,30 +1572,33 @@ func minSubscriptionSecondsToExpiry(c config.Config) (float64, bool) {
 	return min, have
 }
 
-func (m Manager) applyPrepare(force bool) (config.Config, system.BackupSet, generator.GeneratedPaths, generator.GenerationResult, func(), error) {
+func (m Manager) applyPrepare(loaded *config.Config, force bool) (system.BackupSet, generator.GeneratedPaths, generator.GenerationResult, func(), error) {
 	c, err := m.Load()
+	// Keep the runtime directory available to the health recorder even
+	// if preparation panics before returning.
+	defer func() { *loaded = c }()
 	if err != nil {
-		return c, nil, generator.GeneratedPaths{}, generator.GenerationResult{}, func() {}, err
+		return nil, generator.GeneratedPaths{}, generator.GenerationResult{}, func() {}, err
 	}
 	c, err = ResolveProxyWANs(c)
 	if err != nil {
-		return c, nil, generator.GeneratedPaths{}, generator.GenerationResult{}, func() {}, err
+		return nil, generator.GeneratedPaths{}, generator.GenerationResult{}, func() {}, err
 	}
 	if err := validateZapretRoutingMasks(c, system.Runner{}); err != nil {
-		return c, nil, generator.GeneratedPaths{}, generator.GenerationResult{}, func() {}, applyFailure("configuration", err)
+		return nil, generator.GeneratedPaths{}, generator.GenerationResult{}, func() {}, applyFailure("configuration", err)
 	}
 	c = ResolveOONIUser(c)
 	log := newLog(c)
 	defer log.DebugTimer("apply: prepare")()
 	log.Info("apply: validating config")
 	if err := m.Validate(); err != nil {
-		return c, nil, generator.GeneratedPaths{}, generator.GenerationResult{}, func() {}, applyFailure("configuration", err)
+		return nil, generator.GeneratedPaths{}, generator.GenerationResult{}, func() {}, applyFailure("configuration", err)
 	}
 	if c.Settings.BootstrapDoHEnabled && c.Settings.BootstrapHealthGate {
 		log.Info("apply: bootstrap-health gate probing %d DoH endpoint(s)", len(c.Settings.BootstrapDoHResolvers))
 		r := m.ResolversProbe("")
 		if !r.Anywhere {
-			return c, nil, generator.GeneratedPaths{}, generator.GenerationResult{}, func() {}, fmt.Errorf("bootstrap-health gate: all %d DoH resolvers failed to answer for %q — check zapret, add a user-provided endpoint to bootstrap_doh_resolver, or set bootstrap_health_gate '0' to skip this gate", len(r.Entries), r.Canary)
+			return nil, generator.GeneratedPaths{}, generator.GenerationResult{}, func() {}, fmt.Errorf("bootstrap-health gate: all %d DoH resolvers failed to answer for %q — check zapret, add a user-provided endpoint to bootstrap_doh_resolver, or set bootstrap_health_gate '0' to skip this gate", len(r.Entries), r.Canary)
 		}
 		if !r.OK {
 			log.Warn("apply: bootstrap-health gate: only %d/%d resolvers answered for %q — bootstrap path is degraded but proceeding", countOK(r.Entries), len(r.Entries), r.Canary)
@@ -1618,23 +1607,23 @@ func (m Manager) applyPrepare(force bool) (config.Config, system.BackupSet, gene
 	log.Info("apply: creating temporary backups max_bytes=%d", applyBackupMaxBytes(c))
 	backup, backupCleanup, err := m.applyBackup(c)
 	if err != nil {
-		return c, nil, generator.GeneratedPaths{}, generator.GenerationResult{}, func() {}, applyFailure("backup", err)
+		return nil, generator.GeneratedPaths{}, generator.GenerationResult{}, func() {}, applyFailure("backup", err)
 	}
 	if err := m.EnsureZapretBlobs(c); err != nil {
 		backupCleanup()
-		return c, backup, generator.GeneratedPaths{}, generator.GenerationResult{}, func() {}, err
+		return backup, generator.GeneratedPaths{}, generator.GenerationResult{}, func() {}, err
 	}
 	log.Info("apply: generating staged outputs")
 	staged, gen, cleanup, err := m.applyStagedGenerate(c, force)
 	if err != nil {
 		backupCleanup()
-		return c, backup, generator.GeneratedPaths{}, generator.GenerationResult{}, func() {}, applyFailure("generation", err)
+		return backup, generator.GeneratedPaths{}, generator.GenerationResult{}, func() {}, applyFailure("generation", err)
 	}
 	combinedCleanup := func() {
 		cleanup()
 		backupCleanup()
 	}
-	return c, backup, staged, gen, combinedCleanup, nil
+	return backup, staged, gen, combinedCleanup, nil
 }
 
 func (m Manager) applyBackup(c config.Config) (system.BackupSet, func(), error) {
