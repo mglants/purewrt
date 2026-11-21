@@ -3,14 +3,14 @@
 // publishes). The parser is hand-rolled wire-format — no protobuf
 // dependency — because we only read two field shapes:
 //
-//   GeoSiteList { repeated GeoSite entry = 1; }
-//   GeoSite     { string country_code = 1; repeated Domain domain = 2; }
-//   Domain      { Type type = 1; string value = 2; }
-//                 // Type: 0=Plain, 1=Regex, 2=Domain (suffix), 3=Full (exact)
+//	GeoSiteList { repeated GeoSite entry = 1; }
+//	GeoSite     { string country_code = 1; repeated Domain domain = 2; }
+//	Domain      { Type type = 1; string value = 2; }
+//	              // Type: 0=Plain, 1=Regex, 2=Domain (suffix), 3=Full (exact)
 //
-//   GeoIPList   { repeated GeoIP entry = 1; }
-//   GeoIP       { string country_code = 1; repeated CIDR cidr = 2; }
-//   CIDR        { bytes ip = 1; uint32 prefix = 2; }
+//	GeoIPList   { repeated GeoIP entry = 1; }
+//	GeoIP       { string country_code = 1; repeated CIDR cidr = 2; }
+//	CIDR        { bytes ip = 1; uint32 prefix = 2; }
 //
 // Public API:
 //   - ListGeoSiteEntries / ListGeoIPEntries: sorted unique entry names
@@ -91,10 +91,10 @@ func readBytesField(buf []byte, off int) ([]byte, int, error) {
 	if err != nil {
 		return nil, off, err
 	}
-	end := next + int(n)
-	if end < next || end > len(buf) {
+	if n > uint64(len(buf)-next) {
 		return nil, off, fmt.Errorf("geodb: length-delimited field overruns buffer (want %d, have %d)", n, len(buf)-next)
 	}
+	end := next + int(n)
 	return buf[next:end], end, nil
 }
 
@@ -116,11 +116,10 @@ func skipField(buf []byte, off int, wire uint64) (int, error) {
 		if err != nil {
 			return off, err
 		}
-		end := next + int(n)
-		if end < next || end > len(buf) {
+		if n > uint64(len(buf)-next) {
 			return off, errors.New("geodb: length-delimited skip overruns buffer")
 		}
-		return end, nil
+		return next + int(n), nil
 	case 5: // 32-bit fixed
 		if off+4 > len(buf) {
 			return off, errors.New("geodb: fixed32 truncated")
@@ -230,10 +229,10 @@ func ListGeoIPEntries(path string) ([]string, error) { return listEntries(path) 
 // country_code matches the requested category (case-insensitive), and
 // returns the domain rules in PureWRT's rules.Rule shape:
 //
-//   v2ray Plain  → rules.DomainKeyword
-//   v2ray Domain → rules.DomainSuffix
-//   v2ray Full   → rules.Domain
-//   v2ray Regex  → skipped (counted in skippedRegex)
+//	v2ray Plain  → rules.DomainKeyword
+//	v2ray Domain → rules.DomainSuffix
+//	v2ray Full   → rules.Domain
+//	v2ray Regex  → skipped (counted in skippedRegex)
 //
 // Returns os.ErrNotExist if the dat file is missing; a clear error if
 // the category isn't in the file.
@@ -473,4 +472,3 @@ func parseCIDR(payload []byte) (rules.Rule, error) {
 		SupportedOpenWrt: true,
 	}, nil
 }
-

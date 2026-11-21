@@ -25,6 +25,16 @@ func buildVarint(v uint64) []byte {
 	}
 }
 
+func TestLengthDelimitedFieldRejectsOversizedLength(t *testing.T) {
+	field := buildVarint(1 << 32)
+	if _, _, err := readBytesField(field, 0); err == nil {
+		t.Error("read accepted a length larger than the buffer")
+	}
+	if _, err := skipField(field, 0, 2); err == nil {
+		t.Error("skip accepted a length larger than the buffer")
+	}
+}
+
 // tagBytes builds the tag prefix byte for a field with given number and
 // wire type. (field<<3 | wire), then varint-encoded — but for fields <16
 // and wires <8 it fits in a single byte.
@@ -91,9 +101,9 @@ func TestListGeoSiteEntries_sortedUnique(t *testing.T) {
 	t.Parallel()
 	// Three entries — out of order, with a duplicate that should de-dup.
 	var blob []byte
-	blob = append(blob, lenDelim(1, buildGeoSiteEntry("YOUTUBE", nil))...)    // mixed case
+	blob = append(blob, lenDelim(1, buildGeoSiteEntry("YOUTUBE", nil))...) // mixed case
 	blob = append(blob, lenDelim(1, buildGeoSiteEntry("telegram", nil))...)
-	blob = append(blob, lenDelim(1, buildGeoSiteEntry("youtube", nil))...)    // duplicate (lowercased)
+	blob = append(blob, lenDelim(1, buildGeoSiteEntry("youtube", nil))...) // duplicate (lowercased)
 	blob = append(blob, lenDelim(1, buildGeoSiteEntry("category-ads", nil))...)
 
 	path := writeTempDat(t, "geosite.dat", blob)

@@ -4,6 +4,17 @@ All notable changes to PureWRT are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are the `purewrt`
 package version.
 
+## [0.10.3] - 2026-11-21
+
+### Fixed
+- Prevent metrics histogram panics caused by unaligned 64-bit atomics on
+  32-bit builds.
+- Check geo-data field lengths before converting them to platform-sized
+  integers so oversized fields are rejected on 32-bit builds.
+
+### CI
+- Run the Go test suite on 32-bit Linux.
+
 ## [0.10.2] - 2026-11-12
 
 ### Fixed

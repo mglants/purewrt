@@ -144,10 +144,10 @@ func MergePersistent(priorJSON []byte, delta *Registry) ([]byte, string, error) 
 				merged.Counts = make([]uint64, len(current.buckets)+1)
 			}
 			for i := range merged.Counts {
-				merged.Counts[i] += atomic.LoadUint64(&sample.counts[i])
+				merged.Counts[i] += sample.counts[i].Load()
 			}
-			merged.Sum += bits2float(atomic.LoadUint64(&sample.sumBits))
-			merged.Count += atomic.LoadUint64(&sample.count)
+			merged.Sum += bits2float(sample.sumBits.Load())
+			merged.Count += sample.count.Load()
 			stored.Samples[key] = merged
 		}
 		current.mu.RUnlock()
@@ -272,7 +272,12 @@ func persistentRegistry(s persistentState) *Registry {
 	for name, stored := range s.Histograms {
 		metric := r.NewHistogram(name, stored.Help, stored.Buckets, stored.LabelKeys...)
 		for key, sample := range stored.Samples {
-			hs := &histSample{counts: append([]uint64(nil), sample.Counts...), sumBits: float64bits(sample.Sum), count: sample.Count}
+			hs := &histSample{counts: make([]atomic.Uint64, len(sample.Counts))}
+			for i, count := range sample.Counts {
+				hs.counts[i].Store(count)
+			}
+			hs.sumBits.Store(float64bits(sample.Sum))
+			hs.count.Store(sample.Count)
 			metric.samples[key] = hs
 		}
 	}

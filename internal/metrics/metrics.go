@@ -223,9 +223,9 @@ type Histogram struct {
 }
 
 type histSample struct {
-	counts  []uint64 // one per bucket + final +Inf slot
-	sumBits uint64   // atomic float64 bits, CAS-add
-	count   uint64
+	counts  []atomic.Uint64 // one per bucket + final +Inf slot
+	sumBits atomic.Uint64   // float64 bits, CAS-add
+	count   atomic.Uint64
 }
 
 // NewHistogram creates a Histogram and registers it on Default. buckets
@@ -258,7 +258,7 @@ func (h *Histogram) Observe(v float64, labelValues ...string) {
 	if !ok {
 		h.mu.Lock()
 		if s, ok = h.samples[key]; !ok {
-			s = &histSample{counts: make([]uint64, len(h.buckets)+1)}
+			s = &histSample{counts: make([]atomic.Uint64, len(h.buckets)+1)}
 			h.samples[key] = s
 		}
 		h.mu.Unlock()
@@ -270,12 +270,12 @@ func (h *Histogram) Observe(v float64, labelValues ...string) {
 			break
 		}
 	}
-	atomic.AddUint64(&s.counts[idx], 1)
-	atomic.AddUint64(&s.count, 1)
+	s.counts[idx].Add(1)
+	s.count.Add(1)
 	for {
-		old := atomic.LoadUint64(&s.sumBits)
+		old := s.sumBits.Load()
 		next := float64bits(bits2float(old) + v)
-		if atomic.CompareAndSwapUint64(&s.sumBits, old, next) {
+		if s.sumBits.CompareAndSwap(old, next) {
 			break
 		}
 	}
@@ -360,16 +360,16 @@ func (r *Registry) Render() string {
 			}
 			cum := uint64(0)
 			for i, ub := range h.buckets {
-				cum += atomic.LoadUint64(&s.counts[i])
+				cum += s.counts[i].Load()
 				fmt.Fprintf(&b, "%s_bucket{%sle=\"%g\"} %d\n", h.name, labelPrefix, ub, cum)
 			}
-			cum += atomic.LoadUint64(&s.counts[len(h.buckets)])
+			cum += s.counts[len(h.buckets)].Load()
 			fmt.Fprintf(&b, "%s_bucket{%sle=\"+Inf\"} %d\n", h.name, labelPrefix, cum)
 			if len(h.labelKey) == 0 {
-				fmt.Fprintf(&b, "%s_sum %g\n%s_count %d\n", h.name, bits2float(atomic.LoadUint64(&s.sumBits)), h.name, atomic.LoadUint64(&s.count))
+				fmt.Fprintf(&b, "%s_sum %g\n%s_count %d\n", h.name, bits2float(s.sumBits.Load()), h.name, s.count.Load())
 			} else {
 				labels := formatLabels(h.labelKey, k)
-				fmt.Fprintf(&b, "%s_sum{%s} %g\n%s_count{%s} %d\n", h.name, labels, bits2float(atomic.LoadUint64(&s.sumBits)), h.name, labels, atomic.LoadUint64(&s.count))
+				fmt.Fprintf(&b, "%s_sum{%s} %g\n%s_count{%s} %d\n", h.name, labels, bits2float(s.sumBits.Load()), h.name, labels, s.count.Load())
 			}
 		}
 		h.mu.RUnlock()
